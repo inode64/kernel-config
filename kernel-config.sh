@@ -2,13 +2,15 @@
 set -Eeuo pipefail
 
 # Usage:
-#   ./kernel-config.sh [KERNEL_SRCDIR] [CONFIG_FILE]
+#   ./kernel-config.sh [OPTIONS] [KERNEL_SRCDIR] [CONFIG_FILE] [VAR=VALUE...]
 #
 # Examples:
 #   ./kernel-config.sh /usr/src/linux
 #   KEEP_OBSERVABILITY=0 PRUNE_LEGACY=1 ./kernel-config.sh /usr/src/linux
+#   ./kernel-config.sh /usr/src/linux .config PRUNE_LEGACY=1 KEEP_OBSERVABILITY=0
+#   ./kernel-config.sh --kernel-srcdir /usr/src/linux --config-file .config --prune-legacy 1
 #
-# Optional variables:
+# Optional variables and flags:
 #   KEEP_OBSERVABILITY=1   -> keep useful options for perf/bpf/ftrace/debugfs
 #   PRUNE_LEGACY=0         -> do not touch legacy/compat options by default
 #   OPTIMIZE_SERVER_SPEED=0 -> do not force extra throughput tuning for servers
@@ -43,8 +45,69 @@ detect_default_ksrcdir() {
     printf '%s\n' "$PWD"
 }
 
-KSRCDIR="${1:-$(detect_default_ksrcdir)}"
-CONFIG_FILE="${2:-$KSRCDIR/.config}"
+usage() {
+    cat <<'EOF'
+Usage:
+  ./kernel-config.sh [OPTIONS] [KERNEL_SRCDIR] [CONFIG_FILE] [VAR=VALUE...]
+
+Options:
+  --kernel-srcdir PATH
+  --config-file PATH
+  --cpu-vendor-filter MODE
+  --keep-observability 0|1
+  --prune-legacy 0|1
+  --optimize-server-speed 0|1
+  --prune-debug-trace-kconfig 0|1
+  --prune-hardening-kconfig 0|1
+  --keep-bpf 0|1
+  --keep-compat32 0|1
+  --prune-unused-net 0|1
+  --prune-old-hw 0|1
+  --prune-x86-old-platforms 0|1
+  --keep-legacy-ata 0|1
+  --prune-insecure 0|1
+  --prune-radios 0|1
+  --prune-dma-attack-surface 0|1
+  -h, --help
+
+Notes:
+  Environment variables set defaults.
+  CLI flags and VAR=VALUE arguments override environment variables.
+  KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
+EOF
+}
+
+set_tunable() {
+    local name="$1"
+    local value="$2"
+
+    case "$name" in
+        KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | CPU_VENDOR_FILTER | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+            printf -v "$name" '%s' "$value"
+            ;;
+        *)
+            echo "Unknown setting: $name" >&2
+            exit 1
+            ;;
+    esac
+}
+
+set_option() {
+    local name="$1"
+    local value="$2"
+
+    case "$name" in
+        kernel-srcdir)
+            KSRCDIR="$value"
+            ;;
+        config-file)
+            CONFIG_FILE="$value"
+            ;;
+        *)
+            set_tunable "$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')" "$value"
+            ;;
+    esac
+}
 
 KEEP_OBSERVABILITY="${KEEP_OBSERVABILITY:-1}"
 PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
@@ -52,6 +115,71 @@ OPTIMIZE_SERVER_SPEED="${OPTIMIZE_SERVER_SPEED:-0}"
 PRUNE_DEBUG_TRACE_KCONFIG="${PRUNE_DEBUG_TRACE_KCONFIG:-0}"
 PRUNE_HARDENING_KCONFIG="${PRUNE_HARDENING_KCONFIG:-0}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
+KEEP_BPF="${KEEP_BPF:-1}"
+KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
+PRUNE_UNUSED_NET="${PRUNE_UNUSED_NET:-1}"
+PRUNE_OLD_HW="${PRUNE_OLD_HW:-1}"
+PRUNE_X86_OLD_PLATFORMS="${PRUNE_X86_OLD_PLATFORMS:-1}"
+KEEP_LEGACY_ATA="${KEEP_LEGACY_ATA:-1}"
+PRUNE_INSECURE="${PRUNE_INSECURE:-1}"
+PRUNE_RADIOS="${PRUNE_RADIOS:-1}"
+PRUNE_DMA_ATTACK_SURFACE="${PRUNE_DMA_ATTACK_SURFACE:-1}"
+
+KSRCDIR="${KSRCDIR:-}"
+CONFIG_FILE="${CONFIG_FILE:-}"
+positionals=()
+
+while (($# > 0)); do
+    case "$1" in
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while (($# > 0)); do
+                positionals+=("$1")
+                shift
+            done
+            break
+            ;;
+        --*=*)
+            opt_name="${1%%=*}"
+            opt_name="${opt_name#--}"
+            set_option "$opt_name" "${1#*=}"
+            ;;
+        --*)
+            opt_name="${1#--}"
+            shift
+            if (($# == 0)); then
+                echo "Missing value for --$opt_name" >&2
+                exit 1
+            fi
+            set_option "$opt_name" "$1"
+            ;;
+        *=*)
+            set_tunable "${1%%=*}" "${1#*=}"
+            ;;
+        *)
+            positionals+=("$1")
+            ;;
+    esac
+    shift
+done
+
+if ((${#positionals[@]} > 2)); then
+    echo "Too many positional arguments: ${positionals[*]}" >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ -z "$KSRCDIR" ]]; then
+    KSRCDIR="${positionals[0]:-$(detect_default_ksrcdir)}"
+fi
+
+if [[ -z "$CONFIG_FILE" ]]; then
+    CONFIG_FILE="${positionals[1]:-$KSRCDIR/.config}"
+fi
 
 cd "$KSRCDIR"
 
@@ -498,13 +626,11 @@ disable_if_present \
     GDB_SCRIPTS
 
 # optional: BPF/observability
-KEEP_BPF="${KEEP_BPF:-1}"
 if [[ "$KEEP_BPF" != "1" ]]; then
     disable_if_present DEBUG_INFO_BTF KPROBES
 fi
 
 # optional: 32-bit compat
-KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
 if [[ "$KEEP_COMPAT32" != "1" ]]; then
     disable_if_present IA32_EMULATION
 fi
@@ -590,7 +716,6 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
 fi
 
 # Uncommon or legacy network protocols for a general-purpose server
-PRUNE_UNUSED_NET="${PRUNE_UNUSED_NET:-1}"
 if [[ "$PRUNE_UNUSED_NET" == "1" ]]; then
     echo
     echo "==> Disabling uncommon/legacy network protocols"
@@ -614,10 +739,6 @@ if [[ "$PRUNE_UNUSED_NET" == "1" ]]; then
 fi
 
 # Old / obsolete hardware
-PRUNE_OLD_HW="${PRUNE_OLD_HW:-1}"
-PRUNE_X86_OLD_PLATFORMS="${PRUNE_X86_OLD_PLATFORMS:-1}"
-KEEP_LEGACY_ATA="${KEEP_LEGACY_ATA:-1}"
-
 if [[ "$PRUNE_OLD_HW" == "1" ]]; then
     echo
     echo "==> Disabling legacy or uncommon hardware"
@@ -656,8 +777,6 @@ if [[ "$KEEP_LEGACY_ATA" != "1" ]]; then
 fi
 
 # Insecure or legacy protocols/compat
-PRUNE_INSECURE="${PRUNE_INSECURE:-1}"
-
 if [[ "$PRUNE_INSECURE" == "1" ]]; then
     echo
     echo "==> Disabling legacy or less secure protocols/compat"
@@ -669,8 +788,6 @@ if [[ "$PRUNE_INSECURE" == "1" ]]; then
 fi
 
 # Radio / proximity / IoT features usually unnecessary on servers
-PRUNE_RADIOS="${PRUNE_RADIOS:-1}"
-
 if [[ "$PRUNE_RADIOS" == "1" ]]; then
     echo
     echo "==> Disabling unused radio and proximity protocols"
@@ -683,8 +800,6 @@ if [[ "$PRUNE_RADIOS" == "1" ]]; then
 fi
 
 # FireWire / USB4-Thunderbolt / gadget debug
-PRUNE_DMA_ATTACK_SURFACE="${PRUNE_DMA_ATTACK_SURFACE:-1}"
-
 if [[ "$PRUNE_DMA_ATTACK_SURFACE" == "1" ]]; then
     echo
     echo "==> Disabling buses and features with extra physical attack surface"
