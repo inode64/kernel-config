@@ -26,6 +26,7 @@ set -Eeuo pipefail
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
 #   DMA_ENGINE_SUPPORT=none -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
+#   NUMA_SUPPORT=none       -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
@@ -72,6 +73,7 @@ Options:
   --initrd-support MODE
   --tpm-support MODE
   --dma-engine-support MODE
+  --numa-support MODE
   --applications LIST
   --host-type TYPE
   --keep-observability [0|1]
@@ -102,6 +104,7 @@ Notes:
   --initrd-support accepts: none, auto, on, off.
   --tpm-support accepts: none, auto, on, off.
   --dma-engine-support accepts: none, auto, on, off.
+  --numa-support accepts: none, auto, on, off.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
@@ -151,7 +154,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | NUMA_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -192,6 +195,7 @@ UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
 INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
 TPM_SUPPORT="${TPM_SUPPORT:-none}"
 DMA_ENGINE_SUPPORT="${DMA_ENGINE_SUPPORT:-none}"
+NUMA_SUPPORT="${NUMA_SUPPORT:-none}"
 APPLICATIONS="${APPLICATIONS:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
@@ -719,6 +723,59 @@ resolve_dma_engine_support() {
             ;;
         *)
             echo "Invalid DMA_ENGINE_SUPPORT: $DMA_ENGINE_SUPPORT (use none, auto, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+detect_host_numa_support() {
+    local online=""
+
+    if [[ ! -d /sys/devices/system/node ]]; then
+        printf '%s\n' "off"
+        return
+    fi
+
+    if compgen -G "/sys/devices/system/node/node[1-9]*" >/dev/null; then
+        printf '%s\n' "on"
+        return
+    fi
+
+    if [[ -r /sys/devices/system/node/online ]]; then
+        online="$(tr -d '[:space:]' < /sys/devices/system/node/online)"
+        case "$online" in
+            "" | 0)
+                printf '%s\n' "off"
+                ;;
+            *)
+                printf '%s\n' "on"
+                ;;
+        esac
+        return
+    fi
+
+    printf '%s\n' "off"
+}
+
+resolve_numa_support() {
+    local mode
+    mode="$(printf '%s' "$NUMA_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_numa_support
+            ;;
+        on | yes | true | 1 | enable | enabled | numa)
+            printf '%s\n' "on"
+            ;;
+        off | no | false | 0 | disable | disabled)
+            printf '%s\n' "off"
+            ;;
+        *)
+            echo "Invalid NUMA_SUPPORT: $NUMA_SUPPORT (use none, auto, on, or off)" >&2
             exit 1
             ;;
     esac
@@ -1706,6 +1763,24 @@ configure_dma_engine_support_profile() {
     esac
 }
 
+configure_numa_support_profile() {
+    local mode="$1"
+
+    echo
+    echo "==> Applying NUMA support profile: $mode"
+
+    case "$mode" in
+        on)
+            echo "    (keeping CONFIG_NUMA enabled)"
+            enable_if_present NUMA
+            ;;
+        off)
+            echo "    (pruning CONFIG_NUMA)"
+            disable_if_present NUMA
+            ;;
+    esac
+}
+
 configure_application_profiles() {
     local profile
     local qemu_cpu_vendor=""
@@ -2114,6 +2189,11 @@ if [[ "$DMA_ENGINE_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_dma_engine_support_profile "$DMA_ENGINE_SUPPORT_EFFECTIVE"
 fi
 
+NUMA_SUPPORT_EFFECTIVE="$(resolve_numa_support)"
+if [[ "$NUMA_SUPPORT_EFFECTIVE" != "none" ]]; then
+    configure_numa_support_profile "$NUMA_SUPPORT_EFFECTIVE"
+fi
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -2249,6 +2329,7 @@ echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub,
 echo "  - INITRD_SUPPORT=auto/on/off keeps or prunes BLK_DEV_INITRD based on current boot usage or explicit selection."
 echo "  - TPM_SUPPORT=auto/on/off keeps or prunes TPM support and reports detected TPM 1.2/2.0 devices."
 echo "  - DMA_ENGINE_SUPPORT=auto/on/off keeps or prunes CONFIG_DMADEVICES based on currently exposed dmaengine devices."
+echo "  - NUMA_SUPPORT=auto/on/off keeps or prunes CONFIG_NUMA based on currently exposed NUMA nodes."
 echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed by the selected apps."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
