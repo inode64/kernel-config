@@ -28,6 +28,7 @@ set -Eeuo pipefail
 #   DMA_ENGINE_SUPPORT=none -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
 #   IOMMU_SUPPORT=none      -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor
 #   NUMA_SUPPORT=none       -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
+#   NR_CPUS=none            -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
@@ -76,6 +77,7 @@ Options:
   --dma-engine-support MODE
   --iommu-support MODE
   --numa-support MODE
+  --nr-cpus VALUE
   --applications LIST
   --host-type TYPE
   --keep-observability [0|1]
@@ -108,6 +110,7 @@ Notes:
   --dma-engine-support accepts: none, auto, on, off.
   --iommu-support accepts: none, auto, on, off.
   --numa-support accepts: none, auto, on, off.
+  --nr-cpus accepts: none, auto, or a positive integer.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
@@ -157,7 +160,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -200,6 +203,7 @@ TPM_SUPPORT="${TPM_SUPPORT:-none}"
 DMA_ENGINE_SUPPORT="${DMA_ENGINE_SUPPORT:-none}"
 IOMMU_SUPPORT="${IOMMU_SUPPORT:-none}"
 NUMA_SUPPORT="${NUMA_SUPPORT:-none}"
+NR_CPUS="${NR_CPUS:-none}"
 APPLICATIONS="${APPLICATIONS:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
@@ -805,6 +809,106 @@ resolve_numa_support() {
         *)
             echo "Invalid NUMA_SUPPORT: $NUMA_SUPPORT (use none, auto, on, or off)" >&2
             exit 1
+            ;;
+    esac
+}
+
+count_cpu_list_entries() {
+    local cpu_list="$1"
+    local token start end count=0
+
+    IFS=',' read -r -a cpu_tokens <<<"$cpu_list"
+    for token in "${cpu_tokens[@]}"; do
+        case "$token" in
+            '' )
+                ;;
+            *-*)
+                if [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                    start="${BASH_REMATCH[1]}"
+                    end="${BASH_REMATCH[2]}"
+                    if (( end < start )); then
+                        return 1
+                    fi
+                    ((count += end - start + 1))
+                else
+                    return 1
+                fi
+                ;;
+            *)
+                if [[ "$token" =~ ^[0-9]+$ ]]; then
+                    ((count += 1))
+                else
+                    return 1
+                fi
+                ;;
+        esac
+    done
+
+    printf '%s\n' "$count"
+}
+
+detect_host_nr_cpus() {
+    local path cpu_list count
+
+    for path in \
+        /sys/devices/system/cpu/present \
+        /sys/devices/system/cpu/possible \
+        /sys/devices/system/cpu/online; do
+        [[ -r "$path" ]] || continue
+        cpu_list="$(tr -d '[:space:]' < "$path")"
+        count="$(count_cpu_list_entries "$cpu_list" 2>/dev/null || true)"
+        if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+            printf '%s\n' "$count"
+            return
+        fi
+    done
+
+    if command -v getconf >/dev/null 2>&1; then
+        count="$(getconf _NPROCESSORS_CONF 2>/dev/null || true)"
+        if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+            printf '%s\n' "$count"
+            return
+        fi
+    fi
+
+    if command -v nproc >/dev/null 2>&1; then
+        count="$(nproc --all 2>/dev/null || true)"
+        if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+            printf '%s\n' "$count"
+            return
+        fi
+    fi
+
+    if [[ -r /proc/cpuinfo ]]; then
+        count="$(awk '/^processor[[:space:]]*:/{count++} END{print count+0}' /proc/cpuinfo 2>/dev/null || true)"
+        if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+            printf '%s\n' "$count"
+            return
+        fi
+    fi
+
+    printf '%s\n' "unknown"
+}
+
+resolve_nr_cpus() {
+    local raw detected
+
+    raw="$(printf '%s' "$NR_CPUS" | tr '[:upper:]' '[:lower:]')"
+
+    case "$raw" in
+        "" | none | off | keep)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_nr_cpus
+            ;;
+        *)
+            if [[ "$raw" =~ ^[1-9][0-9]*$ ]]; then
+                printf '%s\n' "$raw"
+            else
+                echo "Invalid NR_CPUS: $NR_CPUS (use none, auto, or a positive integer)" >&2
+                exit 1
+            fi
             ;;
     esac
 }
@@ -1902,6 +2006,53 @@ configure_numa_support_profile() {
     esac
 }
 
+get_config_numeric_value() {
+    local sym="$1"
+
+    awk -F= -v sym="CONFIG_${sym}" '$1 == sym { print $2; exit }' "$CONFIG_FILE" 2>/dev/null || true
+}
+
+clamp_nr_cpus_to_config_range() {
+    local requested="$1"
+    local adjusted="$requested"
+    local range_begin range_end
+
+    range_begin="$(get_config_numeric_value NR_CPUS_RANGE_BEGIN)"
+    range_end="$(get_config_numeric_value NR_CPUS_RANGE_END)"
+
+    if [[ "$range_begin" =~ ^[1-9][0-9]*$ ]] && (( adjusted < range_begin )); then
+        adjusted="$range_begin"
+    fi
+
+    if [[ "$range_end" =~ ^[1-9][0-9]*$ ]] && (( adjusted > range_end )); then
+        adjusted="$range_end"
+    fi
+
+    printf '%s\n' "$adjusted"
+}
+
+configure_nr_cpus_profile() {
+    local requested="$1"
+    local adjusted
+
+    echo
+    echo "==> Applying NR_CPUS profile: $requested"
+
+    if ! have_symbol NR_CPUS; then
+        echo "    (CONFIG_NR_CPUS is not present in this .config; skipping)"
+        return
+    fi
+
+    adjusted="$(clamp_nr_cpus_to_config_range "$requested")"
+    if [[ "$adjusted" != "$requested" ]]; then
+        echo "    (requested $requested CPUs, clamped to $adjusted by the configured NR_CPUS range)"
+    else
+        echo "    (setting CONFIG_NR_CPUS=$adjusted)"
+    fi
+
+    cfg --set-val NR_CPUS "$adjusted" || true
+}
+
 configure_application_profiles() {
     local profile
     local qemu_cpu_vendor=""
@@ -2326,6 +2477,16 @@ if [[ "$NUMA_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_numa_support_profile "$NUMA_SUPPORT_EFFECTIVE"
 fi
 
+NR_CPUS_EFFECTIVE="$(resolve_nr_cpus)"
+if [[ "$NR_CPUS_EFFECTIVE" != "none" ]]; then
+    if [[ "$NR_CPUS_EFFECTIVE" == "unknown" ]]; then
+        echo
+        echo "==> Could not detect host CPU count; use NR_CPUS=<number>"
+    else
+        configure_nr_cpus_profile "$NR_CPUS_EFFECTIVE"
+    fi
+fi
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -2463,6 +2624,7 @@ echo "  - TPM_SUPPORT=auto/on/off keeps or prunes TPM support and reports detect
 echo "  - DMA_ENGINE_SUPPORT=auto/on/off keeps or prunes CONFIG_DMADEVICES based on currently exposed dmaengine devices."
 echo "  - IOMMU_SUPPORT=auto/on/off keeps or prunes IOMMU support and selects AMD_IOMMU or INTEL_IOMMU by CPU vendor."
 echo "  - NUMA_SUPPORT=auto/on/off keeps or prunes CONFIG_NUMA based on currently exposed NUMA nodes."
+echo "  - NR_CPUS=auto/<number> adjusts CONFIG_NR_CPUS to the detected or requested CPU count."
 echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed by the selected apps."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
