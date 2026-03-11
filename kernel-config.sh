@@ -13,9 +13,10 @@ set -Eeuo pipefail
 #
 # Optional variables and flags:
 #   ALL_OPTIMIZATIONS=0    -> enable the script's full optimization preset
+#   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   KEEP_OBSERVABILITY=1   -> keep useful options for perf/bpf/ftrace/debugfs
 #   PRUNE_LEGACY=0         -> do not touch legacy/compat options by default
-#   OPTIMIZE_SERVER_SPEED=0 -> do not force extra throughput tuning for servers
+#   OPTIMIZE_SERVER_SPEED=0 -> legacy alias for OPTIMIZATION_PROFILE=server
 #   PRUNE_DEBUG_TRACE_KCONFIG=0 -> disable debug/trace symbols detected from Kconfig prompts
 #   PRUNE_HARDENING_KCONFIG=0 -> disable hardening/mitigation symbols detected from Kconfig prompts
 #   PRUNE_SELFTEST_KCONFIG=0 -> disable selftest symbols detected from Kconfig prompts
@@ -58,6 +59,7 @@ Options:
   --kernel-srcdir PATH
   --config-file PATH
   --all-optimizations [0|1]
+  --optimization-profile PROFILE
   --cpu-vendor-filter MODE
   --host-type TYPE
   --keep-observability [0|1]
@@ -82,11 +84,13 @@ Notes:
   CLI flags and VAR=VALUE arguments override environment variables.
   Boolean flags without a value imply 1.
   The all-optimizations preset does not enable --prune-hardening-kconfig.
+  --optimization-profile accepts: none, server, desktop, realtime.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
 }
 
 apply_all_optimizations() {
+    OPTIMIZATION_PROFILE=server
     KEEP_OBSERVABILITY=0
     PRUNE_LEGACY=1
     OPTIMIZE_SERVER_SPEED=1
@@ -129,7 +133,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -157,6 +161,7 @@ set_option() {
 }
 
 ALL_OPTIMIZATIONS="${ALL_OPTIMIZATIONS:-0}"
+OPTIMIZATION_PROFILE="${OPTIMIZATION_PROFILE:-none}"
 KEEP_OBSERVABILITY="${KEEP_OBSERVABILITY:-1}"
 PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
 OPTIMIZE_SERVER_SPEED="${OPTIMIZE_SERVER_SPEED:-0}"
@@ -398,6 +403,28 @@ resolve_host_type() {
     esac
 }
 
+resolve_optimization_profile() {
+    local mode
+    mode="$(printf '%s' "$OPTIMIZATION_PROFILE" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none | off | 0)
+            if [[ "$OPTIMIZE_SERVER_SPEED" == "1" ]]; then
+                printf '%s\n' "server"
+            else
+                printf '%s\n' "none"
+            fi
+            ;;
+        server | desktop | realtime)
+            printf '%s\n' "$mode"
+            ;;
+        *)
+            echo "Invalid OPTIMIZATION_PROFILE: $OPTIMIZATION_PROFILE (use none, server, desktop, or realtime)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 vendor_kconfig_files() {
     local path
 
@@ -496,6 +523,131 @@ enable_if_present() {
             cfg --enable "$sym" || true
         fi
     done
+}
+
+select_if_present() {
+    local selected="$1"
+    shift
+
+    if have_symbol "$selected"; then
+        disable_if_present "$@"
+        echo "Selecting: CONFIG_${selected}"
+        cfg --enable "$selected" || true
+    fi
+}
+
+configure_optimization_profile() {
+    local profile="$1"
+
+    if [[ "$profile" == "none" ]]; then
+        return
+    fi
+
+    echo
+    echo "==> Applying optimization profile: $profile"
+
+    case "$profile" in
+        server)
+            echo "    (prioritizes throughput and low background overhead)"
+
+            disable_if_present \
+                CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
+                CPU_FREQ_DEFAULT_GOV_ONDEMAND \
+                CPU_FREQ_DEFAULT_GOV_POWERSAVE \
+                CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+                CPU_FREQ_DEFAULT_GOV_USERSPACE \
+                HZ_PERIODIC \
+                SCHED_AUTOGROUP
+
+            enable_if_present \
+                CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
+                CPU_FREQ_GOV_PERFORMANCE \
+                NO_HZ_IDLE
+
+            if have_symbol HZ_250; then
+                select_if_present HZ_250 HZ_100 HZ_300 HZ_1000
+            elif have_symbol HZ_300; then
+                select_if_present HZ_300 HZ_100 HZ_250 HZ_1000
+            elif have_symbol HZ_100; then
+                select_if_present HZ_100 HZ_250 HZ_300 HZ_1000
+            fi
+
+            if have_symbol PREEMPT_NONE; then
+                select_if_present PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+            elif have_symbol PREEMPT_VOLUNTARY; then
+                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+            fi
+            ;;
+        desktop)
+            echo "    (prioritizes interactivity and responsive scheduling)"
+
+            disable_if_present \
+                CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
+                CPU_FREQ_DEFAULT_GOV_ONDEMAND \
+                CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
+                CPU_FREQ_DEFAULT_GOV_POWERSAVE \
+                CPU_FREQ_DEFAULT_GOV_USERSPACE \
+                HZ_PERIODIC \
+                PREEMPT_RT
+
+            enable_if_present \
+                CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+                CPU_FREQ_GOV_SCHEDUTIL \
+                NO_HZ_IDLE \
+                SCHED_AUTOGROUP \
+                HIGH_RES_TIMERS
+
+            if have_symbol HZ_1000; then
+                select_if_present HZ_1000 HZ_100 HZ_250 HZ_300
+            elif have_symbol HZ_300; then
+                select_if_present HZ_300 HZ_100 HZ_250 HZ_1000
+            elif have_symbol HZ_250; then
+                select_if_present HZ_250 HZ_100 HZ_300 HZ_1000
+            fi
+
+            if have_symbol PREEMPT_DYNAMIC; then
+                select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
+            elif have_symbol PREEMPT; then
+                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
+            elif have_symbol PREEMPT_VOLUNTARY; then
+                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+            fi
+            ;;
+        realtime)
+            echo "    (prioritizes low latency and deterministic wakeups)"
+
+            disable_if_present \
+                CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
+                CPU_FREQ_DEFAULT_GOV_ONDEMAND \
+                CPU_FREQ_DEFAULT_GOV_POWERSAVE \
+                CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
+                CPU_FREQ_DEFAULT_GOV_USERSPACE \
+                HZ_PERIODIC \
+                SCHED_AUTOGROUP
+
+            enable_if_present \
+                CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
+                CPU_FREQ_GOV_PERFORMANCE \
+                HIGH_RES_TIMERS \
+                NO_HZ_IDLE
+
+            if have_symbol HZ_1000; then
+                select_if_present HZ_1000 HZ_100 HZ_250 HZ_300
+            elif have_symbol HZ_300; then
+                select_if_present HZ_300 HZ_100 HZ_250 HZ_1000
+            elif have_symbol HZ_250; then
+                select_if_present HZ_250 HZ_100 HZ_300 HZ_1000
+            fi
+
+            if have_symbol PREEMPT_RT; then
+                select_if_present PREEMPT_RT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC
+            elif have_symbol PREEMPT; then
+                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
+            elif have_symbol PREEMPT_DYNAMIC; then
+                select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
+            fi
+            ;;
+    esac
 }
 
 configure_host_type_profile() {
@@ -978,34 +1130,8 @@ if [[ "$PRUNE_HARDENING_KCONFIG" == "1" ]]; then
     fi
 fi
 
-if [[ "$OPTIMIZE_SERVER_SPEED" == "1" ]]; then
-    echo
-    echo "==> Applying server performance profile"
-    echo "    (prioritizes throughput over power saving and desktop-oriented tuning)"
-
-    disable_if_present \
-        CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
-        CPU_FREQ_DEFAULT_GOV_ONDEMAND \
-        CPU_FREQ_DEFAULT_GOV_POWERSAVE \
-        CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
-        CPU_FREQ_DEFAULT_GOV_USERSPACE \
-        HZ_PERIODIC \
-        SCHED_AUTOGROUP
-
-    enable_if_present \
-        CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
-        CPU_FREQ_GOV_PERFORMANCE \
-        NO_HZ_IDLE
-
-    if have_symbol HZ_250; then
-        disable_if_present \
-            HZ_100 \
-            HZ_300 \
-            HZ_1000
-        echo "Selecting: CONFIG_HZ_250"
-        cfg --enable HZ_250 || true
-    fi
-fi
+OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
+configure_optimization_profile "$OPTIMIZATION_PROFILE_EFFECTIVE"
 
 CPU_VENDOR_EFFECTIVE="$(resolve_cpu_vendor_filter)"
 if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
@@ -1149,7 +1275,8 @@ echo "  scripts/diffconfig \"$BACKUP\" \"$CONFIG_FILE\""
 echo
 echo "Notes:"
 echo "  - KEEP_OBSERVABILITY=1 keeps useful observability options."
-echo "  - OPTIMIZE_SERVER_SPEED=1 applies a conservative server-throughput profile."
+echo "  - OPTIMIZATION_PROFILE=server/desktop/realtime selects a kernel tuning profile."
+echo "  - OPTIMIZE_SERVER_SPEED=1 is kept as a legacy alias for OPTIMIZATION_PROFILE=server."
 echo "  - PRUNE_DEBUG_TRACE_KCONFIG=1 prunes debug/trace options based on Kconfig."
 echo "  - PRUNE_HARDENING_KCONFIG=1 prunes hardening/mitigation options based on Kconfig."
 echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
