@@ -505,6 +505,57 @@ resolve_video_support() {
     esac
 }
 
+list_xfs_mountpoints() {
+    if command -v findmnt >/dev/null 2>&1; then
+        findmnt -rn -t xfs -o TARGET 2>/dev/null || true
+    else
+        awk '$3 == "xfs" { print $2 }' /proc/self/mounts 2>/dev/null || true
+    fi
+}
+
+probe_xfs_deprecated_features() {
+    local mountpoint info
+    local saw_xfs=0
+    local need_v4=0
+    local need_ascii_ci=0
+
+    if ! command -v xfs_info >/dev/null 2>&1; then
+        printf '%s\n' "unavailable"
+        return
+    fi
+
+    while IFS= read -r mountpoint; do
+        [[ -n "$mountpoint" ]] || continue
+        saw_xfs=1
+        info="$(xfs_info "$mountpoint" 2>/dev/null || true)"
+        if [[ -z "$info" ]]; then
+            printf '%s\n' "unknown"
+            return
+        fi
+
+        if [[ "$info" == *"crc=0"* ]]; then
+            need_v4=1
+        fi
+
+        if [[ "$info" == *"ascii-ci=1"* ]]; then
+            need_ascii_ci=1
+        fi
+    done < <(list_xfs_mountpoints)
+
+    if [[ "$saw_xfs" == "0" ]]; then
+        printf '%s\n' "none"
+        return
+    fi
+
+    if [[ "$need_v4" == "1" ]]; then
+        printf '%s\n' "v4"
+    fi
+
+    if [[ "$need_ascii_ci" == "1" ]]; then
+        printf '%s\n' "ascii_ci"
+    fi
+}
+
 resolve_host_type() {
     local mode
     mode="$(printf '%s' "$HOST_TYPE" | tr '[:upper:]' '[:lower:]')"
@@ -1131,6 +1182,60 @@ configure_video_support_profile() {
     fi
 }
 
+configure_xfs_feature_support() {
+    local probe_result
+    local need_v4=0
+    local need_ascii_ci=0
+    local -a probe_results=()
+
+    if ! have_symbol XFS_SUPPORT_V4 && ! have_symbol XFS_SUPPORT_ASCII_CI; then
+        return
+    fi
+
+    echo
+    echo "==> Checking mounted XFS filesystems for deprecated format features"
+
+    mapfile -t probe_results < <(probe_xfs_deprecated_features)
+    if ((${#probe_results[@]} == 0)); then
+        echo "    (no XFS probe result; leaving XFS deprecated feature support unchanged)"
+        return
+    fi
+
+    for probe_result in "${probe_results[@]}"; do
+        case "$probe_result" in
+            unavailable)
+                echo "    (xfs_info not available; leaving XFS deprecated feature support unchanged)"
+                return
+                ;;
+            unknown)
+                echo "    (could not inspect one or more mounted XFS filesystems; leaving settings unchanged)"
+                return
+                ;;
+            none)
+                echo "    (no mounted XFS filesystems detected)"
+                ;;
+            v4)
+                need_v4=1
+                ;;
+            ascii_ci)
+                need_ascii_ci=1
+                ;;
+        esac
+    done
+
+    if [[ "$need_v4" == "1" ]]; then
+        enable_if_present XFS_SUPPORT_V4
+    else
+        disable_if_present XFS_SUPPORT_V4
+    fi
+
+    if [[ "$need_ascii_ci" == "1" ]]; then
+        enable_if_present XFS_SUPPORT_ASCII_CI
+    else
+        disable_if_present XFS_SUPPORT_ASCII_CI
+    fi
+}
+
 echo
 echo "==> Disabling debug/instrumentation options with real runtime cost"
 
@@ -1376,6 +1481,8 @@ if [[ "$VIDEO_SUPPORT_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
+configure_xfs_feature_support
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -1501,6 +1608,7 @@ echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
 echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardening pruning."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."
+echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
 echo "  - Hardening/security options remain intact unless PRUNE_HARDENING_KCONFIG=1 is set."
