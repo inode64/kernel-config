@@ -25,7 +25,7 @@ set -Eeuo pipefail
 #   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
-#   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, atop, bmon, btop, htop, iotop-c, cryptsetup
+#   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
@@ -701,7 +701,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | atop | bmon | btop | htop | iotop-c | cryptsetup)
+            samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -710,7 +710,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, atop, bmon, btop, htop, iotop-c, cryptsetup" >&2
+                echo "Use: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup" >&2
                 exit 1
                 ;;
         esac
@@ -731,6 +731,25 @@ resolve_application_profiles() {
     fi
 
     printf '%s\n' "${profiles[@]}"
+}
+
+resolve_qemu_host_cpu_vendor() {
+    local vendor_mode resolved_vendor
+
+    vendor_mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
+    case "$vendor_mode" in
+        "" | none | off | 0)
+            detect_host_cpu_vendor
+            ;;
+        *)
+            resolved_vendor="$(resolve_cpu_vendor_filter)"
+            if [[ "$resolved_vendor" == "none" ]]; then
+                detect_host_cpu_vendor
+            else
+                printf '%s\n' "$resolved_vendor"
+            fi
+            ;;
+    esac
 }
 
 list_xfs_mountpoints() {
@@ -1631,6 +1650,7 @@ configure_tpm_support_profile() {
 
 configure_application_profiles() {
     local profile
+    local qemu_cpu_vendor=""
     local -a enable_syms=()
 
     echo
@@ -1687,6 +1707,30 @@ configure_application_profiles() {
                 for sym in NAMESPACES UTS_NS IPC_NS USER_NS PID_NS NET_NS CGROUPS CGROUP_BPF CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_PIDS CGROUP_SCHED CFS_BANDWIDTH FAIR_GROUP_SCHED MEMCG BLK_CGROUP POSIX_MQUEUE VETH BRIDGE BRIDGE_NETFILTER OVERLAY_FS NF_CONNTRACK NF_NAT NF_TABLES NFT_CT NFT_NAT NFT_MASQ NETFILTER_XTABLES IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT VXLAN; do
                     append_unique_item "$sym" enable_syms
                 done
+                ;;
+            qemu)
+                qemu_cpu_vendor="$(resolve_qemu_host_cpu_vendor)"
+                case "$qemu_cpu_vendor" in
+                    amd | intel)
+                        echo "    (qemu uses ${qemu_cpu_vendor^^} host virtualization support)"
+                        ;;
+                    unknown)
+                        echo "    (qemu host CPU vendor could not be detected; enabling generic KVM support only)"
+                        ;;
+                esac
+
+                for sym in KVM KVM_X86 KVM_VFIO VFIO TUN VHOST VHOST_NET VHOST_VSOCK VHOST_IOTLB; do
+                    append_unique_item "$sym" enable_syms
+                done
+
+                case "$qemu_cpu_vendor" in
+                    intel)
+                        append_unique_item "KVM_INTEL" enable_syms
+                        ;;
+                    amd)
+                        append_unique_item "KVM_AMD" enable_syms
+                        ;;
+                esac
                 ;;
             atop)
                 for sym in TASKSTATS TASK_DELAY_ACCT PSI SCHEDSTATS PROC_EVENTS; do
