@@ -22,6 +22,7 @@ set -Eeuo pipefail
 #   PRUNE_SELFTEST_KCONFIG=0 -> disable selftest symbols detected from Kconfig prompts
 #   CPU_VENDOR_FILTER=none -> none, auto, amd, intel; disable x86 options for the other vendor
 #   VIDEO_SUPPORT=none      -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
+#   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
@@ -63,6 +64,7 @@ Options:
   --optimization-profile PROFILE
   --cpu-vendor-filter MODE
   --video-support MODE
+  --uefi-support MODE
   --host-type TYPE
   --keep-observability [0|1]
   --prune-legacy [0|1]
@@ -88,6 +90,7 @@ Notes:
   The all-optimizations preset does not enable --prune-hardening-kconfig.
   --optimization-profile accepts: none, server, desktop, realtime.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
+  --uefi-support accepts: none, auto, on, off.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
 }
@@ -136,7 +139,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -173,6 +176,7 @@ PRUNE_HARDENING_KCONFIG="${PRUNE_HARDENING_KCONFIG:-0}"
 PRUNE_SELFTEST_KCONFIG="${PRUNE_SELFTEST_KCONFIG:-0}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
+UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
 KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
@@ -500,6 +504,38 @@ resolve_video_support() {
             ;;
         *)
             echo "Invalid VIDEO_SUPPORT: $VIDEO_SUPPORT (use none, auto, amd, intel, nvidia, or nouveau)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+detect_host_uefi_support() {
+    if [[ -d /sys/firmware/efi ]]; then
+        printf '%s\n' "on"
+    else
+        printf '%s\n' "off"
+    fi
+}
+
+resolve_uefi_support() {
+    local mode
+    mode="$(printf '%s' "$UEFI_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_uefi_support
+            ;;
+        on | yes | true | 1 | enable | enabled | uefi)
+            printf '%s\n' "on"
+            ;;
+        off | no | false | 0 | disable | disabled | bios | legacy)
+            printf '%s\n' "off"
+            ;;
+        *)
+            echo "Invalid UEFI_SUPPORT: $UEFI_SUPPORT (use none, auto, on, or off)" >&2
             exit 1
             ;;
     esac
@@ -1236,6 +1272,60 @@ configure_xfs_feature_support() {
     fi
 }
 
+configure_uefi_support_profile() {
+    local mode="$1"
+    local -a enable_syms=()
+    local -a disable_syms=()
+
+    echo
+    echo "==> Applying UEFI support profile: $mode"
+
+    case "$mode" in
+        on)
+            echo "    (keeping common EFI runtime, boot stub, and EFI partition support)"
+            enable_syms=(
+                EFI
+                EFI_STUB
+                EFI_PARTITION
+                EFIVAR_FS
+                EFI_VARS_PSTORE
+            )
+            ;;
+        off)
+            echo "    (pruning common EFI runtime, boot stub, and EFI partition support)"
+            disable_syms=(
+                EFI
+                EFI_STUB
+                EFI_HANDOVER_PROTOCOL
+                EFI_MIXED
+                EFI_ESRT
+                EFI_VARS_PSTORE
+                EFI_VARS_PSTORE_DEFAULT_DISABLE
+                EFI_SOFT_RESERVE
+                EFI_DXE_MEM_ATTRIBUTES
+                EFI_BOOTLOADER_CONTROL
+                EFI_CAPSULE_LOADER
+                EFI_TEST
+                EFI_DISABLE_PCI_DMA
+                EFI_EARLYCON
+                EFI_CUSTOM_SSDT_OVERLAYS
+                EFI_DISABLE_RUNTIME
+                EFI_EMBEDDED_FIRMWARE
+                EFI_PARTITION
+                EFIVAR_FS
+            )
+            ;;
+    esac
+
+    if ((${#enable_syms[@]} > 0)); then
+        enable_if_present "${enable_syms[@]}"
+    fi
+
+    if ((${#disable_syms[@]} > 0)); then
+        disable_if_present "${disable_syms[@]}"
+    fi
+}
+
 echo
 echo "==> Disabling debug/instrumentation options with real runtime cost"
 
@@ -1483,6 +1573,11 @@ fi
 
 configure_xfs_feature_support
 
+UEFI_SUPPORT_EFFECTIVE="$(resolve_uefi_support)"
+if [[ "$UEFI_SUPPORT_EFFECTIVE" != "none" ]]; then
+    configure_uefi_support_profile "$UEFI_SUPPORT_EFFECTIVE"
+fi
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -1608,6 +1703,7 @@ echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
 echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardening pruning."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."
+echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub, and EFI partition support."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
