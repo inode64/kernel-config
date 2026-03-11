@@ -88,10 +88,11 @@ discover_legacy_kconfig_symbols() {
         | xargs -0 awk '
             BEGIN {
                 IGNORECASE = 1
+                pattern = "(legacy|deprecated|obsolete|obsolet[oa]s?)"
             }
 
             function maybe_emit(text) {
-                if (sym != "" && is_toggle && text ~ /(legacy|deprecated|obsolete|obsolet[oa]s?)/) {
+                if (sym != "" && is_toggle && text ~ pattern) {
                     print sym
                 }
             }
