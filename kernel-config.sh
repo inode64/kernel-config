@@ -25,6 +25,7 @@ set -Eeuo pipefail
 #   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
+#   DMA_ENGINE_SUPPORT=none -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
 #   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
@@ -70,6 +71,7 @@ Options:
   --uefi-support MODE
   --initrd-support MODE
   --tpm-support MODE
+  --dma-engine-support MODE
   --applications LIST
   --host-type TYPE
   --keep-observability [0|1]
@@ -99,6 +101,7 @@ Notes:
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
   --tpm-support accepts: none, auto, on, off.
+  --dma-engine-support accepts: none, auto, on, off.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
@@ -148,7 +151,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -188,6 +191,7 @@ VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
 UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
 INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
 TPM_SUPPORT="${TPM_SUPPORT:-none}"
+DMA_ENGINE_SUPPORT="${DMA_ENGINE_SUPPORT:-none}"
 APPLICATIONS="${APPLICATIONS:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
@@ -679,6 +683,42 @@ resolve_tpm_support() {
             ;;
         *)
             echo "Invalid TPM_SUPPORT: $TPM_SUPPORT (use none, auto, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+detect_host_dma_engine_support() {
+    local path
+
+    for path in /sys/class/dma/*; do
+        [[ -e "$path" ]] || continue
+        printf '%s\n' "on"
+        return
+    done
+
+    printf '%s\n' "off"
+}
+
+resolve_dma_engine_support() {
+    local mode
+    mode="$(printf '%s' "$DMA_ENGINE_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_dma_engine_support
+            ;;
+        on | yes | true | 1 | enable | enabled | dma | dmaengine)
+            printf '%s\n' "on"
+            ;;
+        off | no | false | 0 | disable | disabled)
+            printf '%s\n' "off"
+            ;;
+        *)
+            echo "Invalid DMA_ENGINE_SUPPORT: $DMA_ENGINE_SUPPORT (use none, auto, on, or off)" >&2
             exit 1
             ;;
     esac
@@ -1648,6 +1688,24 @@ configure_tpm_support_profile() {
     fi
 }
 
+configure_dma_engine_support_profile() {
+    local mode="$1"
+
+    echo
+    echo "==> Applying DMA Engine support profile: $mode"
+
+    case "$mode" in
+        on)
+            echo "    (keeping CONFIG_DMADEVICES enabled)"
+            enable_if_present DMADEVICES
+            ;;
+        off)
+            echo "    (pruning CONFIG_DMADEVICES)"
+            disable_if_present DMADEVICES
+            ;;
+    esac
+}
+
 configure_application_profiles() {
     local profile
     local qemu_cpu_vendor=""
@@ -2051,6 +2109,11 @@ if [[ "$TPM_RESOLVED" != "none" ]]; then
     fi
 fi
 
+DMA_ENGINE_SUPPORT_EFFECTIVE="$(resolve_dma_engine_support)"
+if [[ "$DMA_ENGINE_SUPPORT_EFFECTIVE" != "none" ]]; then
+    configure_dma_engine_support_profile "$DMA_ENGINE_SUPPORT_EFFECTIVE"
+fi
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -2185,6 +2248,7 @@ echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to 
 echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub, and EFI partition support."
 echo "  - INITRD_SUPPORT=auto/on/off keeps or prunes BLK_DEV_INITRD based on current boot usage or explicit selection."
 echo "  - TPM_SUPPORT=auto/on/off keeps or prunes TPM support and reports detected TPM 1.2/2.0 devices."
+echo "  - DMA_ENGINE_SUPPORT=auto/on/off keeps or prunes CONFIG_DMADEVICES based on currently exposed dmaengine devices."
 echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed by the selected apps."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
