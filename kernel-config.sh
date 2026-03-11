@@ -84,7 +84,7 @@ have_symbol() {
 }
 
 discover_legacy_kconfig_symbols() {
-    find "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null \
+    find "$KSRCDIR" -type f -name 'Kconfig' -print0 2>/dev/null \
         | xargs -0 awk '
             BEGIN {
                 IGNORECASE = 1
@@ -119,7 +119,7 @@ discover_legacy_kconfig_symbols() {
 }
 
 discover_debug_trace_kconfig_symbols() {
-    find "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null \
+    find "$KSRCDIR" -type f -name 'Kconfig' -print0 2>/dev/null \
         | xargs -0 awk '
             BEGIN {
                 IGNORECASE = 1
@@ -154,20 +154,7 @@ discover_debug_trace_kconfig_symbols() {
 }
 
 discover_hardening_kconfig_symbols() {
-    local path
-
-    for path in \
-        "$KSRCDIR/arch/Kconfig" \
-        "$KSRCDIR/arch/x86/Kconfig" \
-        "$KSRCDIR/arch/arm64/Kconfig" \
-        "$KSRCDIR/security/Kconfig" \
-        "$KSRCDIR/init/Kconfig" \
-        "$KSRCDIR/distro/Kconfig" \
-        "$KSRCDIR/drivers/firmware/efi/Kconfig"; do
-        if [[ -f "$path" ]]; then
-            printf '%s\0' "$path"
-        fi
-    done \
+    find "$KSRCDIR" -type f -name 'Kconfig' -print0 2>/dev/null \
         | xargs -0 awk '
             BEGIN {
                 IGNORECASE = 1
