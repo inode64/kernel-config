@@ -25,7 +25,7 @@ set -Eeuo pipefail
 #   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
-#   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, atop, btop, htop, cryptsetup
+#   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
@@ -701,7 +701,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            samba | firehol | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | atop | btop | htop | cryptsetup)
+            samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | atop | bmon | btop | htop | iotop-c | cryptsetup)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -710,7 +710,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: samba, firehol, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, atop, btop, htop, cryptsetup" >&2
+                echo "Use: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, atop, bmon, btop, htop, iotop-c, cryptsetup" >&2
                 exit 1
                 ;;
         esac
@@ -1648,6 +1648,11 @@ configure_application_profiles() {
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
+            firewalld)
+                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NF_CONNTRACK NF_NAT NF_TABLES NF_TABLES_INET NF_TABLES_IPV4 NF_TABLES_IPV6 NF_TABLES_ARP NF_TABLES_BRIDGE NF_CONNTRACK_BRIDGE BRIDGE_NETFILTER IP_SET NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NFT_REJECT NFT_REJECT_INET NFT_FIB NFT_FIB_INET NFT_FIB_IPV4 NFT_FIB_IPV6 IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
             openvswitch)
                 for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE GRE NET_UDP_TUNNEL; do
                     append_unique_item "$sym" enable_syms
@@ -1678,13 +1683,28 @@ configure_application_profiles() {
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
+            docker)
+                for sym in NAMESPACES UTS_NS IPC_NS USER_NS PID_NS NET_NS CGROUPS CGROUP_BPF CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_PIDS CGROUP_SCHED CFS_BANDWIDTH FAIR_GROUP_SCHED MEMCG BLK_CGROUP POSIX_MQUEUE VETH BRIDGE BRIDGE_NETFILTER OVERLAY_FS NF_CONNTRACK NF_NAT NF_TABLES NFT_CT NFT_NAT NFT_MASQ NETFILTER_XTABLES IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT VXLAN; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
             atop)
                 for sym in TASKSTATS TASK_DELAY_ACCT PSI SCHEDSTATS PROC_EVENTS; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
+            bmon)
+                for sym in PACKET PACKET_DIAG NETLINK_DIAG INET_DIAG UNIX_DIAG; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
             btop | htop)
                 for sym in TASKSTATS TASK_DELAY_ACCT PSI; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            iotop-c)
+                for sym in TASKSTATS TASK_DELAY_ACCT TASK_IO_ACCOUNTING PSI; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
