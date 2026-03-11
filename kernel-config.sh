@@ -23,6 +23,7 @@ set -Eeuo pipefail
 #   CPU_VENDOR_FILTER=none -> none, auto, amd, intel; disable x86 options for the other vendor
 #   VIDEO_SUPPORT=none      -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
+#   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
@@ -65,6 +66,7 @@ Options:
   --cpu-vendor-filter MODE
   --video-support MODE
   --uefi-support MODE
+  --initrd-support MODE
   --host-type TYPE
   --keep-observability [0|1]
   --prune-legacy [0|1]
@@ -91,6 +93,7 @@ Notes:
   --optimization-profile accepts: none, server, desktop, realtime.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
+  --initrd-support accepts: none, auto, on, off.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
 }
@@ -139,7 +142,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -177,6 +180,7 @@ PRUNE_SELFTEST_KCONFIG="${PRUNE_SELFTEST_KCONFIG:-0}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
 UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
+INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
 KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
@@ -536,6 +540,61 @@ resolve_uefi_support() {
             ;;
         *)
             echo "Invalid UEFI_SUPPORT: $UEFI_SUPPORT (use none, auto, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+detect_host_initrd_support() {
+    local ramdisk_image=""
+    local ramdisk_size=""
+
+    if [[ -r /sys/kernel/boot_params/data ]]; then
+        ramdisk_image="$(
+            od -An -j $((0x218)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null \
+                | awk '{print $1; exit}'
+        )"
+        ramdisk_size="$(
+            od -An -j $((0x21c)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null \
+                | awk '{print $1; exit}'
+        )"
+
+        if [[ -n "$ramdisk_image" && -n "$ramdisk_size" ]]; then
+            if [[ "$ramdisk_image" != "0" && "$ramdisk_size" != "0" ]]; then
+                printf '%s\n' "on"
+            else
+                printf '%s\n' "off"
+            fi
+            return
+        fi
+    fi
+
+    if [[ -r /proc/cmdline ]] && grep -Eq '(^|[[:space:]])initrd=' /proc/cmdline 2>/dev/null; then
+        printf '%s\n' "on"
+    else
+        printf '%s\n' "unknown"
+    fi
+}
+
+resolve_initrd_support() {
+    local mode
+    mode="$(printf '%s' "$INITRD_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_initrd_support
+            ;;
+        on | yes | true | 1 | enable | enabled | initrd | initramfs)
+            printf '%s\n' "on"
+            ;;
+        off | no | false | 0 | disable | disabled)
+            printf '%s\n' "off"
+            ;;
+        *)
+            echo "Invalid INITRD_SUPPORT: $INITRD_SUPPORT (use none, auto, on, or off)" >&2
             exit 1
             ;;
     esac
@@ -1326,6 +1385,24 @@ configure_uefi_support_profile() {
     fi
 }
 
+configure_initrd_support_profile() {
+    local mode="$1"
+
+    echo
+    echo "==> Applying initrd support profile: $mode"
+
+    case "$mode" in
+        on)
+            echo "    (keeping initramfs/initrd boot support)"
+            enable_if_present BLK_DEV_INITRD
+            ;;
+        off)
+            echo "    (pruning initramfs/initrd boot support)"
+            disable_if_present BLK_DEV_INITRD
+            ;;
+    esac
+}
+
 echo
 echo "==> Disabling debug/instrumentation options with real runtime cost"
 
@@ -1578,6 +1655,16 @@ if [[ "$UEFI_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_uefi_support_profile "$UEFI_SUPPORT_EFFECTIVE"
 fi
 
+INITRD_SUPPORT_EFFECTIVE="$(resolve_initrd_support)"
+if [[ "$INITRD_SUPPORT_EFFECTIVE" != "none" ]]; then
+    if [[ "$INITRD_SUPPORT_EFFECTIVE" == "unknown" ]]; then
+        echo
+        echo "==> Could not detect current initrd usage; use INITRD_SUPPORT=on or off"
+    else
+        configure_initrd_support_profile "$INITRD_SUPPORT_EFFECTIVE"
+    fi
+fi
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -1704,6 +1791,7 @@ echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardeni
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."
 echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub, and EFI partition support."
+echo "  - INITRD_SUPPORT=auto/on/off keeps or prunes BLK_DEV_INITRD based on current boot usage or explicit selection."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
