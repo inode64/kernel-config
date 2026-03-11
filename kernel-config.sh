@@ -24,6 +24,7 @@ set -Eeuo pipefail
 #   VIDEO_SUPPORT=none      -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
+#   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, atop, btop, htop, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
@@ -67,6 +68,7 @@ Options:
   --video-support MODE
   --uefi-support MODE
   --initrd-support MODE
+  --applications LIST
   --host-type TYPE
   --keep-observability [0|1]
   --prune-legacy [0|1]
@@ -94,6 +96,7 @@ Notes:
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
+  --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
 }
@@ -142,7 +145,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -181,6 +184,7 @@ CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
 UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
 INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
+APPLICATIONS="${APPLICATIONS:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
 KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
@@ -598,6 +602,55 @@ resolve_initrd_support() {
             exit 1
             ;;
     esac
+}
+
+resolve_application_profiles() {
+    local raw normalized token
+    local saw_none=0
+    local -a profiles=()
+
+    raw="$(printf '%s' "$APPLICATIONS" | tr '[:upper:]' '[:lower:]')"
+    raw="${raw//,/ }"
+
+    for token in $raw; do
+        normalized="${token//_/-}"
+
+        case "$normalized" in
+            "" )
+                ;;
+            none | off | 0)
+                saw_none=1
+                ;;
+            samba | firehol | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | atop | btop | htop | cryptsetup)
+                if [[ "$saw_none" == "1" ]]; then
+                    echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
+                    exit 1
+                fi
+                append_unique_item "$normalized" profiles
+                ;;
+            *)
+                echo "Invalid APPLICATIONS entry: $token" >&2
+                echo "Use: samba, firehol, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, atop, btop, htop, cryptsetup" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    if [[ "$saw_none" == "1" ]]; then
+        if ((${#profiles[@]} > 0)); then
+            echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
+            exit 1
+        fi
+        printf '%s\n' "none"
+        return
+    fi
+
+    if ((${#profiles[@]} == 0)); then
+        printf '%s\n' "none"
+        return
+    fi
+
+    printf '%s\n' "${profiles[@]}"
 }
 
 list_xfs_mountpoints() {
@@ -1403,6 +1456,78 @@ configure_initrd_support_profile() {
     esac
 }
 
+configure_application_profiles() {
+    local profile
+    local -a enable_syms=()
+
+    echo
+    echo "==> Enabling application profiles: $*"
+
+    for profile in "$@"; do
+        case "$profile" in
+            samba)
+                for sym in CIFS CIFS_XATTR CIFS_UPCALL CIFS_DFS_UPCALL DNS_RESOLVER KEYS KEY_DH_OPERATIONS CRYPTO_MD4 CRYPTO_MD5 CRYPTO_HMAC CRYPTO_SHA256 CRYPTO_SHA512 CRYPTO_AES CRYPTO_CMAC CRYPTO_DES; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            firehol)
+                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NF_CONNTRACK NF_NAT NF_TABLES IP_SET IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            openvswitch)
+                for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE GRE NET_UDP_TUNNEL; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            ceph)
+                for sym in CEPH_LIB CEPH_FS CRYPTO LIBCRC32C; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            nfs-client)
+                for sym in NFS_FS NFS_V3 NFS_V4 NFS_V4_1 NFS_V4_2 SUNRPC SUNRPC_GSS LOCKD LOCKD_V4 GRACE_PERIOD DNS_RESOLVER; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            nfs-server)
+                for sym in NFSD NFSD_V3_ACL NFSD_V4 NFSD_PNFS NFSD_BLOCKLAYOUT NFSD_SCSILAYOUT NFSD_FLEXFILELAYOUT SUNRPC SUNRPC_GSS LOCKD LOCKD_V4 GRACE_PERIOD EXPORTFS FSNOTIFY; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            openvpn)
+                for sym in TUN CRYPTO_USER_API CRYPTO_USER_API_AEAD CRYPTO_USER_API_SKCIPHER CRYPTO_USER_API_HASH CRYPTO_AES CRYPTO_GCM CRYPTO_SHA256; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            wireguard)
+                for sym in WIREGUARD NET_UDP_TUNNEL UDP_TUNNEL CRYPTO_CHACHA20POLY1305 CRYPTO_CURVE25519 CRYPTO_LIB_CHACHA20POLY1305; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            atop)
+                for sym in TASKSTATS TASK_DELAY_ACCT PSI SCHEDSTATS PROC_EVENTS; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            btop | htop)
+                for sym in TASKSTATS TASK_DELAY_ACCT PSI; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            cryptsetup)
+                for sym in BLK_DEV_DM DM_CRYPT CRYPTO CRYPTO_USER_API CRYPTO_USER_API_AEAD CRYPTO_USER_API_SKCIPHER CRYPTO_USER_API_HASH CRYPTO_AES CRYPTO_XTS CRYPTO_SHA256; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+        esac
+    done
+
+    if ((${#enable_syms[@]} > 0)); then
+        enable_if_present "${enable_syms[@]}"
+    fi
+}
+
 echo
 echo "==> Disabling debug/instrumentation options with real runtime cost"
 
@@ -1767,6 +1892,12 @@ if [[ "$PRUNE_DMA_ATTACK_SURFACE" == "1" ]]; then
         USB_GADGETFS
 fi
 
+APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
+if [[ "$APPLICATIONS_RESOLVED" != "none" ]]; then
+    mapfile -t APPLICATIONS_EFFECTIVE <<<"$APPLICATIONS_RESOLVED"
+    configure_application_profiles "${APPLICATIONS_EFFECTIVE[@]}"
+fi
+
 echo
 echo "==> Running olddefconfig to normalize dependencies"
 yes "" | make olddefconfig >/dev/null
@@ -1792,6 +1923,7 @@ echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vend
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."
 echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub, and EFI partition support."
 echo "  - INITRD_SUPPORT=auto/on/off keeps or prunes BLK_DEV_INITRD based on current boot usage or explicit selection."
+echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed by the selected apps."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
