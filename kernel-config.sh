@@ -215,12 +215,13 @@ find_kconfig_files() {
     find -L "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null
 }
 
-discover_legacy_kconfig_symbols() {
+discover_kconfig_symbols_by_pattern() {
+    local pattern="$1"
+
     find_kconfig_files \
-        | xargs -0 -r awk '
+        | xargs -0 -r awk -v pattern="$pattern" '
             BEGIN {
                 IGNORECASE = 1
-                pattern = "(legacy|deprecated|obsolete|obsolet[oa]s?)"
             }
 
             function maybe_emit(text) {
@@ -248,76 +249,18 @@ discover_legacy_kconfig_symbols() {
             }
         ' \
         | sort -u
+}
+
+discover_legacy_kconfig_symbols() {
+    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?)"
 }
 
 discover_debug_trace_kconfig_symbols() {
-    find_kconfig_files \
-        | xargs -0 -r awk '
-            BEGIN {
-                IGNORECASE = 1
-                pattern = "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing)"
-            }
-
-            function maybe_emit(text) {
-                if (sym != "" && is_toggle && text ~ pattern) {
-                    print sym
-                }
-            }
-
-            /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
-                sym = $2
-                is_toggle = 0
-                next
-            }
-
-            /^[[:space:]]*(bool|tristate)([[:space:]]|$)/ {
-                is_toggle = 1
-                if (match($0, /"[^"]+"/)) {
-                    maybe_emit(substr($0, RSTART, RLENGTH))
-                }
-                next
-            }
-
-            /^[[:space:]]*prompt[[:space:]]*"[^"]+"/ {
-                maybe_emit($0)
-            }
-        ' \
-        | sort -u
+    discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing)"
 }
 
 discover_hardening_kconfig_symbols() {
-    find_kconfig_files \
-        | xargs -0 -r awk '
-            BEGIN {
-                IGNORECASE = 1
-                pattern = "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)"
-            }
-
-            function maybe_emit(text) {
-                if (sym != "" && is_toggle && text ~ pattern) {
-                    print sym
-                }
-            }
-
-            /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
-                sym = $2
-                is_toggle = 0
-                next
-            }
-
-            /^[[:space:]]*(bool|tristate)([[:space:]]|$)/ {
-                is_toggle = 1
-                if (match($0, /"[^"]+"/)) {
-                    maybe_emit(substr($0, RSTART, RLENGTH))
-                }
-                next
-            }
-
-            /^[[:space:]]*prompt[[:space:]]*"[^"]+"/ {
-                maybe_emit($0)
-            }
-        ' \
-        | sort -u
+    discover_kconfig_symbols_by_pattern "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)"
 }
 
 is_x86_config() {
