@@ -83,9 +83,13 @@ have_symbol() {
     grep -Eq "^(CONFIG_${sym}=|# CONFIG_${sym} is not set)" "$CONFIG_FILE"
 }
 
+find_kconfig_files() {
+    find -L "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null
+}
+
 discover_legacy_kconfig_symbols() {
-    find "$KSRCDIR" -type f -name 'Kconfig' -print0 2>/dev/null \
-        | xargs -0 awk '
+    find_kconfig_files \
+        | xargs -0 -r awk '
             BEGIN {
                 IGNORECASE = 1
                 pattern = "(legacy|deprecated|obsolete|obsolet[oa]s?)"
@@ -119,8 +123,8 @@ discover_legacy_kconfig_symbols() {
 }
 
 discover_debug_trace_kconfig_symbols() {
-    find "$KSRCDIR" -type f -name 'Kconfig' -print0 2>/dev/null \
-        | xargs -0 awk '
+    find_kconfig_files \
+        | xargs -0 -r awk '
             BEGIN {
                 IGNORECASE = 1
                 pattern = "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing)"
@@ -154,8 +158,8 @@ discover_debug_trace_kconfig_symbols() {
 }
 
 discover_hardening_kconfig_symbols() {
-    find "$KSRCDIR" -type f -name 'Kconfig' -print0 2>/dev/null \
-        | xargs -0 awk '
+    find_kconfig_files \
+        | xargs -0 -r awk '
             BEGIN {
                 IGNORECASE = 1
                 pattern = "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)"
