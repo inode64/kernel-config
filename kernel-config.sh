@@ -16,6 +16,7 @@ set -Eeuo pipefail
 #   OPTIMIZE_SERVER_SPEED=0 -> do not force extra throughput tuning for servers
 #   PRUNE_DEBUG_TRACE_KCONFIG=0 -> disable debug/trace symbols detected from Kconfig prompts
 #   PRUNE_HARDENING_KCONFIG=0 -> disable hardening/mitigation symbols detected from Kconfig prompts
+#   PRUNE_SELFTEST_KCONFIG=0 -> disable selftest symbols detected from Kconfig prompts
 #   CPU_VENDOR_FILTER=none -> none, auto, amd, intel; disable x86 options for the other vendor
 #
 # Recommended:
@@ -59,6 +60,7 @@ Options:
   --optimize-server-speed 0|1
   --prune-debug-trace-kconfig 0|1
   --prune-hardening-kconfig 0|1
+  --prune-selftest-kconfig 0|1
   --keep-bpf 0|1
   --keep-compat32 0|1
   --prune-unused-net 0|1
@@ -82,7 +84,7 @@ set_tunable() {
     local value="$2"
 
     case "$name" in
-        KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | CPU_VENDOR_FILTER | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -114,6 +116,7 @@ PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
 OPTIMIZE_SERVER_SPEED="${OPTIMIZE_SERVER_SPEED:-0}"
 PRUNE_DEBUG_TRACE_KCONFIG="${PRUNE_DEBUG_TRACE_KCONFIG:-0}"
 PRUNE_HARDENING_KCONFIG="${PRUNE_HARDENING_KCONFIG:-0}"
+PRUNE_SELFTEST_KCONFIG="${PRUNE_SELFTEST_KCONFIG:-0}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 KEEP_BPF="${KEEP_BPF:-1}"
 KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
@@ -261,6 +264,10 @@ discover_debug_trace_kconfig_symbols() {
 
 discover_hardening_kconfig_symbols() {
     discover_kconfig_symbols_by_pattern "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)"
+}
+
+discover_selftest_kconfig_symbols() {
+    discover_kconfig_symbols_by_pattern "(self[- ]?tests?|selftest|kunit tests?|boot[- ]time self[- ]tests?)"
 }
 
 is_x86_config() {
@@ -502,6 +509,16 @@ disable_if_present \
     RUNTIME_TESTING_MENU \
     TEST_KSTRTOX \
     TEST_LIST_SORT
+
+if [[ "$PRUNE_SELFTEST_KCONFIG" == "1" ]]; then
+    echo
+    echo "==> Disabling selftest symbols detected from Kconfig"
+
+    mapfile -t selftest_syms < <(discover_selftest_kconfig_symbols)
+    if ((${#selftest_syms[@]} > 0)); then
+        disable_if_present "${selftest_syms[@]}"
+    fi
+fi
 
 if [[ "$KEEP_OBSERVABILITY" != "1" ]]; then
     echo
@@ -775,6 +792,7 @@ echo "  - KEEP_OBSERVABILITY=1 keeps useful observability options."
 echo "  - OPTIMIZE_SERVER_SPEED=1 applies a conservative server-throughput profile."
 echo "  - PRUNE_DEBUG_TRACE_KCONFIG=1 prunes debug/trace options based on Kconfig."
 echo "  - PRUNE_HARDENING_KCONFIG=1 prunes hardening/mitigation options based on Kconfig."
+echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
 echo "  - Hardening/security options remain intact unless PRUNE_HARDENING_KCONFIG=1 is set."
