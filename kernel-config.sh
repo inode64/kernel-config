@@ -20,6 +20,7 @@ set -Eeuo pipefail
 #   PRUNE_HARDENING_KCONFIG=0 -> disable hardening/mitigation symbols detected from Kconfig prompts
 #   PRUNE_SELFTEST_KCONFIG=0 -> disable selftest symbols detected from Kconfig prompts
 #   CPU_VENDOR_FILTER=none -> none, auto, amd, intel; disable x86 options for the other vendor
+#   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
 #   cp .config .config.orig
@@ -58,6 +59,7 @@ Options:
   --config-file PATH
   --all-optimizations [0|1]
   --cpu-vendor-filter MODE
+  --host-type TYPE
   --keep-observability [0|1]
   --prune-legacy [0|1]
   --optimize-server-speed [0|1]
@@ -127,7 +129,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -162,6 +164,7 @@ PRUNE_DEBUG_TRACE_KCONFIG="${PRUNE_DEBUG_TRACE_KCONFIG:-0}"
 PRUNE_HARDENING_KCONFIG="${PRUNE_HARDENING_KCONFIG:-0}"
 PRUNE_SELFTEST_KCONFIG="${PRUNE_SELFTEST_KCONFIG:-0}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
+HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
 KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
 PRUNE_UNUSED_NET="${PRUNE_UNUSED_NET:-1}"
@@ -374,6 +377,27 @@ resolve_cpu_vendor_filter() {
     esac
 }
 
+resolve_host_type() {
+    local mode
+    mode="$(printf '%s' "$HOST_TYPE" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | native)
+            printf '%s\n' "native"
+            ;;
+        qemu | kvm)
+            printf '%s\n' "qemu"
+            ;;
+        vmware | hyperv | virtualbox)
+            printf '%s\n' "$mode"
+            ;;
+        *)
+            echo "Invalid HOST_TYPE: $HOST_TYPE (use native, qemu, vmware, hyperv, or virtualbox)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 vendor_kconfig_files() {
     local path
 
@@ -472,6 +496,282 @@ enable_if_present() {
             cfg --enable "$sym" || true
         fi
     done
+}
+
+configure_host_type_profile() {
+    local host_type="$1"
+
+    local -a common_guest_syms=(
+        HYPERVISOR_GUEST
+        PARAVIRT
+        PARAVIRT_XXL
+        PARAVIRT_SPINLOCKS
+        PARAVIRT_CLOCK
+        PARAVIRT_TIME_ACCOUNTING
+    )
+    local -a qemu_syms=(
+        KVM_GUEST
+        VIRTIO
+        VIRTIO_PCI
+        VIRTIO_PCI_LIB
+        VIRTIO_PCI_LIB_LEGACY
+        VIRTIO_MMIO
+        VIRTIO_MMIO_CMDLINE_DEVICES
+        VIRTIO_BLK
+        VIRTIO_NET
+        VIRTIO_CONSOLE
+        VIRTIO_BALLOON
+        VIRTIO_FS
+        SCSI_VIRTIO
+        HW_RANDOM_VIRTIO
+        VSOCKETS
+        VSOCKETS_LOOPBACK
+        VIRTIO_VSOCKETS
+        VIRTIO_VSOCKETS_COMMON
+        PVPANIC
+        PVPANIC_MMIO
+        PVPANIC_PCI
+        FW_CFG_SYSFS
+        FW_CFG_SYSFS_CMDLINE
+    )
+    local -a vmware_syms=(
+        VMWARE_VMCI
+        VMWARE_BALLOON
+        VMWARE_PVSCSI
+        VMXNET3
+        VSOCKETS
+        VSOCKETS_LOOPBACK
+        VMWARE_VMCI_VSOCKETS
+    )
+    local -a hyperv_syms=(
+        HYPERV
+        HYPERV_TIMER
+        HYPERV_UTILS
+        HYPERV_BALLOON
+        HYPERV_VMBUS
+        HYPERV_NET
+        HYPERV_STORAGE
+        PCI_HYPERV
+        PCI_HYPERV_INTERFACE
+        HYPERV_IOMMU
+        VSOCKETS
+        VSOCKETS_LOOPBACK
+        HYPERV_VSOCKETS
+    )
+    local -a virtualbox_syms=(
+        VBOXGUEST
+        VBOXSF_FS
+    )
+    local -a native_disable_syms=(
+        HYPERVISOR_GUEST
+        PARAVIRT
+        PARAVIRT_XXL
+        PARAVIRT_SPINLOCKS
+        PARAVIRT_CLOCK
+        PARAVIRT_TIME_ACCOUNTING
+        KVM_GUEST
+        VIRTIO
+        VIRTIO_PCI
+        VIRTIO_PCI_LIB
+        VIRTIO_PCI_LIB_LEGACY
+        VIRTIO_MMIO
+        VIRTIO_MMIO_CMDLINE_DEVICES
+        VIRTIO_BLK
+        VIRTIO_NET
+        VIRTIO_CONSOLE
+        VIRTIO_BALLOON
+        VIRTIO_FS
+        SCSI_VIRTIO
+        HW_RANDOM_VIRTIO
+        VIRTIO_VSOCKETS
+        VIRTIO_VSOCKETS_COMMON
+        PVPANIC
+        PVPANIC_MMIO
+        PVPANIC_PCI
+        FW_CFG_SYSFS
+        FW_CFG_SYSFS_CMDLINE
+        VMWARE_VMCI
+        VMWARE_BALLOON
+        VMWARE_PVSCSI
+        VMXNET3
+        VMWARE_VMCI_VSOCKETS
+        HYPERV
+        HYPERV_TIMER
+        HYPERV_UTILS
+        HYPERV_BALLOON
+        HYPERV_VMBUS
+        HYPERV_NET
+        HYPERV_STORAGE
+        PCI_HYPERV
+        PCI_HYPERV_INTERFACE
+        HYPERV_IOMMU
+        HYPERV_VSOCKETS
+        VBOXGUEST
+        VBOXSF_FS
+        VSOCKETS
+        VSOCKETS_LOOPBACK
+    )
+    local -a qemu_disable_syms=(
+        VMWARE_VMCI
+        VMWARE_BALLOON
+        VMWARE_PVSCSI
+        VMXNET3
+        VMWARE_VMCI_VSOCKETS
+        HYPERV
+        HYPERV_TIMER
+        HYPERV_UTILS
+        HYPERV_BALLOON
+        HYPERV_VMBUS
+        HYPERV_NET
+        HYPERV_STORAGE
+        PCI_HYPERV
+        PCI_HYPERV_INTERFACE
+        HYPERV_IOMMU
+        HYPERV_VSOCKETS
+        VBOXGUEST
+        VBOXSF_FS
+    )
+    local -a vmware_disable_syms=(
+        KVM_GUEST
+        VIRTIO
+        VIRTIO_PCI
+        VIRTIO_PCI_LIB
+        VIRTIO_PCI_LIB_LEGACY
+        VIRTIO_MMIO
+        VIRTIO_MMIO_CMDLINE_DEVICES
+        VIRTIO_BLK
+        VIRTIO_NET
+        VIRTIO_CONSOLE
+        VIRTIO_BALLOON
+        VIRTIO_FS
+        SCSI_VIRTIO
+        HW_RANDOM_VIRTIO
+        VIRTIO_VSOCKETS
+        VIRTIO_VSOCKETS_COMMON
+        PVPANIC
+        PVPANIC_MMIO
+        PVPANIC_PCI
+        FW_CFG_SYSFS
+        FW_CFG_SYSFS_CMDLINE
+        HYPERV
+        HYPERV_TIMER
+        HYPERV_UTILS
+        HYPERV_BALLOON
+        HYPERV_VMBUS
+        HYPERV_NET
+        HYPERV_STORAGE
+        PCI_HYPERV
+        PCI_HYPERV_INTERFACE
+        HYPERV_IOMMU
+        HYPERV_VSOCKETS
+        VBOXGUEST
+        VBOXSF_FS
+    )
+    local -a hyperv_disable_syms=(
+        KVM_GUEST
+        VIRTIO
+        VIRTIO_PCI
+        VIRTIO_PCI_LIB
+        VIRTIO_PCI_LIB_LEGACY
+        VIRTIO_MMIO
+        VIRTIO_MMIO_CMDLINE_DEVICES
+        VIRTIO_BLK
+        VIRTIO_NET
+        VIRTIO_CONSOLE
+        VIRTIO_BALLOON
+        VIRTIO_FS
+        SCSI_VIRTIO
+        HW_RANDOM_VIRTIO
+        VIRTIO_VSOCKETS
+        VIRTIO_VSOCKETS_COMMON
+        PVPANIC
+        PVPANIC_MMIO
+        PVPANIC_PCI
+        FW_CFG_SYSFS
+        FW_CFG_SYSFS_CMDLINE
+        VMWARE_VMCI
+        VMWARE_BALLOON
+        VMWARE_PVSCSI
+        VMXNET3
+        VMWARE_VMCI_VSOCKETS
+        VBOXGUEST
+        VBOXSF_FS
+    )
+    local -a virtualbox_disable_syms=(
+        KVM_GUEST
+        VIRTIO
+        VIRTIO_PCI
+        VIRTIO_PCI_LIB
+        VIRTIO_PCI_LIB_LEGACY
+        VIRTIO_MMIO
+        VIRTIO_MMIO_CMDLINE_DEVICES
+        VIRTIO_BLK
+        VIRTIO_NET
+        VIRTIO_CONSOLE
+        VIRTIO_BALLOON
+        VIRTIO_FS
+        SCSI_VIRTIO
+        HW_RANDOM_VIRTIO
+        VIRTIO_VSOCKETS
+        VIRTIO_VSOCKETS_COMMON
+        PVPANIC
+        PVPANIC_MMIO
+        PVPANIC_PCI
+        FW_CFG_SYSFS
+        FW_CFG_SYSFS_CMDLINE
+        VMWARE_VMCI
+        VMWARE_BALLOON
+        VMWARE_PVSCSI
+        VMXNET3
+        VMWARE_VMCI_VSOCKETS
+        HYPERV
+        HYPERV_TIMER
+        HYPERV_UTILS
+        HYPERV_BALLOON
+        HYPERV_VMBUS
+        HYPERV_NET
+        HYPERV_STORAGE
+        PCI_HYPERV
+        PCI_HYPERV_INTERFACE
+        HYPERV_IOMMU
+        HYPERV_VSOCKETS
+        VSOCKETS
+        VSOCKETS_LOOPBACK
+    )
+
+    echo
+    echo "==> Applying host type profile: $host_type"
+
+    case "$host_type" in
+        native)
+            echo "    (disabling guest virtualization drivers for bare metal)"
+            disable_if_present "${native_disable_syms[@]}"
+            ;;
+        qemu)
+            echo "    (enabling KVM/QEMU guest drivers and disabling other guest stacks)"
+            enable_if_present "${common_guest_syms[@]}"
+            enable_if_present "${qemu_syms[@]}"
+            disable_if_present "${qemu_disable_syms[@]}"
+            ;;
+        vmware)
+            echo "    (enabling VMware guest drivers and disabling other guest stacks)"
+            enable_if_present "${common_guest_syms[@]}"
+            enable_if_present "${vmware_syms[@]}"
+            disable_if_present "${vmware_disable_syms[@]}"
+            ;;
+        hyperv)
+            echo "    (enabling Hyper-V guest drivers and disabling other guest stacks)"
+            enable_if_present "${common_guest_syms[@]}"
+            enable_if_present "${hyperv_syms[@]}"
+            disable_if_present "${hyperv_disable_syms[@]}"
+            ;;
+        virtualbox)
+            echo "    (enabling VirtualBox guest drivers and disabling other guest stacks)"
+            enable_if_present "${common_guest_syms[@]}"
+            enable_if_present "${virtualbox_syms[@]}"
+            disable_if_present "${virtualbox_disable_syms[@]}"
+            ;;
+    esac
 }
 
 echo
@@ -732,6 +1032,9 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
+HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
+configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+
 # Uncommon or legacy network protocols for a general-purpose server
 if [[ "$PRUNE_UNUSED_NET" == "1" ]]; then
     echo
@@ -852,5 +1155,6 @@ echo "  - PRUNE_HARDENING_KCONFIG=1 prunes hardening/mitigation options based on
 echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
 echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardening pruning."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
+echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
 echo "  - Hardening/security options remain intact unless PRUNE_HARDENING_KCONFIG=1 is set."
