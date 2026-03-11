@@ -8,9 +8,11 @@ set -Eeuo pipefail
 #   ./kernel-config.sh /usr/src/linux
 #   KEEP_OBSERVABILITY=0 PRUNE_LEGACY=1 ./kernel-config.sh /usr/src/linux
 #   ./kernel-config.sh /usr/src/linux .config PRUNE_LEGACY=1 KEEP_OBSERVABILITY=0
-#   ./kernel-config.sh --kernel-srcdir /usr/src/linux --config-file .config --prune-legacy 1
+#   ./kernel-config.sh --kernel-srcdir /usr/src/linux --config-file .config --prune-legacy
+#   ./kernel-config.sh --kernel-srcdir /usr/src/linux --all-optimizations
 #
 # Optional variables and flags:
+#   ALL_OPTIMIZATIONS=0    -> enable the script's full optimization preset
 #   KEEP_OBSERVABILITY=1   -> keep useful options for perf/bpf/ftrace/debugfs
 #   PRUNE_LEGACY=0         -> do not touch legacy/compat options by default
 #   OPTIMIZE_SERVER_SPEED=0 -> do not force extra throughput tuning for servers
@@ -54,29 +56,65 @@ Usage:
 Options:
   --kernel-srcdir PATH
   --config-file PATH
+  --all-optimizations [0|1]
   --cpu-vendor-filter MODE
-  --keep-observability 0|1
-  --prune-legacy 0|1
-  --optimize-server-speed 0|1
-  --prune-debug-trace-kconfig 0|1
-  --prune-hardening-kconfig 0|1
-  --prune-selftest-kconfig 0|1
-  --keep-bpf 0|1
-  --keep-compat32 0|1
-  --prune-unused-net 0|1
-  --prune-old-hw 0|1
-  --prune-x86-old-platforms 0|1
-  --keep-legacy-ata 0|1
-  --prune-insecure 0|1
-  --prune-radios 0|1
-  --prune-dma-attack-surface 0|1
+  --keep-observability [0|1]
+  --prune-legacy [0|1]
+  --optimize-server-speed [0|1]
+  --prune-debug-trace-kconfig [0|1]
+  --prune-hardening-kconfig [0|1]
+  --prune-selftest-kconfig [0|1]
+  --keep-bpf [0|1]
+  --keep-compat32 [0|1]
+  --prune-unused-net [0|1]
+  --prune-old-hw [0|1]
+  --prune-x86-old-platforms [0|1]
+  --keep-legacy-ata [0|1]
+  --prune-insecure [0|1]
+  --prune-radios [0|1]
+  --prune-dma-attack-surface [0|1]
   -h, --help
 
 Notes:
   Environment variables set defaults.
   CLI flags and VAR=VALUE arguments override environment variables.
+  Boolean flags without a value imply 1.
+  The all-optimizations preset does not enable --prune-hardening-kconfig.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
+}
+
+apply_all_optimizations() {
+    KEEP_OBSERVABILITY=0
+    PRUNE_LEGACY=1
+    OPTIMIZE_SERVER_SPEED=1
+    PRUNE_DEBUG_TRACE_KCONFIG=1
+    PRUNE_SELFTEST_KCONFIG=1
+    CPU_VENDOR_FILTER=auto
+    KEEP_BPF=0
+    KEEP_COMPAT32=0
+    PRUNE_UNUSED_NET=1
+    PRUNE_OLD_HW=1
+    PRUNE_X86_OLD_PLATFORMS=1
+    KEEP_LEGACY_ATA=0
+    PRUNE_INSECURE=1
+    PRUNE_RADIOS=1
+    PRUNE_DMA_ATTACK_SURFACE=1
+}
+
+is_boolean_option() {
+    case "$1" in
+        all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace-kconfig | prune-hardening-kconfig | prune-selftest-kconfig | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+is_boolean_value() {
+    [[ "$1" == "0" || "$1" == "1" ]]
 }
 
 set_tunable() {
@@ -84,6 +122,12 @@ set_tunable() {
     local value="$2"
 
     case "$name" in
+        ALL_OPTIMIZATIONS)
+            printf -v "$name" '%s' "$value"
+            if [[ "$value" == "1" ]]; then
+                apply_all_optimizations
+            fi
+            ;;
         KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
@@ -111,6 +155,7 @@ set_option() {
     esac
 }
 
+ALL_OPTIMIZATIONS="${ALL_OPTIMIZATIONS:-0}"
 KEEP_OBSERVABILITY="${KEEP_OBSERVABILITY:-1}"
 PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
 OPTIMIZE_SERVER_SPEED="${OPTIMIZE_SERVER_SPEED:-0}"
@@ -127,6 +172,10 @@ KEEP_LEGACY_ATA="${KEEP_LEGACY_ATA:-1}"
 PRUNE_INSECURE="${PRUNE_INSECURE:-1}"
 PRUNE_RADIOS="${PRUNE_RADIOS:-1}"
 PRUNE_DMA_ATTACK_SURFACE="${PRUNE_DMA_ATTACK_SURFACE:-1}"
+
+if [[ "$ALL_OPTIMIZATIONS" == "1" ]]; then
+    apply_all_optimizations
+fi
 
 KSRCDIR="${KSRCDIR:-}"
 CONFIG_FILE="${CONFIG_FILE:-}"
@@ -153,12 +202,21 @@ while (($# > 0)); do
             ;;
         --*)
             opt_name="${1#--}"
-            shift
-            if (($# == 0)); then
-                echo "Missing value for --$opt_name" >&2
-                exit 1
+            if is_boolean_option "$opt_name"; then
+                if (($# > 1)) && is_boolean_value "$2"; then
+                    shift
+                    set_option "$opt_name" "$1"
+                else
+                    set_option "$opt_name" "1"
+                fi
+            else
+                shift
+                if (($# == 0)); then
+                    echo "Missing value for --$opt_name" >&2
+                    exit 1
+                fi
+                set_option "$opt_name" "$1"
             fi
-            set_option "$opt_name" "$1"
             ;;
         *=*)
             set_tunable "${1%%=*}" "${1#*=}"
@@ -793,6 +851,7 @@ echo "  - OPTIMIZE_SERVER_SPEED=1 applies a conservative server-throughput profi
 echo "  - PRUNE_DEBUG_TRACE_KCONFIG=1 prunes debug/trace options based on Kconfig."
 echo "  - PRUNE_HARDENING_KCONFIG=1 prunes hardening/mitigation options based on Kconfig."
 echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
+echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardening pruning."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
 echo "  - Hardening/security options remain intact unless PRUNE_HARDENING_KCONFIG=1 is set."
