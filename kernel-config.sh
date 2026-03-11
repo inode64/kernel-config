@@ -26,6 +26,7 @@ set -Eeuo pipefail
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
 #   DMA_ENGINE_SUPPORT=none -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
+#   IOMMU_SUPPORT=none      -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor
 #   NUMA_SUPPORT=none       -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
@@ -73,6 +74,7 @@ Options:
   --initrd-support MODE
   --tpm-support MODE
   --dma-engine-support MODE
+  --iommu-support MODE
   --numa-support MODE
   --applications LIST
   --host-type TYPE
@@ -104,6 +106,7 @@ Notes:
   --initrd-support accepts: none, auto, on, off.
   --tpm-support accepts: none, auto, on, off.
   --dma-engine-support accepts: none, auto, on, off.
+  --iommu-support accepts: none, auto, on, off.
   --numa-support accepts: none, auto, on, off.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
@@ -154,7 +157,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | NUMA_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -195,6 +198,7 @@ UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
 INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
 TPM_SUPPORT="${TPM_SUPPORT:-none}"
 DMA_ENGINE_SUPPORT="${DMA_ENGINE_SUPPORT:-none}"
+IOMMU_SUPPORT="${IOMMU_SUPPORT:-none}"
 NUMA_SUPPORT="${NUMA_SUPPORT:-none}"
 APPLICATIONS="${APPLICATIONS:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
@@ -728,6 +732,30 @@ resolve_dma_engine_support() {
     esac
 }
 
+resolve_iommu_support() {
+    local mode
+    mode="$(printf '%s' "$IOMMU_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            printf '%s\n' "auto"
+            ;;
+        on | yes | true | 1 | enable | enabled | iommu)
+            printf '%s\n' "on"
+            ;;
+        off | no | false | 0 | disable | disabled)
+            printf '%s\n' "off"
+            ;;
+        *)
+            echo "Invalid IOMMU_SUPPORT: $IOMMU_SUPPORT (use none, auto, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 detect_host_numa_support() {
     local online=""
 
@@ -831,6 +859,25 @@ resolve_application_profiles() {
 }
 
 resolve_qemu_host_cpu_vendor() {
+    local vendor_mode resolved_vendor
+
+    vendor_mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
+    case "$vendor_mode" in
+        "" | none | off | 0)
+            detect_host_cpu_vendor
+            ;;
+        *)
+            resolved_vendor="$(resolve_cpu_vendor_filter)"
+            if [[ "$resolved_vendor" == "none" ]]; then
+                detect_host_cpu_vendor
+            else
+                printf '%s\n' "$resolved_vendor"
+            fi
+            ;;
+    esac
+}
+
+resolve_iommu_host_cpu_vendor() {
     local vendor_mode resolved_vendor
 
     vendor_mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
@@ -1763,6 +1810,80 @@ configure_dma_engine_support_profile() {
     esac
 }
 
+configure_iommu_support_profile() {
+    local mode="$1"
+    local cpu_vendor="$2"
+    local -a enable_syms=()
+    local -a disable_syms=()
+
+    echo
+    echo "==> Applying IOMMU support profile: $mode"
+
+    case "$mode" in
+        on | auto)
+            case "$cpu_vendor" in
+                intel)
+                    echo "    (keeping generic IOMMU support and selecting Intel IOMMU)"
+                    enable_syms=(
+                        IOMMU_SUPPORT
+                        IOMMUFD
+                        IOMMU_DMA
+                        INTEL_IOMMU
+                    )
+                    disable_syms=(
+                        AMD_IOMMU
+                    )
+                    ;;
+                amd)
+                    echo "    (keeping generic IOMMU support and selecting AMD IOMMU)"
+                    enable_syms=(
+                        IOMMU_SUPPORT
+                        IOMMUFD
+                        IOMMU_DMA
+                        AMD_IOMMU
+                    )
+                    disable_syms=(
+                        INTEL_IOMMU
+                    )
+                    ;;
+                *)
+                    echo "    (CPU vendor could not be determined; keeping only generic IOMMU support)"
+                    enable_syms=(
+                        IOMMU_SUPPORT
+                        IOMMUFD
+                        IOMMU_DMA
+                    )
+                    disable_syms=(
+                        AMD_IOMMU
+                        INTEL_IOMMU
+                    )
+                    ;;
+            esac
+            ;;
+        off)
+            echo "    (pruning generic and vendor-specific IOMMU support)"
+            disable_syms=(
+                AMD_IOMMU
+                INTEL_IOMMU
+                IOMMUFD
+                IOMMUFD_DRIVER
+                IOMMU_DMA
+                IOMMU_SVA
+                IOMMU_IOPF
+                IOMMU_SUPPORT
+            )
+            ;;
+    esac
+
+    if ((${#enable_syms[@]} > 0)); then
+        enable_if_present "${enable_syms[@]}"
+    fi
+
+    if ((${#disable_syms[@]} > 0)); then
+        disable_if_present "${disable_syms[@]}"
+    fi
+}
+
 configure_numa_support_profile() {
     local mode="$1"
 
@@ -2189,6 +2310,17 @@ if [[ "$DMA_ENGINE_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_dma_engine_support_profile "$DMA_ENGINE_SUPPORT_EFFECTIVE"
 fi
 
+IOMMU_SUPPORT_EFFECTIVE="$(resolve_iommu_support)"
+if [[ "$IOMMU_SUPPORT_EFFECTIVE" != "none" ]]; then
+    if ! is_x86_config; then
+        echo
+        echo "==> Skipping IOMMU_SUPPORT: .config is not x86"
+    else
+        IOMMU_CPU_VENDOR="$(resolve_iommu_host_cpu_vendor)"
+        configure_iommu_support_profile "$IOMMU_SUPPORT_EFFECTIVE" "$IOMMU_CPU_VENDOR"
+    fi
+fi
+
 NUMA_SUPPORT_EFFECTIVE="$(resolve_numa_support)"
 if [[ "$NUMA_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_numa_support_profile "$NUMA_SUPPORT_EFFECTIVE"
@@ -2329,6 +2461,7 @@ echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub,
 echo "  - INITRD_SUPPORT=auto/on/off keeps or prunes BLK_DEV_INITRD based on current boot usage or explicit selection."
 echo "  - TPM_SUPPORT=auto/on/off keeps or prunes TPM support and reports detected TPM 1.2/2.0 devices."
 echo "  - DMA_ENGINE_SUPPORT=auto/on/off keeps or prunes CONFIG_DMADEVICES based on currently exposed dmaengine devices."
+echo "  - IOMMU_SUPPORT=auto/on/off keeps or prunes IOMMU support and selects AMD_IOMMU or INTEL_IOMMU by CPU vendor."
 echo "  - NUMA_SUPPORT=auto/on/off keeps or prunes CONFIG_NUMA based on currently exposed NUMA nodes."
 echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed by the selected apps."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
