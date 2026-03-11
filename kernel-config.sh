@@ -24,6 +24,7 @@ set -Eeuo pipefail
 #   VIDEO_SUPPORT=none      -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
+#   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
 #   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, atop, btop, htop, cryptsetup
 #   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
@@ -68,6 +69,7 @@ Options:
   --video-support MODE
   --uefi-support MODE
   --initrd-support MODE
+  --tpm-support MODE
   --applications LIST
   --host-type TYPE
   --keep-observability [0|1]
@@ -96,6 +98,7 @@ Notes:
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
+  --tpm-support accepts: none, auto, on, off.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
@@ -145,7 +148,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -184,6 +187,7 @@ CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
 UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
 INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
+TPM_SUPPORT="${TPM_SUPPORT:-none}"
 APPLICATIONS="${APPLICATIONS:-none}"
 HOST_TYPE="${HOST_TYPE:-native}"
 KEEP_BPF="${KEEP_BPF:-1}"
@@ -599,6 +603,82 @@ resolve_initrd_support() {
             ;;
         *)
             echo "Invalid INITRD_SUPPORT: $INITRD_SUPPORT (use none, auto, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+detect_host_tpm_versions() {
+    local path version description
+    local -a versions=()
+
+    for path in /sys/class/tpm/tpm*; do
+        [[ -d "$path" ]] || continue
+
+        version=""
+        if [[ -r "$path/tpm_version_major" ]]; then
+            case "$(tr -d '[:space:]' < "$path/tpm_version_major")" in
+                1)
+                    version="1.2"
+                    ;;
+                2)
+                    version="2.0"
+                    ;;
+            esac
+        fi
+
+        if [[ -z "$version" ]]; then
+            if [[ -r "$path/device/description" ]]; then
+                description="$(tr '[:upper:]' '[:lower:]' < "$path/device/description")"
+            elif [[ -r "$path/description" ]]; then
+                description="$(tr '[:upper:]' '[:lower:]' < "$path/description")"
+            else
+                description=""
+            fi
+
+            case "$description" in
+                *"2.0"*)
+                    version="2.0"
+                    ;;
+                *"1.2"*)
+                    version="1.2"
+                    ;;
+                *)
+                    version="unknown"
+                    ;;
+            esac
+        fi
+
+        append_unique_item "$version" versions
+    done
+
+    if ((${#versions[@]} == 0)); then
+        printf '%s\n' "none"
+        return
+    fi
+
+    printf '%s\n' "${versions[@]}"
+}
+
+resolve_tpm_support() {
+    local mode
+    mode="$(printf '%s' "$TPM_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+
+    case "$mode" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_tpm_versions
+            ;;
+        on | yes | true | 1 | enable | enabled | tpm)
+            printf '%s\n' "on"
+            ;;
+        off | no | false | 0 | disable | disabled)
+            printf '%s\n' "off"
+            ;;
+        *)
+            echo "Invalid TPM_SUPPORT: $TPM_SUPPORT (use none, auto, on, or off)" >&2
             exit 1
             ;;
     esac
@@ -1456,6 +1536,99 @@ configure_initrd_support_profile() {
     esac
 }
 
+configure_tpm_support_profile() {
+    local mode="$1"
+    shift
+    local version
+    local logged_version=0
+    local -a enable_syms=()
+    local -a disable_syms=()
+
+    echo
+    echo "==> Applying TPM support profile: $mode"
+
+    for version in "$@"; do
+        case "$version" in
+            2.0)
+                echo "    (host TPM version detected: 2.0)"
+                logged_version=1
+                ;;
+            1.2)
+                echo "    (host TPM version detected: 1.2)"
+                logged_version=1
+                ;;
+            unknown)
+                echo "    (host TPM present but version could not be determined)"
+                logged_version=1
+                ;;
+        esac
+    done
+
+    if [[ "$logged_version" == "0" && "$mode" == "off" ]]; then
+        echo "    (no host TPM detected)"
+    fi
+
+    case "$mode" in
+        on)
+            echo "    (keeping generic TPM support)"
+            enable_syms=(
+                TCG_TPM
+                HW_RANDOM_TPM
+                TCG_TIS_CORE
+                TCG_TIS
+                TCG_CRB
+                TCG_VTPM_PROXY
+            )
+            for version in "$@"; do
+                case "$version" in
+                    2.0)
+                        append_unique_item "TCG_TPM2_HMAC" enable_syms
+                        append_unique_item "TCG_CRB" enable_syms
+                        append_unique_item "TCG_TIS" enable_syms
+                        ;;
+                    1.2)
+                        append_unique_item "TCG_TIS" enable_syms
+                        ;;
+                esac
+            done
+            ;;
+        off)
+            echo "    (pruning TPM support)"
+            disable_syms=(
+                HW_RANDOM_TPM
+                TCG_TPM2_HMAC
+                TCG_TIS
+                TCG_TIS_CORE
+                TCG_TIS_SPI
+                TCG_TIS_SPI_CR50
+                TCG_TIS_I2C
+                TCG_TIS_I2C_CR50
+                TCG_TIS_I2C_ATMEL
+                TCG_TIS_I2C_INFINEON
+                TCG_TIS_I2C_NUVOTON
+                TCG_NSC
+                TCG_ATMEL
+                TCG_INFINEON
+                TCG_CRB
+                TCG_VTPM_PROXY
+                TCG_TIS_ST33ZP24
+                TCG_TIS_ST33ZP24_I2C
+                TCG_IBMVTPM
+                TCG_XEN
+                TCG_TPM
+            )
+            ;;
+    esac
+
+    if ((${#enable_syms[@]} > 0)); then
+        enable_if_present "${enable_syms[@]}"
+    fi
+
+    if ((${#disable_syms[@]} > 0)); then
+        disable_if_present "${disable_syms[@]}"
+    fi
+}
+
 configure_application_profiles() {
     local profile
     local -a enable_syms=()
@@ -1790,6 +1963,30 @@ if [[ "$INITRD_SUPPORT_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
+TPM_RESOLVED="$(resolve_tpm_support)"
+if [[ "$TPM_RESOLVED" != "none" ]]; then
+    TPM_HOST_VERSIONS="$(detect_host_tpm_versions)"
+
+    if [[ "$TPM_RESOLVED" == "off" ]]; then
+        if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
+            mapfile -t TPM_EFFECTIVE <<<"$TPM_HOST_VERSIONS"
+            configure_tpm_support_profile "off" "${TPM_EFFECTIVE[@]}"
+        else
+            configure_tpm_support_profile "off"
+        fi
+    elif [[ "$TPM_RESOLVED" == "on" ]]; then
+        if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
+            mapfile -t TPM_EFFECTIVE <<<"$TPM_HOST_VERSIONS"
+            configure_tpm_support_profile "on" "${TPM_EFFECTIVE[@]}"
+        else
+            configure_tpm_support_profile "on"
+        fi
+    else
+        mapfile -t TPM_EFFECTIVE <<<"$TPM_RESOLVED"
+        configure_tpm_support_profile "on" "${TPM_EFFECTIVE[@]}"
+    fi
+fi
+
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
@@ -1923,6 +2120,7 @@ echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vend
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."
 echo "  - UEFI_SUPPORT=auto/on/off keeps or prunes common EFI runtime, EFI stub, and EFI partition support."
 echo "  - INITRD_SUPPORT=auto/on/off keeps or prunes BLK_DEV_INITRD based on current boot usage or explicit selection."
+echo "  - TPM_SUPPORT=auto/on/off keeps or prunes TPM support and reports detected TPM 1.2/2.0 devices."
 echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed by the selected apps."
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
