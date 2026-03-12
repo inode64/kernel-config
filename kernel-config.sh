@@ -322,6 +322,7 @@ find_kconfig_files() {
 discover_kconfig_symbols_by_pattern() {
     local pattern="$1"
 
+    # shellcheck disable=SC2016
     find_kconfig_files \
         | xargs -0 -r awk -v pattern="$pattern" '
             BEGIN {
@@ -1131,6 +1132,7 @@ discover_vendor_kconfig_symbols() {
             ;;
     esac
 
+    # shellcheck disable=SC2016
     vendor_kconfig_files \
         | xargs -0 awk -v include_re="$include_re" -v exclude_re="$exclude_re" '
             function emit() {
