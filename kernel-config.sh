@@ -12,25 +12,28 @@ set -Eeuo pipefail
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --all-optimizations
 #
 # Optional variables and flags:
-#   ALL_OPTIMIZATIONS=0    -> enable the script's full optimization preset
+#   ALL_OPTIMIZATIONS=0       -> enable the script's full optimization preset
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
-#   KEEP_OBSERVABILITY=1   -> keep useful options for perf/bpf/ftrace/debugfs
-#   PRUNE_LEGACY=0         -> do not touch legacy/compat options by default
-#   OPTIMIZE_SERVER_SPEED=0 -> legacy alias for OPTIMIZATION_PROFILE=server
-#   PRUNE_DEBUG_TRACE_KCONFIG=0 -> disable debug/trace symbols detected from Kconfig prompts
-#   PRUNE_HARDENING_KCONFIG=0 -> disable hardening/mitigation symbols detected from Kconfig prompts
-#   PRUNE_SELFTEST_KCONFIG=0 -> disable selftest symbols detected from Kconfig prompts
-#   CPU_VENDOR_FILTER=none -> none, auto, amd, intel; disable x86 options for the other vendor
-#   VIDEO_SUPPORT=none      -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
-#   UEFI_SUPPORT=none       -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
-#   INITRD_SUPPORT=none     -> none, auto, on, off; keep or prune initramfs/initrd boot support
-#   TPM_SUPPORT=none        -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
-#   DMA_ENGINE_SUPPORT=none -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
-#   IOMMU_SUPPORT=none      -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor
-#   NUMA_SUPPORT=none       -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
-#   NR_CPUS=none            -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
-#   APPLICATIONS=none       -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
-#   HOST_TYPE=native        -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
+#   KEEP_OBSERVABILITY=1      -> keep useful options for perf/bpf/ftrace/debugfs
+#   PRUNE_LEGACY=0            -> do not touch legacy/compat options by default
+#   OPTIMIZE_SERVER_SPEED=0   -> legacy alias for OPTIMIZATION_PROFILE=server
+#   PRUNE_DEBUG_TRACE=0       -> disable debug/trace symbols
+#   PRUNE_HARDENING=0         -> disable hardening/mitigation symbols
+#   PRUNE_SELFTEST=0          -> disable selftest symbols
+#   PRUNE_SANITIZERS=1        -> disable sanitizer-related symbols
+#   PRUNE_COVERAGE=1          -> disable coverage/profiling symbols
+#   PRUNE_FAULT_INJECTION=1   -> disable fault-injection/test failure symbols
+#   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor
+#   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
+#   UEFI_SUPPORT=none         -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
+#   INITRD_SUPPORT=none       -> none, auto, on, off; keep or prune initramfs/initrd boot support
+#   TPM_SUPPORT=none          -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
+#   DMA_ENGINE_SUPPORT=none   -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
+#   IOMMU_SUPPORT=none        -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor
+#   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
+#   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
+#   APPLICATIONS=none         -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
+#   HOST_TYPE=native          -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
 #   cp .config .config.orig
@@ -83,9 +86,12 @@ Options:
   --keep-observability [0|1]
   --prune-legacy [0|1]
   --optimize-server-speed [0|1]
-  --prune-debug-trace-kconfig [0|1]
-  --prune-hardening-kconfig [0|1]
-  --prune-selftest-kconfig [0|1]
+  --prune-debug-trace [0|1]
+  --prune-hardening [0|1]
+  --prune-selftest [0|1]
+  --prune-sanitizers [0|1]
+  --prune-coverage [0|1]
+  --prune-fault-injection [0|1]
   --keep-bpf [0|1]
   --keep-compat32 [0|1]
   --prune-unused-net [0|1]
@@ -101,7 +107,7 @@ Notes:
   Environment variables set defaults.
   CLI flags and VAR=VALUE arguments override environment variables.
   Boolean flags without a value imply 1.
-  The all-optimizations preset does not enable --prune-hardening-kconfig.
+  The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
@@ -121,8 +127,11 @@ apply_all_optimizations() {
     KEEP_OBSERVABILITY=0
     PRUNE_LEGACY=1
     OPTIMIZE_SERVER_SPEED=1
-    PRUNE_DEBUG_TRACE_KCONFIG=1
-    PRUNE_SELFTEST_KCONFIG=1
+    PRUNE_DEBUG_TRACE=1
+    PRUNE_SELFTEST=1
+    PRUNE_SANITIZERS=1
+    PRUNE_COVERAGE=1
+    PRUNE_FAULT_INJECTION=1
     KEEP_BPF=0
     KEEP_COMPAT32=0
     PRUNE_UNUSED_NET=1
@@ -136,7 +145,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace-kconfig | prune-hardening-kconfig | prune-selftest-kconfig | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -160,7 +169,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE_KCONFIG | PRUNE_HARDENING_KCONFIG | PRUNE_SELFTEST_KCONFIG | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -192,9 +201,12 @@ OPTIMIZATION_PROFILE="${OPTIMIZATION_PROFILE:-none}"
 KEEP_OBSERVABILITY="${KEEP_OBSERVABILITY:-1}"
 PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
 OPTIMIZE_SERVER_SPEED="${OPTIMIZE_SERVER_SPEED:-0}"
-PRUNE_DEBUG_TRACE_KCONFIG="${PRUNE_DEBUG_TRACE_KCONFIG:-0}"
-PRUNE_HARDENING_KCONFIG="${PRUNE_HARDENING_KCONFIG:-0}"
-PRUNE_SELFTEST_KCONFIG="${PRUNE_SELFTEST_KCONFIG:-0}"
+PRUNE_DEBUG_TRACE="${PRUNE_DEBUG_TRACE:-0}"
+PRUNE_HARDENING="${PRUNE_HARDENING:-0}"
+PRUNE_SELFTEST="${PRUNE_SELFTEST:-0}"
+PRUNE_SANITIZERS="${PRUNE_SANITIZERS:-1}"
+PRUNE_COVERAGE="${PRUNE_COVERAGE:-1}"
+PRUNE_FAULT_INJECTION="${PRUNE_FAULT_INJECTION:-1}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
 UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
@@ -2173,101 +2185,68 @@ configure_application_profiles() {
 }
 
 echo
-echo "==> Disabling debug/instrumentation options with real runtime cost"
-
-disable_if_present \
-    BOOTPARAM_HARDLOCKUP_PANIC \
-    BOOTPARAM_HUNG_TASK_PANIC \
-    BOOTPARAM_SOFTLOCKUP_PANIC \
-    DEBUG_ATOMIC_SLEEP \
-    DEBUG_CREDENTIALS \
-    DEBUG_IRQFLAGS \
-    DEBUG_KERNEL \
-    DEBUG_LIST \
-    DEBUG_LOCK_ALLOC \
-    DEBUG_MEMORY_INIT \
-    DEBUG_MUTEXES \
-    DEBUG_NOTIFIERS \
-    DEBUG_OBJECTS \
-    DEBUG_OBJECTS_FREE \
-    DEBUG_OBJECTS_RCU_HEAD \
-    DEBUG_OBJECTS_SELFTEST \
-    DEBUG_OBJECTS_TIMERS \
-    DEBUG_OBJECTS_WORK \
-    DEBUG_PAGEALLOC \
-    DEBUG_PER_CPU_MAPS \
-    DEBUG_PLIST \
-    DEBUG_PREEMPT \
-    DEBUG_RT_MUTEXES \
-    DEBUG_RWSEMS \
-    DEBUG_SG \
-    DEBUG_SPINLOCK \
-    DEBUG_VIRTUAL \
-    DEBUG_VM \
-    DEBUG_VM_PGFLAGS \
-    DEBUG_WW_MUTEX_SLOWPATH \
-    DETECT_HUNG_TASK \
-    HARDLOCKUP_DETECTOR \
-    LATENCYTOP \
-    LOCKDEP \
-    LOCKUP_DETECTOR \
-    LOCK_STAT \
-    PAGE_EXTENSION \
-    PAGE_OWNER \
-    PAGE_POISONING \
-    PROVE_LOCKING \
-    SCHEDSTATS \
-    SCHED_DEBUG \
-    SLUB_DEBUG \
-    SLUB_DEBUG_ON \
-    SOFTLOCKUP_DETECTOR
-
-echo
 echo "==> Disabling sanitizers, coverage, and fault injection"
 
-disable_if_present \
-    FAILSLAB \
-    FAIL_FUTEX \
-    FAIL_IO_TIMEOUT \
-    FAIL_MAKE_REQUEST \
-    FAIL_PAGE_ALLOC \
-    FAULT_INJECTION \
-    FAULT_INJECTION_DEBUG_FS \
-    GCOV_KERNEL \
-    GCOV_PROFILE_ALL \
-    KASAN \
-    KASAN_GENERIC \
-    KASAN_HW_TAGS \
-    KASAN_SW_TAGS \
-    KCOV \
-    KCSAN \
-    KMEMLEAK \
-    MEMTEST \
-    UBSAN \
-    UBSAN_BOUNDS \
-    UBSAN_LOCAL_BOUNDS \
-    UBSAN_TRAP
-
-echo
-echo "==> Disabling tests and development utilities"
-
-disable_if_present \
-    CORESIGHT \
-    KDB \
-    KGDB \
-    KGDB_KDB \
-    KGDB_TESTS \
-    KUNIT \
-    KUNIT_ALL_TESTS \
-    KUNIT_TEST \
-    LKDTM \
-    RUNTIME_TESTING_MENU \
-    TEST_KSTRTOX \
-    TEST_LIST_SORT
-
-if [[ "$PRUNE_SELFTEST_KCONFIG" == "1" ]]; then
+if [[ "$PRUNE_SANITIZERS" == "1" ]]; then
     echo
-    echo "==> Disabling selftest symbols detected from Kconfig"
+    echo "==> Disabling sanitizers"
+
+    disable_if_present \
+        KASAN \
+        KASAN_GENERIC \
+        KASAN_HW_TAGS \
+        KASAN_SW_TAGS \
+        KCOV \
+        KCSAN \
+        KMEMLEAK \
+        MEMTEST \
+        UBSAN \
+        UBSAN_BOUNDS \
+        UBSAN_LOCAL_BOUNDS \
+        UBSAN_TRAP
+fi
+
+if [[ "$PRUNE_COVERAGE" == "1" ]]; then
+    echo
+    echo "==> Disabling coverage and profiling"
+
+    disable_if_present \
+        GCOV_KERNEL \
+        GCOV_PROFILE_ALL
+fi
+
+if [[ "$PRUNE_FAULT_INJECTION" == "1" ]]; then
+    echo
+    echo "==> Disabling fault injection"
+
+    disable_if_present \
+        FAILSLAB \
+        FAIL_FUTEX \
+        FAIL_IO_TIMEOUT \
+        FAIL_MAKE_REQUEST \
+        FAIL_PAGE_ALLOC \
+        FAULT_INJECTION \
+        FAULT_INJECTION_DEBUG_FS
+fi
+
+
+if [[ "$PRUNE_SELFTEST" == "1" ]]; then
+    echo
+    echo "==> Disabling selftest symbols"
+
+    disable_if_present \
+      CORESIGHT \
+      KDB \
+      KGDB \
+      KGDB_KDB \
+      KGDB_TESTS \
+      KUNIT \
+      KUNIT_ALL_TESTS \
+      KUNIT_TEST \
+      LKDTM \
+      RUNTIME_TESTING_MENU \
+      TEST_KSTRTOX \
+      TEST_LIST_SORT
 
     mapfile -t selftest_syms < <(discover_selftest_kconfig_symbols)
     if ((${#selftest_syms[@]} > 0)); then
@@ -2307,6 +2286,10 @@ if [[ "$PRUNE_LEGACY" == "1" ]]; then
 
     disable_if_present \
         BINFMT_AOUT \
+        BLK_DEV_FD \
+        LEGACY_PTYS \
+        PARPORT \
+        PROVE_RCU \
         SYSFS_DEPRECATED \
         SYSFS_DEPRECATED_V2 \
         SYSFS_SYSCALL \
@@ -2315,31 +2298,16 @@ if [[ "$PRUNE_LEGACY" == "1" ]]; then
 
     mapfile -t legacy_syms < <(discover_legacy_kconfig_symbols)
     if ((${#legacy_syms[@]} > 0)); then
-        echo "==> Disabling symbols marked as legacy/deprecated in Kconfig"
+        echo "==> Disabling symbols marked as legacy/deprecated"
         disable_if_present "${legacy_syms[@]}"
     fi
 fi
-
-# extra: reasonable debug/legacy settings
-disable_if_present \
-    BLK_DEV_FD \
-    DEBUG_SLAB \
-    DYNAMIC_DEBUG \
-    LEGACY_PTYS \
-    PARPORT \
-    PROVE_RCU
 
 # extra: debug info choice
 if have_symbol DEBUG_INFO_NONE; then
     echo "Selecting: CONFIG_DEBUG_INFO_NONE"
     cfg --enable DEBUG_INFO_NONE || true
 fi
-
-disable_if_present \
-    DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
-    DEBUG_INFO_REDUCED \
-    GDB_SCRIPTS
-
 # optional: BPF/observability
 if [[ "$KEEP_BPF" != "1" ]]; then
     disable_if_present DEBUG_INFO_BTF KPROBES
@@ -2355,9 +2323,61 @@ if [[ "$KEEP_OBSERVABILITY" != "1" ]]; then
     disable_if_present DYNAMIC_FTRACE
 fi
 
-if [[ "$PRUNE_DEBUG_TRACE_KCONFIG" == "1" ]]; then
+if [[ "$PRUNE_DEBUG_TRACE" == "1" ]]; then
     echo
-    echo "==> Disabling debug/trace symbols detected from Kconfig"
+    echo "==> Disabling debug/trace symbols"
+
+    disable_if_present \
+      BOOTPARAM_HARDLOCKUP_PANIC \
+      BOOTPARAM_HUNG_TASK_PANIC \
+      BOOTPARAM_SOFTLOCKUP_PANIC \
+      DEBUG_ATOMIC_SLEEP \
+      DEBUG_CREDENTIALS \
+      DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
+      DEBUG_INFO_REDUCED \
+      DEBUG_IRQFLAGS \
+      DEBUG_KERNEL \
+      DEBUG_LIST \
+      DEBUG_LOCK_ALLOC \
+      DEBUG_MEMORY_INIT \
+      DEBUG_MUTEXES \
+      DEBUG_NOTIFIERS \
+      DEBUG_OBJECTS \
+      DEBUG_OBJECTS_FREE \
+      DEBUG_OBJECTS_RCU_HEAD \
+      DEBUG_OBJECTS_SELFTEST \
+      DEBUG_OBJECTS_TIMERS \
+      DEBUG_OBJECTS_WORK \
+      DEBUG_PAGEALLOC \
+      DEBUG_PER_CPU_MAPS \
+      DEBUG_PLIST \
+      DEBUG_PREEMPT \
+      DEBUG_RT_MUTEXES \
+      DEBUG_RWSEMS \
+      DEBUG_SG \
+      DEBUG_SLAB \
+      DEBUG_SPINLOCK \
+      DEBUG_VIRTUAL \
+      DEBUG_VM \
+      DEBUG_VM_PGFLAGS \
+      DEBUG_WW_MUTEX_SLOWPATH \
+      DETECT_HUNG_TASK \
+      DYNAMIC_DEBUG \
+      GDB_SCRIPTS \
+      HARDLOCKUP_DETECTOR \
+      LATENCYTOP \
+      LOCKDEP \
+      LOCKUP_DETECTOR \
+      LOCK_STAT \
+      PAGE_EXTENSION \
+      PAGE_OWNER \
+      PAGE_POISONING \
+      PROVE_LOCKING \
+      SCHEDSTATS \
+      SCHED_DEBUG \
+      SLUB_DEBUG \
+      SLUB_DEBUG_ON \
+      SOFTLOCKUP_DETECTOR
 
     mapfile -t debug_trace_syms < <(discover_debug_trace_kconfig_symbols)
     if ((${#debug_trace_syms[@]} > 0)); then
@@ -2365,9 +2385,9 @@ if [[ "$PRUNE_DEBUG_TRACE_KCONFIG" == "1" ]]; then
     fi
 fi
 
-if [[ "$PRUNE_HARDENING_KCONFIG" == "1" ]]; then
+if [[ "$PRUNE_HARDENING" == "1" ]]; then
     echo
-    echo "==> Disabling hardening/mitigation symbols detected from Kconfig"
+    echo "==> Disabling hardening/mitigation symbols"
     echo "    (this reduces kernel security hardening)"
 
     mapfile -t hardening_syms < <(discover_hardening_kconfig_symbols)
@@ -2614,9 +2634,12 @@ echo "Notes:"
 echo "  - KEEP_OBSERVABILITY=1 keeps useful observability options."
 echo "  - OPTIMIZATION_PROFILE=server/desktop/realtime selects a kernel tuning profile."
 echo "  - OPTIMIZE_SERVER_SPEED=1 is kept as a legacy alias for OPTIMIZATION_PROFILE=server."
-echo "  - PRUNE_DEBUG_TRACE_KCONFIG=1 prunes debug/trace options based on Kconfig."
-echo "  - PRUNE_HARDENING_KCONFIG=1 prunes hardening/mitigation options based on Kconfig."
-echo "  - PRUNE_SELFTEST_KCONFIG=1 prunes selftest options based on Kconfig."
+echo "  - PRUNE_DEBUG_TRACE=1 prunes debug/trace options"
+echo "  - PRUNE_HARDENING=1 prunes hardening/mitigation options."
+echo "  - PRUNE_SELFTEST=1 prunes selftest options."
+echo "  - PRUNE_SANITIZERS=1 prunes KASAN/KCSAN/UBSAN/KCOV-style sanitizer options."
+echo "  - PRUNE_COVERAGE=1 prunes gcov coverage/profiling options."
+echo "  - PRUNE_FAULT_INJECTION=1 prunes fault-injection and forced-failure options."
 echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardening pruning."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."
@@ -2631,4 +2654,4 @@ echo "  - APPLICATIONS=samba,firehol,... enables kernel features commonly needed
 echo "  - Mounted XFS filesystems are checked with xfs_info to keep/drop XFS_SUPPORT_V4 and XFS_SUPPORT_ASCII_CI."
 echo "  - HOST_TYPE=native/qemu/vmware/hyperv/virtualbox tunes guest virtualization support."
 echo "  - PRUNE_LEGACY=1 touches old compatibility options; use it only if you know you want that."
-echo "  - Hardening/security options remain intact unless PRUNE_HARDENING_KCONFIG=1 is set."
+echo "  - Hardening/security options remain intact unless PRUNE_HARDENING=1 is set."

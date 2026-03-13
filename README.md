@@ -97,14 +97,23 @@ Boolean flags accept `0` or `1`. If passed without a value, they imply `1`.
 - `PRUNE_LEGACY=0|1`
   Disables old compatibility options and symbols marked legacy/deprecated in Kconfig.
 
-- `PRUNE_DEBUG_TRACE_KCONFIG=0|1`
+- `PRUNE_DEBUG_TRACE=0|1`
   Disables debug and trace options discovered from Kconfig prompts.
 
-- `PRUNE_HARDENING_KCONFIG=0|1`
+- `PRUNE_HARDENING=0|1`
   Disables hardening and mitigation symbols discovered from Kconfig prompts.
 
-- `PRUNE_SELFTEST_KCONFIG=0|1`
+- `PRUNE_SELFTEST=0|1`
   Disables selftests and test-only options discovered from Kconfig prompts.
+
+- `PRUNE_SANITIZERS=0|1`
+  Disables sanitizer-related options such as KASAN, KCSAN, UBSAN, KCOV, and KMEMLEAK.
+
+- `PRUNE_COVERAGE=0|1`
+  Disables gcov coverage and profiling options.
+
+- `PRUNE_FAULT_INJECTION=0|1`
+  Disables fault-injection and forced-failure testing options.
 
 ### Platform and hardware filters
 
@@ -304,8 +313,9 @@ scripts/diffconfig old.config new.config
 ## Caveats
 
 - This script is opinionated. Review the final config before using it in production.
-- `PRUNE_HARDENING_KCONFIG=1` reduces security hardening.
+- `PRUNE_HARDENING=1` reduces security hardening.
 - `PRUNE_LEGACY=1` may remove compatibility features you still depend on.
+- `PRUNE_SANITIZERS=0`, `PRUNE_COVERAGE=0`, and `PRUNE_FAULT_INJECTION=0` keep test-oriented instrumentation that the script now prunes by default.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.
