@@ -23,6 +23,7 @@ set -Eeuo pipefail
 #   PRUNE_SANITIZERS=1        -> disable sanitizer-related symbols
 #   PRUNE_COVERAGE=1          -> disable coverage/profiling symbols
 #   PRUNE_FAULT_INJECTION=1   -> disable fault-injection/test failure symbols
+#   PRUNE_DANGEROUS=1         -> disable symbols explicitly marked DANGEROUS in Kconfig
 #   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor
 #   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none         -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
@@ -92,6 +93,7 @@ Options:
   --prune-sanitizers [0|1]
   --prune-coverage [0|1]
   --prune-fault-injection [0|1]
+  --prune-dangerous [0|1]
   --keep-bpf [0|1]
   --keep-compat32 [0|1]
   --prune-unused-net [0|1]
@@ -132,6 +134,7 @@ apply_all_optimizations() {
     PRUNE_SANITIZERS=1
     PRUNE_COVERAGE=1
     PRUNE_FAULT_INJECTION=1
+    PRUNE_DANGEROUS=1
     KEEP_BPF=0
     KEEP_COMPAT32=0
     PRUNE_UNUSED_NET=1
@@ -145,7 +148,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -169,7 +172,7 @@ set_tunable() {
                 apply_all_optimizations
             fi
             ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -207,6 +210,7 @@ PRUNE_SELFTEST="${PRUNE_SELFTEST:-0}"
 PRUNE_SANITIZERS="${PRUNE_SANITIZERS:-1}"
 PRUNE_COVERAGE="${PRUNE_COVERAGE:-1}"
 PRUNE_FAULT_INJECTION="${PRUNE_FAULT_INJECTION:-1}"
+PRUNE_DANGEROUS="${PRUNE_DANGEROUS:-1}"
 CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
 VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
 UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
@@ -2229,6 +2233,23 @@ if [[ "$PRUNE_FAULT_INJECTION" == "1" ]]; then
         FAULT_INJECTION_DEBUG_FS
 fi
 
+if [[ "$PRUNE_DANGEROUS" == "1" ]]; then
+    echo
+    echo "==> Disabling options explicitly marked DANGEROUS in Kconfig"
+
+    disable_if_present \
+        ADFS_FS_RW \
+        DRM_FBDEV_LEAK_PHYS_SMEM \
+        FB_VIA_DIRECT_PROCFS \
+        MEMSTICK_UNSAFE_RESUME \
+        MICROCODE_LATE_LOADING \
+        MTD_TESTS \
+        SPI_INTEL_PLATFORM \
+        UFS_FS_WRITE \
+        USB4_DEBUGFS_MARGINING \
+        USB4_DEBUGFS_WRITE
+fi
+
 
 if [[ "$PRUNE_SELFTEST" == "1" ]]; then
     echo
@@ -2640,6 +2661,7 @@ echo "  - PRUNE_SELFTEST=1 prunes selftest options."
 echo "  - PRUNE_SANITIZERS=1 prunes KASAN/KCSAN/UBSAN/KCOV-style sanitizer options."
 echo "  - PRUNE_COVERAGE=1 prunes gcov coverage/profiling options."
 echo "  - PRUNE_FAULT_INJECTION=1 prunes fault-injection and forced-failure options."
+echo "  - PRUNE_DANGEROUS=1 prunes symbols whose Kconfig prompt is explicitly marked DANGEROUS."
 echo "  - ALL_OPTIMIZATIONS=1 enables the optimization preset, excluding hardening pruning."
 echo "  - CPU_VENDOR_FILTER=auto/amd/intel prunes x86 options for the other vendor."
 echo "  - VIDEO_SUPPORT=auto/amd/intel/nvidia/nouveau prunes display drivers to the selected stack."

@@ -115,6 +115,9 @@ Boolean flags accept `0` or `1`. If passed without a value, they imply `1`.
 - `PRUNE_FAULT_INJECTION=0|1`
   Disables fault-injection and forced-failure testing options.
 
+- `PRUNE_DANGEROUS=0|1`
+  Disables symbols whose Kconfig prompt is explicitly marked `DANGEROUS`.
+
 ### Platform and hardware filters
 
 - `CPU_VENDOR_FILTER=none|auto|amd|intel`
@@ -316,6 +319,7 @@ scripts/diffconfig old.config new.config
 - `PRUNE_HARDENING=1` reduces security hardening.
 - `PRUNE_LEGACY=1` may remove compatibility features you still depend on.
 - `PRUNE_SANITIZERS=0`, `PRUNE_COVERAGE=0`, and `PRUNE_FAULT_INJECTION=0` keep test-oriented instrumentation that the script now prunes by default.
+- `PRUNE_DANGEROUS=0` keeps edge-case options that upstream Kconfig labels as dangerous, such as late microcode loading or unsafe device/debug paths.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.
