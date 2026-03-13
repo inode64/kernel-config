@@ -373,7 +373,7 @@ discover_kconfig_symbols_by_pattern() {
 }
 
 discover_legacy_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?)"
+    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility)"
 }
 
 discover_debug_trace_kconfig_symbols() {
