@@ -12,6 +12,8 @@ It is designed for people who already build custom kernels and want a repeatable
 
 The script edits an existing kernel configuration using `scripts/config`, creates a timestamped backup, and finishes with `make olddefconfig` to normalize dependencies.
 
+It also supports a dry run mode that applies all changes to a temporary copy and prints the resulting unified diff without modifying the real `.config`.
+
 ## What It Does
 
 The script works on an existing kernel source tree and `.config` file.
@@ -23,6 +25,8 @@ High-level flow:
 3. Enable or disable symbols through `scripts/config`.
 4. Optionally auto-detect host traits such as CPU vendor, boot mode, TPM, NUMA, CPU count, and others.
 5. Run `make olddefconfig`.
+
+In `--dry-run` mode, steps 2-5 are performed against a temporary config copy and the script prints the final diff instead of writing the original file.
 
 It is not a full kernel config generator. It assumes you already have a baseline config and want to refine it.
 
@@ -49,6 +53,7 @@ Some auto-detection features use host tools if available:
 
 ```bash
 cp /usr/src/linux/.config /usr/src/linux/.config.orig
+./kernel-config.sh --dry-run /usr/src/linux
 ./kernel-config.sh /usr/src/linux
 make -C /usr/src/linux olddefconfig
 make -C /usr/src/linux -j"$(nproc)"
@@ -81,9 +86,14 @@ Precedence:
 
 Boolean flags accept `0` or `1`. If passed without a value, they imply `1`.
 
+`--dry-run` is a boolean flag. When enabled, the script prints the final `.config` diff and leaves the real file untouched.
+
 ## Main Parameters
 
 ### Core tuning
+
+- `DRY_RUN=0|1`
+  Shows the resulting `.config` diff without modifying the real file.
 
 - `ALL_OPTIMIZATIONS=0|1`
   Enables the script's optimization preset. It does not enable hardening pruning.
@@ -227,6 +237,12 @@ Auto-detection only sees the currently running host. It does not try to infer ha
 
 ```bash
 ./kernel-config.sh /usr/src/linux
+```
+
+### Preview changes without writing them
+
+```bash
+./kernel-config.sh --dry-run /usr/src/linux
 ```
 
 ### Server-oriented pruning
