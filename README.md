@@ -52,10 +52,8 @@ Some auto-detection features use host tools if available:
 ## Quick Start
 
 ```bash
-cp /usr/src/linux/.config /usr/src/linux/.config.orig
 ./kernel-config.sh --dry-run /usr/src/linux
 ./kernel-config.sh /usr/src/linux
-make -C /usr/src/linux olddefconfig
 make -C /usr/src/linux -j"$(nproc)"
 ```
 

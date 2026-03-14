@@ -38,9 +38,7 @@ set -Eeuo pipefail
 #   HOST_TYPE=native          -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
-#   cp .config .config.orig
 #   ./kernel-config.sh /path/to/kernel
-#   make olddefconfig
 #   make -j$(nproc)
 
 detect_default_ksrcdir() {
