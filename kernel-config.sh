@@ -531,7 +531,7 @@ discover_legacy_kconfig_symbols() {
 }
 
 discover_debug_trace_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing)"
+    discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing|developer use only|debugging only|only be enabled for testing|intended for testing|testing purposes|test only|not suitable for production|not for use in production|not in production kernels|not be enabled in production|do not use (it )?on production|do not enable on production|production (systems?|kernels?|builds?))"
 }
 
 discover_hardening_kconfig_symbols() {
