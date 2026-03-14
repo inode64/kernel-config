@@ -385,10 +385,34 @@ discover_kconfig_symbols_by_pattern() {
                 IGNORECASE = 1
             }
 
+            function menu_context_matches(depth) {
+                for (depth = menu_depth; depth >= 1; depth--) {
+                    if (menu_matches[depth]) {
+                        return 1
+                    }
+                }
+
+                return 0
+            }
+
             function maybe_emit(text) {
-                if (sym != "" && is_toggle && text ~ pattern) {
+                if (sym != "" && is_toggle && (text ~ pattern || menu_context_matches())) {
                     print sym
                 }
+            }
+
+            /^[[:space:]]*menu[[:space:]]*"[^"]+"/ {
+                menu_depth++
+                menu_matches[menu_depth] = ($0 ~ pattern)
+                next
+            }
+
+            /^[[:space:]]*endmenu([[:space:]]|$)/ {
+                if (menu_depth > 0) {
+                    delete menu_matches[menu_depth]
+                    menu_depth--
+                }
+                next
             }
 
             /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
@@ -401,6 +425,8 @@ discover_kconfig_symbols_by_pattern() {
                 is_toggle = 1
                 if (match($0, /"[^"]+"/)) {
                     maybe_emit(substr($0, RSTART, RLENGTH))
+                } else {
+                    maybe_emit("")
                 }
                 next
             }
@@ -426,6 +452,14 @@ discover_hardening_kconfig_symbols() {
 
 discover_selftest_kconfig_symbols() {
     discover_kconfig_symbols_by_pattern "(self[- ]?tests?|selftest|kunit tests?|boot[- ]time self[- ]tests?)"
+}
+
+discover_coverage_kconfig_symbols() {
+    discover_kconfig_symbols_by_pattern "(gcov|coverage|kernel profiling|code profiling|function profiler|branch profil|profile guided optimi[sz]ation|profile all if conditionals|likely/unlikely profiler)"
+}
+
+discover_fault_injection_kconfig_symbols() {
+    discover_kconfig_symbols_by_pattern "(fault[- ]?injection|fault injector|inject faults?|simulate io errors|failure injection)"
 }
 
 is_x86_config() {
@@ -2251,15 +2285,24 @@ if [[ "$PRUNE_SANITIZERS" == "1" ]]; then
 fi
 
 if [[ "$PRUNE_COVERAGE" == "1" ]]; then
+    local_coverage_syms=()
+
     echo
     echo "==> Disabling coverage and profiling"
 
     disable_if_present \
         GCOV_KERNEL \
         GCOV_PROFILE_ALL
+
+    mapfile -t local_coverage_syms < <(discover_coverage_kconfig_symbols)
+    if ((${#local_coverage_syms[@]} > 0)); then
+        disable_if_present "${local_coverage_syms[@]}"
+    fi
 fi
 
 if [[ "$PRUNE_FAULT_INJECTION" == "1" ]]; then
+    local_fault_injection_syms=()
+
     echo
     echo "==> Disabling fault injection"
 
@@ -2271,6 +2314,11 @@ if [[ "$PRUNE_FAULT_INJECTION" == "1" ]]; then
         FAIL_PAGE_ALLOC \
         FAULT_INJECTION \
         FAULT_INJECTION_DEBUG_FS
+
+    mapfile -t local_fault_injection_syms < <(discover_fault_injection_kconfig_symbols)
+    if ((${#local_fault_injection_syms[@]} > 0)); then
+        disable_if_present "${local_fault_injection_syms[@]}"
+    fi
 fi
 
 if [[ "$PRUNE_DANGEROUS" == "1" ]]; then
