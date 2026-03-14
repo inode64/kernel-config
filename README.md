@@ -124,7 +124,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
   Disables fault-injection and forced-failure testing options.
 
 - `PRUNE_DANGEROUS`
-  Disables symbols whose Kconfig prompt is explicitly marked `DANGEROUS`.
+  Disables symbols whose Kconfig prompt is explicitly marked `DANGEROUS` or `unsafe`.
 
 ### Platform and hardware filters
 
@@ -333,7 +333,7 @@ scripts/diffconfig old.config new.config
 - `PRUNE_HARDENING` reduces security hardening.
 - `PRUNE_LEGACY` may remove compatibility features you still depend on.
 - `PRUNE_SANITIZERS`, `PRUNE_COVERAGE`, and `PRUNE_FAULT_INJECTION` remove test-oriented instrumentation.
-- `PRUNE_DANGEROUS` removes edge-case options that upstream Kconfig labels as dangerous, such as late microcode loading or unsafe device/debug paths.
+- `PRUNE_DANGEROUS` removes edge-case options that upstream Kconfig labels as dangerous or unsafe, such as late microcode loading or risky device/debug paths.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.

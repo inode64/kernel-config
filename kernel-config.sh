@@ -482,6 +482,10 @@ discover_selftest_kconfig_symbols() {
     discover_kconfig_symbols_by_pattern "(self[- ]?tests?|selftest|kunit tests?|boot[- ]time self[- ]tests?)"
 }
 
+discover_dangerous_kconfig_symbols() {
+    discover_kconfig_symbols_by_pattern "(dangerous|unsafe)"
+}
+
 discover_coverage_kconfig_symbols() {
     discover_kconfig_symbols_by_pattern "(gcov|coverage|kernel profiling|code profiling|function profiler|branch profil|profile guided optimi[sz]ation|profile all if conditionals|likely/unlikely profiler)"
 }
@@ -2344,7 +2348,7 @@ fi
 
 if is_enabled "$PRUNE_DANGEROUS"; then
     echo
-    echo "==> Disabling options explicitly marked DANGEROUS in Kconfig"
+    echo "==> Disabling options explicitly marked dangerous/unsafe in Kconfig"
 
     disable_if_present \
         ADFS_FS_RW \
@@ -2357,6 +2361,11 @@ if is_enabled "$PRUNE_DANGEROUS"; then
         UFS_FS_WRITE \
         USB4_DEBUGFS_MARGINING \
         USB4_DEBUGFS_WRITE
+
+    mapfile -t dangerous_syms < <(discover_dangerous_kconfig_symbols)
+    if ((${#dangerous_syms[@]} > 0)); then
+        disable_if_present "${dangerous_syms[@]}"
+    fi
 fi
 
 
