@@ -1220,10 +1220,32 @@ vendor_kconfig_files() {
         "$KSRCDIR/arch/x86/Kconfig" \
         "$KSRCDIR/arch/x86/events/Kconfig" \
         "$KSRCDIR/arch/x86/kvm/Kconfig" \
+        "$KSRCDIR/drivers/dma/Kconfig" \
+        "$KSRCDIR/drivers/dma/amd/Kconfig" \
+        "$KSRCDIR/drivers/edac/Kconfig" \
         "$KSRCDIR/drivers/idle/Kconfig" \
-        "$KSRCDIR/drivers/thermal/intel/Kconfig" \
-        "$KSRCDIR/drivers/platform/x86/intel/ifs/Kconfig" \
+        "$KSRCDIR/drivers/iommu/amd/Kconfig" \
+        "$KSRCDIR/drivers/iommu/intel/Kconfig" \
+        "$KSRCDIR/drivers/ntb/amd/Kconfig" \
+        "$KSRCDIR/drivers/ntb/intel/Kconfig" \
+        "$KSRCDIR/drivers/pinctrl/intel/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/amd/Kconfig" \
         "$KSRCDIR/drivers/platform/x86/amd/hfi/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/amd/hsmp/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/amd/pmc/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/amd/pmf/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/atomisp2/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/ifs/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/int1092/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/int3472/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/pmc/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/pmt/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/speed_select_if/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/telemetry/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/uncore-frequency/Kconfig" \
+        "$KSRCDIR/drivers/platform/x86/intel/wmi/Kconfig" \
+        "$KSRCDIR/drivers/thermal/intel/Kconfig" \
         "$KSRCDIR/drivers/virt/coco/tdx-guest/Kconfig" \
         "$KSRCDIR/drivers/virt/coco/sev-guest/Kconfig"; do
         if [[ -f "$path" ]]; then
