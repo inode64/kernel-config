@@ -2348,7 +2348,7 @@ fi
 
 if is_enabled "$PRUNE_DANGEROUS"; then
     echo
-    echo "==> Disabling options explicitly marked dangerous/unsafe in Kconfig"
+    echo "==> Disabling options explicitly marked dangerous/unsafe"
 
     disable_if_present \
         ADFS_FS_RW \
