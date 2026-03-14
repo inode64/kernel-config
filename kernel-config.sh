@@ -9,10 +9,12 @@ set -Eeuo pipefail
 #   KEEP_OBSERVABILITY=0 PRUNE_LEGACY=1 ./kernel-config.sh /usr/src/linux
 #   ./kernel-config.sh /usr/src/linux .config PRUNE_LEGACY=1 KEEP_OBSERVABILITY=0
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --config-file .config --prune-legacy
+#   ./kernel-config.sh --dry-run /usr/src/linux
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --all-optimizations
 #
 # Optional variables and flags:
 #   ALL_OPTIMIZATIONS=0       -> enable the script's full optimization preset
+#   DRY_RUN=0                -> show the resulting .config diff without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   KEEP_OBSERVABILITY=1      -> keep useful options for perf/bpf/ftrace/debugfs
 #   PRUNE_LEGACY=0            -> do not touch legacy/compat options by default
@@ -71,6 +73,7 @@ Usage:
 Options:
   --kernel-srcdir PATH
   --config-file PATH
+  --dry-run [0|1]
   --all-optimizations [0|1]
   --optimization-profile PROFILE
   --cpu-vendor-filter MODE
@@ -109,6 +112,7 @@ Notes:
   Environment variables set defaults.
   CLI flags and VAR=VALUE arguments override environment variables.
   Boolean flags without a value imply 1.
+  --dry-run shows a unified diff of the resulting .config without modifying the real file.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
@@ -148,7 +152,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        dry-run | all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -166,10 +170,12 @@ set_tunable() {
     local value="$2"
 
     case "$name" in
-        ALL_OPTIMIZATIONS)
+        DRY_RUN | ALL_OPTIMIZATIONS)
             printf -v "$name" '%s' "$value"
             if [[ "$value" == "1" ]]; then
-                apply_all_optimizations
+                if [[ "$name" == "ALL_OPTIMIZATIONS" ]]; then
+                    apply_all_optimizations
+                fi
             fi
             ;;
         OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
@@ -200,6 +206,7 @@ set_option() {
 }
 
 ALL_OPTIMIZATIONS="${ALL_OPTIMIZATIONS:-0}"
+DRY_RUN="${DRY_RUN:-0}"
 OPTIMIZATION_PROFILE="${OPTIMIZATION_PROFILE:-none}"
 KEEP_OBSERVABILITY="${KEEP_OBSERVABILITY:-1}"
 PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
@@ -308,6 +315,8 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     exit 1
 fi
 
+ORIGINAL_CONFIG_FILE="$(realpath "$CONFIG_FILE")"
+
 if [[ ! -x scripts/config ]]; then
     echo "scripts/config is missing or not executable; trying to generate it..."
     make -s scripts >/dev/null
@@ -318,9 +327,40 @@ if [[ ! -x scripts/config ]]; then
     exit 1
 fi
 
-BACKUP="${CONFIG_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
-cp -a "$CONFIG_FILE" "$BACKUP"
-echo "Backup: $BACKUP"
+WORK_CONFIG_FILE="$ORIGINAL_CONFIG_FILE"
+BACKUP=""
+DRY_RUN_TEMP=""
+
+cleanup() {
+    if [[ -n "$DRY_RUN_TEMP" && -f "$DRY_RUN_TEMP" ]]; then
+        rm -f "$DRY_RUN_TEMP"
+    fi
+}
+
+trap cleanup EXIT
+
+show_config_diff() {
+    local before_file="$1"
+    local after_file="$2"
+
+    if diff -u "$before_file" "$after_file"; then
+        echo
+        echo "No changes."
+    fi
+}
+
+if [[ "$DRY_RUN" == "1" ]]; then
+    DRY_RUN_TEMP="$(mktemp "${TMPDIR:-/tmp}/kernel-config.dry-run.XXXXXX")"
+    cp -a "$ORIGINAL_CONFIG_FILE" "$DRY_RUN_TEMP"
+    WORK_CONFIG_FILE="$DRY_RUN_TEMP"
+    echo "Dry-run: using temporary config copy $WORK_CONFIG_FILE"
+else
+    BACKUP="${ORIGINAL_CONFIG_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -a "$ORIGINAL_CONFIG_FILE" "$BACKUP"
+    echo "Backup: $BACKUP"
+fi
+
+CONFIG_FILE="$WORK_CONFIG_FILE"
 
 cfg() {
     scripts/config --file "$CONFIG_FILE" "$@"
@@ -2640,18 +2680,27 @@ fi
 
 echo
 echo "==> Running olddefconfig to normalize dependencies"
-yes "" | make olddefconfig >/dev/null
+env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
 
 echo
-echo "Done."
-echo
-echo "Review changes with:"
-echo "  diff -u \"$BACKUP\" \"$CONFIG_FILE\" | less"
-echo
-echo "If you have scripts/diffconfig:"
-echo "  scripts/diffconfig \"$BACKUP\" \"$CONFIG_FILE\""
-echo
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "==> Dry-run diff for $ORIGINAL_CONFIG_FILE"
+    show_config_diff "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
+    echo
+    echo "Dry-run complete. No files were modified."
+else
+    echo "Done."
+    echo
+    echo "Review changes with:"
+    echo "  diff -u \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\" | less"
+    echo
+    echo "If you have scripts/diffconfig:"
+    echo "  scripts/diffconfig \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\""
+    echo
+fi
+
 echo "Notes:"
+echo "  - DRY_RUN=1 / --dry-run shows the final .config diff without modifying the real file."
 echo "  - KEEP_OBSERVABILITY=1 keeps useful observability options."
 echo "  - OPTIMIZATION_PROFILE=server/desktop/realtime selects a kernel tuning profile."
 echo "  - OPTIMIZE_SERVER_SPEED=1 is kept as a legacy alias for OPTIMIZATION_PROFILE=server."
