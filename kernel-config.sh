@@ -34,6 +34,7 @@ set -Eeuo pipefail
 #   IOMMU_SUPPORT=none        -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
+#   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
 #   APPLICATIONS=none         -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=native          -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
@@ -82,6 +83,7 @@ Options:
   --iommu-support MODE
   --numa-support MODE
   --nr-cpus VALUE
+  --protected-config-symbols LIST
   --applications LIST
   --host-type TYPE
   --prune-observability
@@ -120,6 +122,7 @@ Notes:
   --iommu-support accepts: none, auto, on, off.
   --numa-support accepts: none, auto, on, off.
   --nr-cpus accepts: none, auto, or a positive integer.
+  --protected-config-symbols accepts a comma-separated list such as CONFIG_FOO,CONFIG_BAR.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
@@ -216,7 +219,7 @@ set_tunable() {
     fi
 
     case "$name" in
-        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -263,6 +266,7 @@ init_tunable DMA_ENGINE_SUPPORT none
 init_tunable IOMMU_SUPPORT none
 init_tunable NUMA_SUPPORT none
 init_tunable NR_CPUS none
+init_tunable PROTECTED_CONFIG_SYMBOLS CONFIG_ARCH_PKEY_BITS
 init_tunable APPLICATIONS none
 init_tunable HOST_TYPE native
 init_tunable PRUNE_BPF false
@@ -534,6 +538,97 @@ append_unique_item() {
     done
 
     items_ref+=("$value")
+}
+
+trim_whitespace() {
+    local value="$1"
+
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    printf '%s\n' "$value"
+}
+
+normalize_config_symbol_name() {
+    local sym="$1"
+
+    sym="$(trim_whitespace "$sym")"
+    sym="${sym#CONFIG_}"
+    sym="$(printf '%s' "$sym" | tr '[:lower:]' '[:upper:]')"
+
+    printf '%s\n' "$sym"
+}
+
+load_protected_config_symbols() {
+    local raw_sym normalized_sym
+    local -a raw_symbols=()
+
+    PROTECTED_CONFIG_SYMBOL_LIST=()
+
+    IFS=',' read -r -a raw_symbols <<<"$PROTECTED_CONFIG_SYMBOLS"
+    for raw_sym in "${raw_symbols[@]}"; do
+        normalized_sym="$(normalize_config_symbol_name "$raw_sym")"
+        if [[ -n "$normalized_sym" ]]; then
+            append_unique_item "$normalized_sym" PROTECTED_CONFIG_SYMBOL_LIST
+        fi
+    done
+}
+
+is_protected_config_symbol() {
+    local requested_sym="$1"
+    local normalized_requested protected_sym
+
+    normalized_requested="$(normalize_config_symbol_name "$requested_sym")"
+    for protected_sym in "${PROTECTED_CONFIG_SYMBOL_LIST[@]:-}"; do
+        if [[ "$protected_sym" == "$normalized_requested" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+disable_config_symbol() {
+    local sym="$1"
+    local normalized_sym
+
+    normalized_sym="$(normalize_config_symbol_name "$sym")"
+    if is_protected_config_symbol "$normalized_sym"; then
+        echo "Skipping protected symbol: CONFIG_${normalized_sym}"
+        return 0
+    fi
+
+    echo "Disabling: CONFIG_${normalized_sym}"
+    cfg --disable "$normalized_sym" || true
+}
+
+enable_config_symbol() {
+    local sym="$1"
+    local normalized_sym
+
+    normalized_sym="$(normalize_config_symbol_name "$sym")"
+    if is_protected_config_symbol "$normalized_sym"; then
+        echo "Skipping protected symbol: CONFIG_${normalized_sym}"
+        return 0
+    fi
+
+    echo "Enabling: CONFIG_${normalized_sym}"
+    cfg --enable "$normalized_sym" || true
+}
+
+set_val_config_symbol() {
+    local sym="$1"
+    local value="$2"
+    local normalized_sym
+
+    normalized_sym="$(normalize_config_symbol_name "$sym")"
+    if is_protected_config_symbol "$normalized_sym"; then
+        echo "Skipping protected symbol: CONFIG_${normalized_sym}"
+        return 0
+    fi
+
+    echo "Setting: CONFIG_${normalized_sym}=$value"
+    cfg --set-val "$normalized_sym" "$value" || true
 }
 
 resolve_cpu_vendor_filter() {
@@ -1320,8 +1415,7 @@ disable_if_present() {
     local sym
     for sym in "$@"; do
         if have_symbol "$sym"; then
-            echo "Disabling: CONFIG_${sym}"
-            cfg --disable "$sym" || true
+            disable_config_symbol "$sym"
         fi
     done
 }
@@ -1330,20 +1424,25 @@ enable_if_present() {
     local sym
     for sym in "$@"; do
         if have_symbol "$sym"; then
-            echo "Enabling: CONFIG_${sym}"
-            cfg --enable "$sym" || true
+            enable_config_symbol "$sym"
         fi
     done
 }
 
 select_if_present() {
     local selected="$1"
+    local normalized_selected
     shift
 
     if have_symbol "$selected"; then
         disable_if_present "$@"
-        echo "Selecting: CONFIG_${selected}"
-        cfg --enable "$selected" || true
+        normalized_selected="$(normalize_config_symbol_name "$selected")"
+        if is_protected_config_symbol "$normalized_selected"; then
+            echo "Skipping protected symbol: CONFIG_${normalized_selected}"
+        else
+            echo "Selecting: CONFIG_${normalized_selected}"
+            cfg --enable "$normalized_selected" || true
+        fi
     fi
 }
 
@@ -2192,7 +2291,7 @@ configure_nr_cpus_profile() {
         echo "    (setting CONFIG_NR_CPUS=$adjusted)"
     fi
 
-    cfg --set-val NR_CPUS "$adjusted" || true
+    set_val_config_symbol NR_CPUS "$adjusted"
 }
 
 configure_application_profiles() {
@@ -2311,6 +2410,8 @@ configure_application_profiles() {
         enable_if_present "${enable_syms[@]}"
     fi
 }
+
+load_protected_config_symbols
 
 if is_enabled "$PRUNE_SANITIZERS"; then
     echo
@@ -2469,7 +2570,7 @@ fi
 # extra: debug info choice
 if have_symbol DEBUG_INFO_NONE; then
     echo "Selecting: CONFIG_DEBUG_INFO_NONE"
-    cfg --enable DEBUG_INFO_NONE || true
+    enable_config_symbol DEBUG_INFO_NONE
 fi
 # optional: BPF/observability
 if is_enabled "$PRUNE_BPF"; then

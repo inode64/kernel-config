@@ -86,6 +86,8 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 `--dry-run` is a boolean flag. When enabled, the script prints the final `.config` diff and leaves the real file untouched.
 
+`PROTECTED_CONFIG_SYMBOLS` accepts a comma-separated list of symbols that the script must not modify. Symbols may be passed as `FOO` or `CONFIG_FOO`.
+
 ## Main Parameters
 
 ### Core tuning
@@ -157,6 +159,9 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `NR_CPUS=none|auto|<integer>`
   Sets `CONFIG_NR_CPUS` to a fixed value or to the detected host CPU count. If the config defines a valid `NR_CPUS` range, the value is clamped into that range.
+
+- `PROTECTED_CONFIG_SYMBOLS=<comma-separated-list>`
+  Prevents the script from enabling, disabling, or overwriting the listed symbols. The default protected list already includes `CONFIG_ARCH_PKEY_BITS`.
 
 ### Virtualization and workload hints
 
@@ -306,6 +311,14 @@ NR_CPUS=auto \
   NR_CPUS=16
 ```
 
+### Protect symbols from script changes
+
+```bash
+./kernel-config.sh \
+  --kernel-srcdir /usr/src/linux \
+  --protected-config-symbols CONFIG_ARCH_PKEY_BITS,CONFIG_NR_CPUS_RANGE_END
+```
+
 ## Output and Safety
 
 The script:
@@ -336,6 +349,7 @@ scripts/diffconfig old.config new.config
 - `PRUNE_DANGEROUS` removes edge-case options that upstream Kconfig labels as dangerous or unsafe, such as late microcode loading or risky device/debug paths.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
+- `PROTECTED_CONFIG_SYMBOLS` only protects against changes made by this script. `make olddefconfig` can still adjust dependent symbols if Kconfig requires it.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.
 
 ## License
