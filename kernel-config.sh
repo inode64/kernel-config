@@ -1412,12 +1412,48 @@ discover_vendor_kconfig_symbols() {
 }
 
 disable_if_present() {
+    local -a unique_syms=()
     local sym
-    for sym in "$@"; do
+
+    prepare_sorted_unique_symbols unique_syms "$@"
+    for sym in "${unique_syms[@]}"; do
         if have_symbol "$sym"; then
             disable_config_symbol "$sym"
         fi
     done
+}
+
+prepare_sorted_unique_symbols() {
+    local -n symbols_ref="$1"
+    local sym normalized_sym
+    shift
+
+    symbols_ref=()
+    if (($# == 0)); then
+        return
+    fi
+
+    mapfile -t symbols_ref < <(
+        for sym in "$@"; do
+            normalized_sym="$(normalize_config_symbol_name "$sym")"
+            if [[ -n "$normalized_sym" ]]; then
+                printf '%s\n' "$normalized_sym"
+            fi
+        done | sort -u
+    )
+}
+
+disable_discovered_and_fixed_symbols() {
+    local discover_fn="$1"
+    shift
+    local -a syms=()
+
+    if [[ -n "$discover_fn" ]]; then
+        mapfile -t syms < <("$discover_fn")
+    fi
+
+    syms+=("$@")
+    disable_if_present "${syms[@]}"
 }
 
 enable_if_present() {
@@ -2433,28 +2469,21 @@ if is_enabled "$PRUNE_SANITIZERS"; then
 fi
 
 if is_enabled "$PRUNE_COVERAGE"; then
-    local_coverage_syms=()
-
     echo
     echo "==> Disabling coverage and profiling"
 
-    disable_if_present \
+    disable_discovered_and_fixed_symbols \
+        discover_coverage_kconfig_symbols \
         GCOV_KERNEL \
         GCOV_PROFILE_ALL
-
-    mapfile -t local_coverage_syms < <(discover_coverage_kconfig_symbols)
-    if ((${#local_coverage_syms[@]} > 0)); then
-        disable_if_present "${local_coverage_syms[@]}"
-    fi
 fi
 
 if is_enabled "$PRUNE_FAULT_INJECTION"; then
-    local_fault_injection_syms=()
-
     echo
     echo "==> Disabling fault injection"
 
-    disable_if_present \
+    disable_discovered_and_fixed_symbols \
+        discover_fault_injection_kconfig_symbols \
         FAILSLAB \
         FAIL_FUTEX \
         FAIL_IO_TIMEOUT \
@@ -2462,18 +2491,14 @@ if is_enabled "$PRUNE_FAULT_INJECTION"; then
         FAIL_PAGE_ALLOC \
         FAULT_INJECTION \
         FAULT_INJECTION_DEBUG_FS
-
-    mapfile -t local_fault_injection_syms < <(discover_fault_injection_kconfig_symbols)
-    if ((${#local_fault_injection_syms[@]} > 0)); then
-        disable_if_present "${local_fault_injection_syms[@]}"
-    fi
 fi
 
 if is_enabled "$PRUNE_DANGEROUS"; then
     echo
     echo "==> Disabling options explicitly marked dangerous/unsafe"
 
-    disable_if_present \
+    disable_discovered_and_fixed_symbols \
+        discover_dangerous_kconfig_symbols \
         ADFS_FS_RW \
         DRM_FBDEV_LEAK_PHYS_SMEM \
         FB_VIA_DIRECT_PROCFS \
@@ -2484,11 +2509,6 @@ if is_enabled "$PRUNE_DANGEROUS"; then
         UFS_FS_WRITE \
         USB4_DEBUGFS_MARGINING \
         USB4_DEBUGFS_WRITE
-
-    mapfile -t dangerous_syms < <(discover_dangerous_kconfig_symbols)
-    if ((${#dangerous_syms[@]} > 0)); then
-        disable_if_present "${dangerous_syms[@]}"
-    fi
 fi
 
 
@@ -2496,24 +2516,20 @@ if is_enabled "$PRUNE_SELFTEST"; then
     echo
     echo "==> Disabling selftest symbols"
 
-    disable_if_present \
-      CORESIGHT \
-      KDB \
-      KGDB \
-      KGDB_KDB \
-      KGDB_TESTS \
-      KUNIT \
-      KUNIT_ALL_TESTS \
-      KUNIT_TEST \
-      LKDTM \
-      RUNTIME_TESTING_MENU \
-      TEST_KSTRTOX \
-      TEST_LIST_SORT
-
-    mapfile -t selftest_syms < <(discover_selftest_kconfig_symbols)
-    if ((${#selftest_syms[@]} > 0)); then
-        disable_if_present "${selftest_syms[@]}"
-    fi
+    disable_discovered_and_fixed_symbols \
+        discover_selftest_kconfig_symbols \
+        CORESIGHT \
+        KDB \
+        KGDB \
+        KGDB_KDB \
+        KGDB_TESTS \
+        KUNIT \
+        KUNIT_ALL_TESTS \
+        KUNIT_TEST \
+        LKDTM \
+        RUNTIME_TESTING_MENU \
+        TEST_KSTRTOX \
+        TEST_LIST_SORT
 fi
 
 if is_enabled "$PRUNE_OBSERVABILITY"; then
@@ -2547,7 +2563,8 @@ if is_enabled "$PRUNE_LEGACY"; then
     echo "==> Disabling legacy/obsolete interfaces"
     echo "    (optional block; review compatibility before using it in production)"
 
-    disable_if_present \
+    disable_discovered_and_fixed_symbols \
+        discover_legacy_kconfig_symbols \
         BINFMT_AOUT \
         BLK_DEV_FD \
         LEGACY_PTYS \
@@ -2558,13 +2575,6 @@ if is_enabled "$PRUNE_LEGACY"; then
         SYSFS_SYSCALL \
         UID16 \
         USELIB
-
-    mapfile -t legacy_syms < <(discover_legacy_kconfig_symbols)
-    if ((${#legacy_syms[@]} > 0)); then
-        echo
-        echo "==> Disabling symbols marked as legacy/deprecated"
-        disable_if_present "${legacy_syms[@]}"
-    fi
 fi
 
 # extra: debug info choice
@@ -2590,62 +2600,58 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
     echo
     echo "==> Disabling debug/trace symbols"
 
-    disable_if_present \
-      BOOTPARAM_HARDLOCKUP_PANIC \
-      BOOTPARAM_HUNG_TASK_PANIC \
-      BOOTPARAM_SOFTLOCKUP_PANIC \
-      DEBUG_ATOMIC_SLEEP \
-      DEBUG_CREDENTIALS \
-      DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
-      DEBUG_INFO_REDUCED \
-      DEBUG_IRQFLAGS \
-      DEBUG_KERNEL \
-      DEBUG_LIST \
-      DEBUG_LOCK_ALLOC \
-      DEBUG_MEMORY_INIT \
-      DEBUG_MUTEXES \
-      DEBUG_NOTIFIERS \
-      DEBUG_OBJECTS \
-      DEBUG_OBJECTS_FREE \
-      DEBUG_OBJECTS_RCU_HEAD \
-      DEBUG_OBJECTS_SELFTEST \
-      DEBUG_OBJECTS_TIMERS \
-      DEBUG_OBJECTS_WORK \
-      DEBUG_PAGEALLOC \
-      DEBUG_PER_CPU_MAPS \
-      DEBUG_PLIST \
-      DEBUG_PREEMPT \
-      DEBUG_RT_MUTEXES \
-      DEBUG_RWSEMS \
-      DEBUG_SG \
-      DEBUG_SLAB \
-      DEBUG_SPINLOCK \
-      DEBUG_VIRTUAL \
-      DEBUG_VM \
-      DEBUG_VM_PGFLAGS \
-      DEBUG_WW_MUTEX_SLOWPATH \
-      DETECT_HUNG_TASK \
-      DYNAMIC_DEBUG \
-      GDB_SCRIPTS \
-      HARDLOCKUP_DETECTOR \
-      LATENCYTOP \
-      LOCKDEP \
-      LOCKUP_DETECTOR \
-      LOCK_STAT \
-      PAGE_EXTENSION \
-      PAGE_OWNER \
-      PAGE_POISONING \
-      PROVE_LOCKING \
-      SCHEDSTATS \
-      SCHED_DEBUG \
-      SLUB_DEBUG \
-      SLUB_DEBUG_ON \
-      SOFTLOCKUP_DETECTOR
-
-    mapfile -t debug_trace_syms < <(discover_debug_trace_kconfig_symbols)
-    if ((${#debug_trace_syms[@]} > 0)); then
-        disable_if_present "${debug_trace_syms[@]}"
-    fi
+    disable_discovered_and_fixed_symbols \
+        discover_debug_trace_kconfig_symbols \
+        BOOTPARAM_HARDLOCKUP_PANIC \
+        BOOTPARAM_HUNG_TASK_PANIC \
+        BOOTPARAM_SOFTLOCKUP_PANIC \
+        DEBUG_ATOMIC_SLEEP \
+        DEBUG_CREDENTIALS \
+        DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
+        DEBUG_INFO_REDUCED \
+        DEBUG_IRQFLAGS \
+        DEBUG_KERNEL \
+        DEBUG_LIST \
+        DEBUG_LOCK_ALLOC \
+        DEBUG_MEMORY_INIT \
+        DEBUG_MUTEXES \
+        DEBUG_NOTIFIERS \
+        DEBUG_OBJECTS \
+        DEBUG_OBJECTS_FREE \
+        DEBUG_OBJECTS_RCU_HEAD \
+        DEBUG_OBJECTS_SELFTEST \
+        DEBUG_OBJECTS_TIMERS \
+        DEBUG_OBJECTS_WORK \
+        DEBUG_PAGEALLOC \
+        DEBUG_PER_CPU_MAPS \
+        DEBUG_PLIST \
+        DEBUG_PREEMPT \
+        DEBUG_RT_MUTEXES \
+        DEBUG_RWSEMS \
+        DEBUG_SG \
+        DEBUG_SLAB \
+        DEBUG_SPINLOCK \
+        DEBUG_VIRTUAL \
+        DEBUG_VM \
+        DEBUG_VM_PGFLAGS \
+        DEBUG_WW_MUTEX_SLOWPATH \
+        DETECT_HUNG_TASK \
+        DYNAMIC_DEBUG \
+        GDB_SCRIPTS \
+        HARDLOCKUP_DETECTOR \
+        LATENCYTOP \
+        LOCKDEP \
+        LOCKUP_DETECTOR \
+        LOCK_STAT \
+        PAGE_EXTENSION \
+        PAGE_OWNER \
+        PAGE_POISONING \
+        PROVE_LOCKING \
+        SCHEDSTATS \
+        SCHED_DEBUG \
+        SLUB_DEBUG \
+        SLUB_DEBUG_ON \
+        SOFTLOCKUP_DETECTOR
 fi
 
 if is_enabled "$PRUNE_HARDENING"; then
@@ -2653,10 +2659,7 @@ if is_enabled "$PRUNE_HARDENING"; then
     echo "==> Disabling hardening/mitigation symbols"
     echo "    (this reduces kernel security hardening)"
 
-    mapfile -t hardening_syms < <(discover_hardening_kconfig_symbols)
-    if ((${#hardening_syms[@]} > 0)); then
-        disable_if_present "${hardening_syms[@]}"
-    fi
+    disable_discovered_and_fixed_symbols discover_hardening_kconfig_symbols
 fi
 
 OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
