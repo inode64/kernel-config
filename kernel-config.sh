@@ -25,6 +25,7 @@ set -Eeuo pipefail
 #   PRUNE_COVERAGE            -> disable coverage/profiling symbols
 #   PRUNE_FAULT_INJECTION     -> disable fault-injection/test failure symbols
 #   PRUNE_DANGEROUS           -> disable symbols explicitly marked DANGEROUS in Kconfig
+#   PRUNE_UNUSED_MODULES      -> probe module configs not currently loaded and disable direct module symbols that can be tested safely
 #   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor
 #   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none         -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
@@ -95,6 +96,7 @@ Options:
   --prune-coverage
   --prune-fault-injection
   --prune-dangerous
+  --prune-unused-modules
   --prune-bpf
   --prune-compat32
   --prune-unused-net
@@ -123,6 +125,7 @@ Notes:
   --numa-support accepts: none, auto, on, off.
   --nr-cpus accepts: none, auto, or a positive integer.
   --protected-config-symbols accepts a comma-separated list such as CONFIG_FOO,CONFIG_BAR.
+  --prune-unused-modules requires root, a configured tree matching the running kernelrelease, and only probes direct one-symbol/one-module Kbuild mappings.
   --applications accepts a comma-separated list of app profiles.
   KERNEL_SRCDIR and CONFIG_FILE can be passed as positional arguments or via flags.
 EOF
@@ -151,7 +154,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-unused-modules | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -162,7 +165,7 @@ is_boolean_option() {
 
 is_boolean_tunable() {
     case "$1" in
-        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             return 0
             ;;
         *)
@@ -219,7 +222,7 @@ set_tunable() {
     fi
 
     case "$name" in
-        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -257,6 +260,7 @@ init_tunable PRUNE_SANITIZERS false
 init_tunable PRUNE_COVERAGE false
 init_tunable PRUNE_FAULT_INJECTION false
 init_tunable PRUNE_DANGEROUS false
+init_tunable PRUNE_UNUSED_MODULES false
 init_tunable CPU_VENDOR_FILTER none
 init_tunable VIDEO_SUPPORT none
 init_tunable UEFI_SUPPORT none
@@ -461,6 +465,270 @@ have_symbol() {
 
 find_kconfig_files() {
     find -L "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null
+}
+
+find_kbuild_files() {
+    find -L "$KSRCDIR" -type f \( -name 'Makefile' -o -name 'Kbuild' \) -print0 2>/dev/null
+}
+
+declare -A MODULE_SYMBOL_TO_MODULES=()
+MODULE_SYMBOL_MAP_READY=false
+
+capture_loaded_modules() {
+    lsmod | awk 'NR > 1 { print $1 }'
+}
+
+module_exists_for_running_kernel() {
+    local module_name="$1"
+    modinfo -k "$(uname -r)" "$module_name" >/dev/null 2>&1
+}
+
+is_module_loaded_now() {
+    local module_name="$1"
+    lsmod | awk 'NR > 1 { print $1 }' | grep -Fxq "$module_name"
+}
+
+discover_config_module_symbols() {
+    awk -F= '/^CONFIG_[A-Z0-9_]+=m$/ {
+        sym = $1
+        sub(/^CONFIG_/, "", sym)
+        print sym
+    }' "$CONFIG_FILE"
+}
+
+build_module_symbol_candidate_map() {
+    local sym module existing_modules
+
+    if [[ "$MODULE_SYMBOL_MAP_READY" == "true" ]]; then
+        return
+    fi
+
+    MODULE_SYMBOL_TO_MODULES=()
+    while IFS=$'\t' read -r sym module; do
+        [[ -n "$sym" && -n "$module" ]] || continue
+        existing_modules="${MODULE_SYMBOL_TO_MODULES[$sym]:-}"
+        case " $existing_modules " in
+            *" $module "*)
+                ;;
+            *)
+                MODULE_SYMBOL_TO_MODULES["$sym"]="${existing_modules:+$existing_modules }$module"
+                ;;
+        esac
+    done < <(
+        find_kbuild_files \
+            | xargs -0 -r awk '
+                {
+                    line = $0
+                    sub(/[[:space:]]*#.*/, "", line)
+                }
+
+                line ~ /^[[:space:]]*obj-\$\(CONFIG_[A-Z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/ {
+                    sym = line
+                    sub(/^[[:space:]]*obj-\$\(CONFIG_/, "", sym)
+                    sub(/\).*/, "", sym)
+
+                    rest = line
+                    sub(/^[[:space:]]*obj-\$\(CONFIG_[A-Z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/, "", rest)
+
+                    count = split(rest, items, /[[:space:]]+/)
+                    for (i = 1; i <= count; i++) {
+                        item = items[i]
+                        if (item ~ /^[^\/[:space:]]+\.o$/) {
+                            module = item
+                            sub(/\.o$/, "", module)
+                            print sym "\t" module
+                        }
+                    }
+                }
+            ' \
+            | sort -u
+    )
+
+    MODULE_SYMBOL_MAP_READY=true
+}
+
+restore_loaded_modules_to_initial_state() {
+    local -n initial_modules_arr="$1"
+    local attempt current_module
+    local -A initial_modules_map=()
+    local -A current_modules_map=()
+    local -a current_modules=()
+    local -a extra_modules=()
+    local -a missing_modules=()
+
+    for current_module in "${initial_modules_arr[@]}"; do
+        initial_modules_map["$current_module"]=1
+    done
+
+    for attempt in 1 2 3; do
+        current_modules=()
+        current_modules_map=()
+        extra_modules=()
+        missing_modules=()
+
+        mapfile -t current_modules < <(capture_loaded_modules)
+        for current_module in "${current_modules[@]}"; do
+            current_modules_map["$current_module"]=1
+        done
+
+        for ((idx=${#current_modules[@]} - 1; idx >= 0; idx--)); do
+            current_module="${current_modules[idx]}"
+            if [[ -z "${initial_modules_map[$current_module]:-}" ]]; then
+                extra_modules+=("$current_module")
+            fi
+        done
+
+        for current_module in "${initial_modules_arr[@]}"; do
+            if [[ -z "${current_modules_map[$current_module]:-}" ]]; then
+                missing_modules+=("$current_module")
+            fi
+        done
+
+        if ((${#extra_modules[@]} == 0 && ${#missing_modules[@]} == 0)); then
+            return 0
+        fi
+
+        for current_module in "${extra_modules[@]}"; do
+            modprobe -r "$current_module" >/dev/null 2>&1 || true
+        done
+
+        for current_module in "${missing_modules[@]}"; do
+            modprobe "$current_module" >/dev/null 2>&1 || true
+        done
+    done
+
+    current_modules=()
+    current_modules_map=()
+    extra_modules=()
+    missing_modules=()
+
+    mapfile -t current_modules < <(capture_loaded_modules)
+    for current_module in "${current_modules[@]}"; do
+        current_modules_map["$current_module"]=1
+        if [[ -z "${initial_modules_map[$current_module]:-}" ]]; then
+            extra_modules+=("$current_module")
+        fi
+    done
+
+    for current_module in "${initial_modules_arr[@]}"; do
+        if [[ -z "${current_modules_map[$current_module]:-}" ]]; then
+            missing_modules+=("$current_module")
+        fi
+    done
+
+    ((${#extra_modules[@]} == 0 && ${#missing_modules[@]} == 0))
+}
+
+probe_unloaded_module_candidate() {
+    local module_name="$1"
+    local initial_modules_var_name="$2"
+
+    echo "    Probing module: ${module_name}"
+
+    if ! modprobe "$module_name" >/dev/null 2>&1; then
+        echo "      (probe failed: could not load)"
+        return 0
+    fi
+
+    if ! is_module_loaded_now "$module_name"; then
+        echo "      (probe loaded nothing persistent; module did not stay initialized)"
+        if restore_loaded_modules_to_initial_state "$initial_modules_var_name"; then
+            return 0
+        fi
+
+        echo "      (probe failed: could not restore original module set)"
+        return 2
+    fi
+
+    if restore_loaded_modules_to_initial_state "$initial_modules_var_name"; then
+        echo "      (module can be loaded; keeping config and only reporting it)"
+        return 1
+    fi
+
+    echo "      (probe failed: could not restore original module set)"
+    return 2
+}
+
+probe_and_prune_unused_module_symbols() {
+    local running_kernel_release target_kernel_release module_name
+    local probe_status
+    local symbol module_list
+    local -A initially_loaded_map=()
+    local -a initially_loaded_modules=()
+    local -a module_symbols=()
+    local -a module_candidates=()
+
+    echo
+    echo "==> Probing currently unloaded module configs"
+
+    if [[ "$(id -u)" != "0" ]]; then
+        echo "    (requires root to load/unload modules safely; skipping)"
+        return
+    fi
+
+    if ! command -v lsmod >/dev/null 2>&1 || ! command -v modprobe >/dev/null 2>&1 || ! command -v modinfo >/dev/null 2>&1; then
+        echo "    (lsmod/modprobe/modinfo are required; skipping)"
+        return
+    fi
+
+    running_kernel_release="$(uname -r)"
+    target_kernel_release="$(make -s kernelrelease 2>/dev/null || true)"
+    if [[ -z "$target_kernel_release" ]]; then
+        echo "    (could not resolve target kernelrelease; skipping)"
+        return
+    fi
+
+    if [[ "$target_kernel_release" != "$running_kernel_release" ]]; then
+        echo "    (target kernelrelease $target_kernel_release does not match running kernel $running_kernel_release; skipping)"
+        return
+    fi
+
+    build_module_symbol_candidate_map
+    mapfile -t initially_loaded_modules < <(capture_loaded_modules)
+    for module_name in "${initially_loaded_modules[@]}"; do
+        initially_loaded_map["$module_name"]=1
+    done
+
+    mapfile -t module_symbols < <(discover_config_module_symbols)
+    for symbol in "${module_symbols[@]}"; do
+        module_list="${MODULE_SYMBOL_TO_MODULES[$symbol]:-}"
+        [[ -n "$module_list" ]] || continue
+
+        read -r -a module_candidates <<<"$module_list"
+        if ((${#module_candidates[@]} != 1)); then
+            continue
+        fi
+
+        module_name="${module_candidates[0]}"
+        if [[ -n "${initially_loaded_map[$module_name]:-}" ]]; then
+            continue
+        fi
+
+        if ! module_exists_for_running_kernel "$module_name"; then
+            continue
+        fi
+
+        set +e
+        probe_unloaded_module_candidate "$module_name" initially_loaded_modules
+        probe_status="$?"
+        set -e
+
+        case "$probe_status" in
+            0)
+                echo "    (disabling CONFIG_${symbol})"
+                disable_config_symbol "$symbol"
+                ;;
+            1)
+                echo "    (keeping CONFIG_${symbol}; module ${module_name} is currently unused but loadable)"
+                ;;
+            *)
+                echo "    (module probe could not restore the original module set; stopping further module probes)" >&2
+                break
+                ;;
+        esac
+    done
+
+    return 0
 }
 
 discover_kconfig_symbols_by_pattern() {
@@ -3051,6 +3319,10 @@ APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
 if [[ "$APPLICATIONS_RESOLVED" != "none" ]]; then
     mapfile -t APPLICATIONS_EFFECTIVE <<<"$APPLICATIONS_RESOLVED"
     configure_application_profiles "${APPLICATIONS_EFFECTIVE[@]}"
+fi
+
+if is_enabled "$PRUNE_UNUSED_MODULES"; then
+    probe_and_prune_unused_module_symbols
 fi
 
 echo

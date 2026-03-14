@@ -128,6 +128,9 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 - `PRUNE_DANGEROUS`
   Disables symbols whose Kconfig prompt is explicitly marked `DANGEROUS` or `unsafe`.
 
+- `PRUNE_UNUSED_MODULES`
+  Probes direct `CONFIG_*=m` module mappings that are not currently loaded. It disables symbols only when the module fails to load or does not remain initialized after probing; if the module is simply unused but loadable, it is only reported.
+
 ### Platform and hardware filters
 
 - `CPU_VENDOR_FILTER=none|auto|amd|intel`
@@ -185,6 +188,7 @@ APPLICATIONS="docker,firewalld,wireguard" ./kernel-config.sh /usr/src/linux
 - `PRUNE_BPF`
 - `PRUNE_COMPAT32`
 - `PRUNE_UNUSED_NET`
+- `PRUNE_UNUSED_MODULES`
 - `PRUNE_OLD_HW`
 - `PRUNE_X86_OLD_PLATFORMS`
 - `PRUNE_LEGACY_ATA`
@@ -193,6 +197,8 @@ APPLICATIONS="docker,firewalld,wireguard" ./kernel-config.sh /usr/src/linux
 - `PRUNE_DMA_ATTACK_SURFACE`
 
 These are narrower switches for optional subsystems and aggressive cleanup.
+
+`PRUNE_UNUSED_MODULES` is intentionally conservative: it requires root, the target tree's `kernelrelease` to match the running kernel, and only handles direct one-symbol/one-module `obj-$(CONFIG_FOO) += foo.o` mappings.
 
 ## Auto-Detection Behavior
 
@@ -330,6 +336,9 @@ The script:
 
 In `--dry-run`, it prints a compact `CONFIG_FOO: old -> new` summary instead of a unified diff.
 
+If `PRUNE_UNUSED_MODULES` is enabled, the script temporarily probes unloaded modules and then restores the loaded-module set back to its initial state before continuing.
+If it cannot restore that initial module set for a probe, it stops further module probing and continues with the rest of the script.
+
 Recommended review flow:
 
 ```bash
@@ -349,6 +358,7 @@ scripts/diffconfig old.config new.config
 - `PRUNE_LEGACY` may remove compatibility features you still depend on.
 - `PRUNE_SANITIZERS`, `PRUNE_COVERAGE`, and `PRUNE_FAULT_INJECTION` remove test-oriented instrumentation.
 - `PRUNE_DANGEROUS` removes edge-case options that upstream Kconfig labels as dangerous or unsafe, such as late microcode loading or risky device/debug paths.
+- `PRUNE_UNUSED_MODULES` uses a host/runtime heuristic. It only auto-disables modules that fail to load or do not stay initialized during probing; modules that are merely unused but loadable are reported and kept.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - `PROTECTED_CONFIG_SYMBOLS` only protects against changes made by this script. `make olddefconfig` can still adjust dependent symbols if Kconfig requires it.
