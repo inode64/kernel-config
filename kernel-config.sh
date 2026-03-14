@@ -18,7 +18,6 @@ set -Eeuo pipefail
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
 #   PRUNE_LEGACY              -> do not touch legacy/compat options by default
-#   OPTIMIZE_SERVER_SPEED     -> legacy alias for OPTIMIZATION_PROFILE=server
 #   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
 #   PRUNE_HARDENING           -> disable hardening/mitigation symbols
 #   PRUNE_SELFTEST            -> disable selftest symbols
@@ -89,7 +88,6 @@ Options:
   --host-type TYPE
   --prune-observability
   --prune-legacy
-  --optimize-server-speed
   --prune-debug-trace
   --prune-hardening
   --prune-selftest
@@ -133,7 +131,6 @@ apply_all_optimizations() {
     OPTIMIZATION_PROFILE=server
     PRUNE_OBSERVABILITY=true
     PRUNE_LEGACY=true
-    OPTIMIZE_SERVER_SPEED=true
     PRUNE_DEBUG_TRACE=true
     PRUNE_SELFTEST=true
     PRUNE_SANITIZERS=true
@@ -153,7 +150,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        dry-run | all-optimizations | prune-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -164,7 +161,7 @@ is_boolean_option() {
 
 is_boolean_tunable() {
     case "$1" in
-        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             return 0
             ;;
         *)
@@ -221,7 +218,7 @@ set_tunable() {
     fi
 
     case "$name" in
-        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -252,7 +249,6 @@ init_tunable DRY_RUN false
 init_tunable OPTIMIZATION_PROFILE none
 init_tunable PRUNE_OBSERVABILITY false
 init_tunable PRUNE_LEGACY false
-init_tunable OPTIMIZE_SERVER_SPEED false
 init_tunable PRUNE_DEBUG_TRACE false
 init_tunable PRUNE_HARDENING false
 init_tunable PRUNE_SELFTEST false
@@ -1203,11 +1199,7 @@ resolve_optimization_profile() {
 
     case "$mode" in
         "" | none | off | 0)
-            if is_enabled "$OPTIMIZE_SERVER_SPEED"; then
-                printf '%s\n' "server"
-            else
-                printf '%s\n' "none"
-            fi
+            printf '%s\n' "none"
             ;;
         server | desktop | realtime)
             printf '%s\n' "$mode"
