@@ -12,7 +12,7 @@ It is designed for people who already build custom kernels and want a repeatable
 
 The script edits an existing kernel configuration using `scripts/config`, creates a timestamped backup, and finishes with `make olddefconfig` to normalize dependencies.
 
-It also supports a dry run mode that applies all changes to a temporary copy and prints the resulting unified diff without modifying the real `.config`.
+It also supports a dry run mode that applies all changes to a temporary copy and prints only the config symbols that would change without modifying the real `.config`.
 
 ## What It Does
 
@@ -26,7 +26,7 @@ High-level flow:
 4. Optionally auto-detect host traits such as CPU vendor, boot mode, TPM, NUMA, CPU count, and others.
 5. Run `make olddefconfig`.
 
-In `--dry-run` mode, steps 2-5 are performed against a temporary config copy and the script prints the final diff instead of writing the original file.
+In `--dry-run` mode, steps 2-5 are performed against a temporary config copy and the script prints only the final symbol changes instead of writing the original file.
 
 It is not a full kernel config generator. It assumes you already have a baseline config and want to refine it.
 
@@ -84,7 +84,7 @@ Precedence:
 
 Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` and `--foo=value`, accepted boolean values are `true/`, `yes/no`, `on/off`, `enable/disable`, and `1/0`.
 
-`--dry-run` is a boolean flag. When enabled, the script prints the final `.config` diff and leaves the real file untouched.
+`--dry-run` is a boolean flag. When enabled, the script prints only the final `.config` symbols that would change and leaves the real file untouched.
 
 `PROTECTED_CONFIG_SYMBOLS` accepts a comma-separated list of symbols that the script must not modify. Symbols may be passed as `FOO` or `CONFIG_FOO`.
 
@@ -93,7 +93,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 ### Core tuning
 
 - `DRY_RUN`
-  Shows the resulting `.config` diff without modifying the real file.
+  Shows only the `.config` symbols that would change without modifying the real file.
 
 - `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset. It does not enable hardening pruning.
@@ -327,6 +327,8 @@ The script:
 - prints each symbol it enables or disables
 - runs `make olddefconfig`
 - prints a suggested `diff` command at the end
+
+In `--dry-run`, it prints a compact `CONFIG_FOO: old -> new` summary instead of a unified diff.
 
 Recommended review flow:
 

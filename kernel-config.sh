@@ -14,7 +14,7 @@ set -Eeuo pipefail
 #
 # Optional variables and flags:
 #   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset
-#   DRY_RUN                   -> show the resulting .config diff without modifying the real file
+#   DRY_RUN                   -> show only the config symbols that would change without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
 #   PRUNE_LEGACY              -> do not touch legacy/compat options by default
@@ -111,7 +111,7 @@ Notes:
   CLI flags and VAR=VALUE arguments override environment variables.
   Boolean flags are off unless enabled explicitly with --foo.
   VAR=VALUE and --foo=value accept true/false, yes/no, on/off, enable/disable, and 1/0.
-  --dry-run shows a unified diff of the resulting .config without modifying the real file.
+  --dry-run shows only the config symbols that would change without modifying the real file.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
@@ -371,14 +371,70 @@ cleanup() {
 
 trap cleanup EXIT
 
-show_config_diff() {
+show_config_changes() {
     local before_file="$1"
     local after_file="$2"
+    local changes
 
-    if diff -u "$before_file" "$after_file"; then
+    changes="$(
+        awk '
+            function capture_config_line(line, source, sym, value) {
+                if (line ~ /^CONFIG_[A-Z0-9_]+=.*$/) {
+                    sym = line
+                    sub(/^CONFIG_/, "", sym)
+                    value = sym
+                    sub(/^[^=]*=/, "", value)
+                    sub(/=.*/, "", sym)
+                } else if (line ~ /^# CONFIG_[A-Z0-9_]+ is not set$/) {
+                    sym = line
+                    sub(/^# CONFIG_/, "", sym)
+                    sub(/ is not set$/, "", sym)
+                    value = "n"
+                } else {
+                    return
+                }
+
+                seen[sym] = 1
+                if (source == "before") {
+                    before[sym] = value
+                } else {
+                    after[sym] = value
+                }
+            }
+
+            FNR == NR {
+                capture_config_line($0, "before")
+                next
+            }
+
+            {
+                capture_config_line($0, "after")
+            }
+
+            END {
+                for (sym in seen) {
+                    if (sym == "CC_VERSION_TEXT" || sym == "AS_VERSION" || sym == "RUSTC_LLVM_VERSION" || sym == "RUSTC_VERSION" || sym == "LD_VERSION" || sym == "PAHOLE_VERSION") {
+                        continue
+                    }
+                    old_value = (sym in before) ? before[sym] : "n"
+                    new_value = (sym in after) ? after[sym] : "n"
+                    if (old_value != new_value) {
+                        printf "CONFIG_%s\t%s\t%s\n", sym, old_value, new_value
+                    }
+                }
+            }
+        ' "$before_file" "$after_file" \
+            | sort \
+            | awk -F '\t' '{ printf "  %s: %s -> %s\n", $1, $2, $3 }'
+    )"
+
+    if [[ -z "$changes" ]]; then
         echo
         echo "No changes."
+        return
     fi
+
+    printf '%s\n' "$changes"
 }
 
 if is_enabled "$DRY_RUN"; then
@@ -2889,8 +2945,8 @@ env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
 
 echo
 if is_enabled "$DRY_RUN"; then
-    echo "==> Dry-run diff for $ORIGINAL_CONFIG_FILE"
-    show_config_diff "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
+    echo "==> Dry-run changes for $ORIGINAL_CONFIG_FILE"
+    show_config_changes "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
     echo
     echo "Dry-run complete. No files were modified."
 else
