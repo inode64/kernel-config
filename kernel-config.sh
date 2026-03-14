@@ -1555,6 +1555,104 @@ enable_if_present() {
     done
 }
 
+list_config_hz_symbols() {
+    awk '
+        /^CONFIG_HZ_[0-9]+=|^# CONFIG_HZ_[0-9]+ is not set$/ {
+            sym = $0
+            sub(/^# /, "", sym)
+            sub(/^CONFIG_/, "", sym)
+            sub(/=.*/, "", sym)
+            sub(/ is not set$/, "", sym)
+            print sym
+        }
+    ' "$CONFIG_FILE"
+}
+
+is_symbol_enabled_now() {
+    local sym="$1"
+    grep -Eq "^CONFIG_$(normalize_config_symbol_name "$sym")=y$" "$CONFIG_FILE"
+}
+
+configure_hz_profile() {
+    local profile="$1"
+    local selected_sym=""
+    local sym
+    local -a hz_syms=()
+    local -a allowed_syms=()
+    local -a disallowed_syms=()
+    local -a other_syms=()
+
+    mapfile -t hz_syms < <(list_config_hz_symbols)
+    if ((${#hz_syms[@]} == 0)); then
+        return
+    fi
+
+    for sym in "${hz_syms[@]}"; do
+        if is_symbol_enabled_now "$sym"; then
+            selected_sym="$sym"
+            break
+        fi
+    done
+
+    case "$profile" in
+        server)
+            for sym in "${hz_syms[@]}"; do
+                if [[ "$sym" == "HZ_1000" ]]; then
+                    disallowed_syms+=("$sym")
+                else
+                    allowed_syms+=("$sym")
+                fi
+            done
+            ;;
+        desktop)
+            for sym in "${hz_syms[@]}"; do
+                if [[ "$sym" == "HZ_100" ]]; then
+                    disallowed_syms+=("$sym")
+                else
+                    allowed_syms+=("$sym")
+                fi
+            done
+            ;;
+        realtime)
+            for sym in "${hz_syms[@]}"; do
+                if [[ "$sym" == "HZ_1000" ]]; then
+                    allowed_syms+=("$sym")
+                else
+                    disallowed_syms+=("$sym")
+                fi
+            done
+            ;;
+        *)
+            return
+            ;;
+    esac
+
+    if ((${#allowed_syms[@]} == 0)); then
+        echo "    (no compatible HZ_* option found for profile $profile; leaving current HZ selection unchanged)"
+        return
+    fi
+
+    if [[ -n "$selected_sym" ]]; then
+        for sym in "${allowed_syms[@]}"; do
+            if [[ "$selected_sym" == "$sym" ]]; then
+                if ((${#disallowed_syms[@]} > 0)); then
+                    disable_if_present "${disallowed_syms[@]}"
+                fi
+                return
+            fi
+        done
+    fi
+
+    selected_sym="${allowed_syms[0]}"
+    for sym in "${hz_syms[@]}"; do
+        if [[ "$sym" != "$selected_sym" ]]; then
+            other_syms+=("$sym")
+        fi
+    done
+
+    select_if_present "$selected_sym" "${other_syms[@]}"
+}
+
 select_if_present() {
     local selected="$1"
     local normalized_selected
@@ -1600,13 +1698,7 @@ configure_optimization_profile() {
                 CPU_FREQ_GOV_PERFORMANCE \
                 NO_HZ_IDLE
 
-            if have_symbol HZ_250; then
-                select_if_present HZ_250 HZ_100 HZ_300 HZ_1000
-            elif have_symbol HZ_300; then
-                select_if_present HZ_300 HZ_100 HZ_250 HZ_1000
-            elif have_symbol HZ_100; then
-                select_if_present HZ_100 HZ_250 HZ_300 HZ_1000
-            fi
+            configure_hz_profile server
 
             if have_symbol PREEMPT_NONE; then
                 select_if_present PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
@@ -1633,13 +1725,7 @@ configure_optimization_profile() {
                 SCHED_AUTOGROUP \
                 HIGH_RES_TIMERS
 
-            if have_symbol HZ_1000; then
-                select_if_present HZ_1000 HZ_100 HZ_250 HZ_300
-            elif have_symbol HZ_300; then
-                select_if_present HZ_300 HZ_100 HZ_250 HZ_1000
-            elif have_symbol HZ_250; then
-                select_if_present HZ_250 HZ_100 HZ_300 HZ_1000
-            fi
+            configure_hz_profile desktop
 
             if have_symbol PREEMPT_DYNAMIC; then
                 select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
@@ -1667,13 +1753,7 @@ configure_optimization_profile() {
                 HIGH_RES_TIMERS \
                 NO_HZ_IDLE
 
-            if have_symbol HZ_1000; then
-                select_if_present HZ_1000 HZ_100 HZ_250 HZ_300
-            elif have_symbol HZ_300; then
-                select_if_present HZ_300 HZ_100 HZ_250 HZ_1000
-            elif have_symbol HZ_250; then
-                select_if_present HZ_250 HZ_100 HZ_300 HZ_1000
-            fi
+            configure_hz_profile realtime
 
             if have_symbol PREEMPT_RT; then
                 select_if_present PREEMPT_RT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC
