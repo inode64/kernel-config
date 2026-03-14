@@ -84,7 +84,7 @@ Precedence:
 2. CLI flags override environment variables.
 3. Trailing `VAR=VALUE` arguments also override earlier defaults.
 
-Boolean flags accept `0` or `1`. If passed without a value, they imply `1`.
+Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` and `--foo=value`, accepted boolean values are `true/`, `yes/no`, `on/off`, `enable/disable`, and `1/0`.
 
 `--dry-run` is a boolean flag. When enabled, the script prints the final `.config` diff and leaves the real file untouched.
 
@@ -92,40 +92,40 @@ Boolean flags accept `0` or `1`. If passed without a value, they imply `1`.
 
 ### Core tuning
 
-- `DRY_RUN=0|1`
+- `DRY_RUN`
   Shows the resulting `.config` diff without modifying the real file.
 
-- `ALL_OPTIMIZATIONS=0|1`
+- `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset. It does not enable hardening pruning.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
   Adjusts defaults such as scheduler/preemption/HZ choices.
 
-- `KEEP_OBSERVABILITY=0|1`
-  Keeps or prunes tracing, perf, debugfs, and related observability features.
+- `PRUNE_OBSERVABILITY`
+  Disables tracing, perf, debugfs, and related observability features.
 
-- `PRUNE_LEGACY=0|1`
+- `PRUNE_LEGACY`
   Disables old compatibility options and symbols marked legacy/deprecated in Kconfig.
 
-- `PRUNE_DEBUG_TRACE=0|1`
+- `PRUNE_DEBUG_TRACE`
   Disables debug and trace options discovered from Kconfig prompts.
 
-- `PRUNE_HARDENING=0|1`
+- `PRUNE_HARDENING`
   Disables hardening and mitigation symbols discovered from Kconfig prompts.
 
-- `PRUNE_SELFTEST=0|1`
+- `PRUNE_SELFTEST`
   Disables selftests and test-only options discovered from Kconfig prompts.
 
-- `PRUNE_SANITIZERS=0|1`
+- `PRUNE_SANITIZERS`
   Disables sanitizer-related options such as KASAN, KCSAN, UBSAN, KCOV, and KMEMLEAK.
 
-- `PRUNE_COVERAGE=0|1`
+- `PRUNE_COVERAGE`
   Disables gcov coverage and profiling options.
 
-- `PRUNE_FAULT_INJECTION=0|1`
+- `PRUNE_FAULT_INJECTION`
   Disables fault-injection and forced-failure testing options.
 
-- `PRUNE_DANGEROUS=0|1`
+- `PRUNE_DANGEROUS`
   Disables symbols whose Kconfig prompt is explicitly marked `DANGEROUS`.
 
 ### Platform and hardware filters
@@ -179,15 +179,15 @@ APPLICATIONS="docker,firewalld,wireguard" ./kernel-config.sh /usr/src/linux
 
 ### Additional pruning toggles
 
-- `KEEP_BPF=0|1`
-- `KEEP_COMPAT32=0|1`
-- `PRUNE_UNUSED_NET=0|1`
-- `PRUNE_OLD_HW=0|1`
-- `PRUNE_X86_OLD_PLATFORMS=0|1`
-- `KEEP_LEGACY_ATA=0|1`
-- `PRUNE_INSECURE=0|1`
-- `PRUNE_RADIOS=0|1`
-- `PRUNE_DMA_ATTACK_SURFACE=0|1`
+- `PRUNE_BPF`
+- `PRUNE_COMPAT32`
+- `PRUNE_UNUSED_NET`
+- `PRUNE_OLD_HW`
+- `PRUNE_X86_OLD_PLATFORMS`
+- `PRUNE_LEGACY_ATA`
+- `PRUNE_INSECURE`
+- `PRUNE_RADIOS`
+- `PRUNE_DMA_ATTACK_SURFACE`
 
 These are narrower switches for optional subsystems and aggressive cleanup.
 
@@ -252,10 +252,10 @@ Auto-detection only sees the currently running host. It does not try to infer ha
   --kernel-srcdir /usr/src/linux \
   --all-optimizations \
   --optimization-profile server \
-  --keep-observability 0 \
+  --prune-observability \
   --prune-legacy \
-  --prune-debug-trace-kconfig \
-  --prune-selftest-kconfig
+  --prune-debug-trace \
+  --prune-selftest
 ```
 
 ### Desktop build with Intel graphics and UEFI
@@ -332,10 +332,10 @@ scripts/diffconfig old.config new.config
 ## Caveats
 
 - This script is opinionated. Review the final config before using it in production.
-- `PRUNE_HARDENING=1` reduces security hardening.
-- `PRUNE_LEGACY=1` may remove compatibility features you still depend on.
-- `PRUNE_SANITIZERS=0`, `PRUNE_COVERAGE=0`, and `PRUNE_FAULT_INJECTION=0` keep test-oriented instrumentation that the script now prunes by default.
-- `PRUNE_DANGEROUS=0` keeps edge-case options that upstream Kconfig labels as dangerous, such as late microcode loading or unsafe device/debug paths.
+- `PRUNE_HARDENING` reduces security hardening.
+- `PRUNE_LEGACY` may remove compatibility features you still depend on.
+- `PRUNE_SANITIZERS`, `PRUNE_COVERAGE`, and `PRUNE_FAULT_INJECTION` remove test-oriented instrumentation.
+- `PRUNE_DANGEROUS` removes edge-case options that upstream Kconfig labels as dangerous, such as late microcode loading or unsafe device/debug paths.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.

@@ -6,26 +6,26 @@ set -Eeuo pipefail
 #
 # Examples:
 #   ./kernel-config.sh /usr/src/linux
-#   KEEP_OBSERVABILITY=0 PRUNE_LEGACY=1 ./kernel-config.sh /usr/src/linux
-#   ./kernel-config.sh /usr/src/linux .config PRUNE_LEGACY=1 KEEP_OBSERVABILITY=0
+#   PRUNE_OBSERVABILITY=true PRUNE_LEGACY=true ./kernel-config.sh /usr/src/linux
+#   ./kernel-config.sh /usr/src/linux .config PRUNE_LEGACY=true PRUNE_OBSERVABILITY=true
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --config-file .config --prune-legacy
 #   ./kernel-config.sh --dry-run /usr/src/linux
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --all-optimizations
 #
 # Optional variables and flags:
-#   ALL_OPTIMIZATIONS=0       -> enable the script's full optimization preset
-#   DRY_RUN=0                -> show the resulting .config diff without modifying the real file
+#   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset
+#   DRY_RUN                   -> show the resulting .config diff without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
-#   KEEP_OBSERVABILITY=1      -> keep useful options for perf/bpf/ftrace/debugfs
-#   PRUNE_LEGACY=0            -> do not touch legacy/compat options by default
-#   OPTIMIZE_SERVER_SPEED=0   -> legacy alias for OPTIMIZATION_PROFILE=server
-#   PRUNE_DEBUG_TRACE=0       -> disable debug/trace symbols
-#   PRUNE_HARDENING=0         -> disable hardening/mitigation symbols
-#   PRUNE_SELFTEST=0          -> disable selftest symbols
-#   PRUNE_SANITIZERS=1        -> disable sanitizer-related symbols
-#   PRUNE_COVERAGE=1          -> disable coverage/profiling symbols
-#   PRUNE_FAULT_INJECTION=1   -> disable fault-injection/test failure symbols
-#   PRUNE_DANGEROUS=1         -> disable symbols explicitly marked DANGEROUS in Kconfig
+#   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
+#   PRUNE_LEGACY              -> do not touch legacy/compat options by default
+#   OPTIMIZE_SERVER_SPEED     -> legacy alias for OPTIMIZATION_PROFILE=server
+#   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
+#   PRUNE_HARDENING           -> disable hardening/mitigation symbols
+#   PRUNE_SELFTEST            -> disable selftest symbols
+#   PRUNE_SANITIZERS          -> disable sanitizer-related symbols
+#   PRUNE_COVERAGE            -> disable coverage/profiling symbols
+#   PRUNE_FAULT_INJECTION     -> disable fault-injection/test failure symbols
+#   PRUNE_DANGEROUS           -> disable symbols explicitly marked DANGEROUS in Kconfig
 #   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor
 #   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none         -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
@@ -73,8 +73,8 @@ Usage:
 Options:
   --kernel-srcdir PATH
   --config-file PATH
-  --dry-run [0|1]
-  --all-optimizations [0|1]
+  --dry-run
+  --all-optimizations
   --optimization-profile PROFILE
   --cpu-vendor-filter MODE
   --video-support MODE
@@ -87,31 +87,32 @@ Options:
   --nr-cpus VALUE
   --applications LIST
   --host-type TYPE
-  --keep-observability [0|1]
-  --prune-legacy [0|1]
-  --optimize-server-speed [0|1]
-  --prune-debug-trace [0|1]
-  --prune-hardening [0|1]
-  --prune-selftest [0|1]
-  --prune-sanitizers [0|1]
-  --prune-coverage [0|1]
-  --prune-fault-injection [0|1]
-  --prune-dangerous [0|1]
-  --keep-bpf [0|1]
-  --keep-compat32 [0|1]
-  --prune-unused-net [0|1]
-  --prune-old-hw [0|1]
-  --prune-x86-old-platforms [0|1]
-  --keep-legacy-ata [0|1]
-  --prune-insecure [0|1]
-  --prune-radios [0|1]
-  --prune-dma-attack-surface [0|1]
+  --prune-observability
+  --prune-legacy
+  --optimize-server-speed
+  --prune-debug-trace
+  --prune-hardening
+  --prune-selftest
+  --prune-sanitizers
+  --prune-coverage
+  --prune-fault-injection
+  --prune-dangerous
+  --prune-bpf
+  --prune-compat32
+  --prune-unused-net
+  --prune-old-hw
+  --prune-x86-old-platforms
+  --prune-legacy-ata
+  --prune-insecure
+  --prune-radios
+  --prune-dma-attack-surface
   -h, --help
 
 Notes:
   Environment variables set defaults.
   CLI flags and VAR=VALUE arguments override environment variables.
-  Boolean flags without a value imply 1.
+  Boolean flags are off unless enabled explicitly with --foo.
+  VAR=VALUE and --foo=value accept true/false, yes/no, on/off, enable/disable, and 1/0.
   --dry-run shows a unified diff of the resulting .config without modifying the real file.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
@@ -130,29 +131,29 @@ EOF
 
 apply_all_optimizations() {
     OPTIMIZATION_PROFILE=server
-    KEEP_OBSERVABILITY=0
-    PRUNE_LEGACY=1
-    OPTIMIZE_SERVER_SPEED=1
-    PRUNE_DEBUG_TRACE=1
-    PRUNE_SELFTEST=1
-    PRUNE_SANITIZERS=1
-    PRUNE_COVERAGE=1
-    PRUNE_FAULT_INJECTION=1
-    PRUNE_DANGEROUS=1
-    KEEP_BPF=0
-    KEEP_COMPAT32=0
-    PRUNE_UNUSED_NET=1
-    PRUNE_OLD_HW=1
-    PRUNE_X86_OLD_PLATFORMS=1
-    KEEP_LEGACY_ATA=0
-    PRUNE_INSECURE=1
-    PRUNE_RADIOS=1
-    PRUNE_DMA_ATTACK_SURFACE=1
+    PRUNE_OBSERVABILITY=true
+    PRUNE_LEGACY=true
+    OPTIMIZE_SERVER_SPEED=true
+    PRUNE_DEBUG_TRACE=true
+    PRUNE_SELFTEST=true
+    PRUNE_SANITIZERS=true
+    PRUNE_COVERAGE=true
+    PRUNE_FAULT_INJECTION=true
+    PRUNE_DANGEROUS=true
+    PRUNE_BPF=true
+    PRUNE_COMPAT32=true
+    PRUNE_UNUSED_NET=true
+    PRUNE_OLD_HW=true
+    PRUNE_X86_OLD_PLATFORMS=true
+    PRUNE_LEGACY_ATA=true
+    PRUNE_INSECURE=true
+    PRUNE_RADIOS=true
+    PRUNE_DMA_ATTACK_SURFACE=true
 }
 
 is_boolean_option() {
     case "$1" in
-        dry-run | all-optimizations | keep-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | keep-bpf | keep-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | keep-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        dry-run | all-optimizations | prune-observability | prune-legacy | optimize-server-speed | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -161,24 +162,66 @@ is_boolean_option() {
     esac
 }
 
-is_boolean_value() {
-    [[ "$1" == "0" || "$1" == "1" ]]
+is_boolean_tunable() {
+    case "$1" in
+        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+normalize_boolean_value() {
+    local value
+    value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+
+    case "$value" in
+        1 | true | yes | on | enable | enabled)
+            printf '%s\n' "true"
+            ;;
+        0 | false | no | off | disable | disabled)
+            printf '%s\n' "false"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+is_enabled() {
+    [[ "$1" == "true" ]]
+}
+
+init_tunable() {
+    local name="$1"
+    local default_value="$2"
+    local raw_value="${!name:-$default_value}"
+
+    set_tunable "$name" "$raw_value"
 }
 
 set_tunable() {
     local name="$1"
     local value="$2"
+    local normalized_value=""
+
+    if is_boolean_tunable "$name"; then
+        if ! normalized_value="$(normalize_boolean_value "$value")"; then
+            echo "Invalid boolean for $name: $value" >&2
+            exit 1
+        fi
+
+        printf -v "$name" '%s' "$normalized_value"
+        if [[ "$name" == "ALL_OPTIMIZATIONS" ]] && is_enabled "$normalized_value"; then
+            apply_all_optimizations
+        fi
+        return
+    fi
 
     case "$name" in
-        DRY_RUN | ALL_OPTIMIZATIONS)
-            printf -v "$name" '%s' "$value"
-            if [[ "$value" == "1" ]]; then
-                if [[ "$name" == "ALL_OPTIMIZATIONS" ]]; then
-                    apply_all_optimizations
-                fi
-            fi
-            ;;
-        OPTIMIZATION_PROFILE | KEEP_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | KEEP_BPF | KEEP_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | KEEP_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        OPTIMIZATION_PROFILE | PRUNE_OBSERVABILITY | PRUNE_LEGACY | OPTIMIZE_SERVER_SPEED | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | APPLICATIONS | HOST_TYPE | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -205,43 +248,39 @@ set_option() {
     esac
 }
 
-ALL_OPTIMIZATIONS="${ALL_OPTIMIZATIONS:-0}"
-DRY_RUN="${DRY_RUN:-0}"
-OPTIMIZATION_PROFILE="${OPTIMIZATION_PROFILE:-none}"
-KEEP_OBSERVABILITY="${KEEP_OBSERVABILITY:-1}"
-PRUNE_LEGACY="${PRUNE_LEGACY:-0}"
-OPTIMIZE_SERVER_SPEED="${OPTIMIZE_SERVER_SPEED:-0}"
-PRUNE_DEBUG_TRACE="${PRUNE_DEBUG_TRACE:-0}"
-PRUNE_HARDENING="${PRUNE_HARDENING:-0}"
-PRUNE_SELFTEST="${PRUNE_SELFTEST:-0}"
-PRUNE_SANITIZERS="${PRUNE_SANITIZERS:-1}"
-PRUNE_COVERAGE="${PRUNE_COVERAGE:-1}"
-PRUNE_FAULT_INJECTION="${PRUNE_FAULT_INJECTION:-1}"
-PRUNE_DANGEROUS="${PRUNE_DANGEROUS:-1}"
-CPU_VENDOR_FILTER="${CPU_VENDOR_FILTER:-none}"
-VIDEO_SUPPORT="${VIDEO_SUPPORT:-none}"
-UEFI_SUPPORT="${UEFI_SUPPORT:-none}"
-INITRD_SUPPORT="${INITRD_SUPPORT:-none}"
-TPM_SUPPORT="${TPM_SUPPORT:-none}"
-DMA_ENGINE_SUPPORT="${DMA_ENGINE_SUPPORT:-none}"
-IOMMU_SUPPORT="${IOMMU_SUPPORT:-none}"
-NUMA_SUPPORT="${NUMA_SUPPORT:-none}"
-NR_CPUS="${NR_CPUS:-none}"
-APPLICATIONS="${APPLICATIONS:-none}"
-HOST_TYPE="${HOST_TYPE:-native}"
-KEEP_BPF="${KEEP_BPF:-1}"
-KEEP_COMPAT32="${KEEP_COMPAT32:-1}"
-PRUNE_UNUSED_NET="${PRUNE_UNUSED_NET:-1}"
-PRUNE_OLD_HW="${PRUNE_OLD_HW:-1}"
-PRUNE_X86_OLD_PLATFORMS="${PRUNE_X86_OLD_PLATFORMS:-1}"
-KEEP_LEGACY_ATA="${KEEP_LEGACY_ATA:-1}"
-PRUNE_INSECURE="${PRUNE_INSECURE:-1}"
-PRUNE_RADIOS="${PRUNE_RADIOS:-1}"
-PRUNE_DMA_ATTACK_SURFACE="${PRUNE_DMA_ATTACK_SURFACE:-1}"
-
-if [[ "$ALL_OPTIMIZATIONS" == "1" ]]; then
-    apply_all_optimizations
-fi
+init_tunable DRY_RUN false
+init_tunable OPTIMIZATION_PROFILE none
+init_tunable PRUNE_OBSERVABILITY false
+init_tunable PRUNE_LEGACY false
+init_tunable OPTIMIZE_SERVER_SPEED false
+init_tunable PRUNE_DEBUG_TRACE false
+init_tunable PRUNE_HARDENING false
+init_tunable PRUNE_SELFTEST false
+init_tunable PRUNE_SANITIZERS false
+init_tunable PRUNE_COVERAGE false
+init_tunable PRUNE_FAULT_INJECTION false
+init_tunable PRUNE_DANGEROUS false
+init_tunable CPU_VENDOR_FILTER none
+init_tunable VIDEO_SUPPORT none
+init_tunable UEFI_SUPPORT none
+init_tunable INITRD_SUPPORT none
+init_tunable TPM_SUPPORT none
+init_tunable DMA_ENGINE_SUPPORT none
+init_tunable IOMMU_SUPPORT none
+init_tunable NUMA_SUPPORT none
+init_tunable NR_CPUS none
+init_tunable APPLICATIONS none
+init_tunable HOST_TYPE native
+init_tunable PRUNE_BPF false
+init_tunable PRUNE_COMPAT32 false
+init_tunable PRUNE_UNUSED_NET false
+init_tunable PRUNE_OLD_HW false
+init_tunable PRUNE_X86_OLD_PLATFORMS false
+init_tunable PRUNE_LEGACY_ATA false
+init_tunable PRUNE_INSECURE false
+init_tunable PRUNE_RADIOS false
+init_tunable PRUNE_DMA_ATTACK_SURFACE false
+init_tunable ALL_OPTIMIZATIONS false
 
 KSRCDIR="${KSRCDIR:-}"
 CONFIG_FILE="${CONFIG_FILE:-}"
@@ -269,12 +308,7 @@ while (($# > 0)); do
         --*)
             opt_name="${1#--}"
             if is_boolean_option "$opt_name"; then
-                if (($# > 1)) && is_boolean_value "$2"; then
-                    shift
-                    set_option "$opt_name" "$1"
-                else
-                    set_option "$opt_name" "1"
-                fi
+                set_option "$opt_name" "true"
             else
                 shift
                 if (($# == 0)); then
@@ -349,7 +383,7 @@ show_config_diff() {
     fi
 }
 
-if [[ "$DRY_RUN" == "1" ]]; then
+if is_enabled "$DRY_RUN"; then
     DRY_RUN_TEMP="$(mktemp "${TMPDIR:-/tmp}/kernel-config.dry-run.XXXXXX")"
     cp -a "$ORIGINAL_CONFIG_FILE" "$DRY_RUN_TEMP"
     WORK_CONFIG_FILE="$DRY_RUN_TEMP"
@@ -1169,7 +1203,7 @@ resolve_optimization_profile() {
 
     case "$mode" in
         "" | none | off | 0)
-            if [[ "$OPTIMIZE_SERVER_SPEED" == "1" ]]; then
+            if is_enabled "$OPTIMIZE_SERVER_SPEED"; then
                 printf '%s\n' "server"
             else
                 printf '%s\n' "none"
@@ -2262,10 +2296,7 @@ configure_application_profiles() {
     fi
 }
 
-echo
-echo "==> Disabling sanitizers, coverage, and fault injection"
-
-if [[ "$PRUNE_SANITIZERS" == "1" ]]; then
+if is_enabled "$PRUNE_SANITIZERS"; then
     echo
     echo "==> Disabling sanitizers"
 
@@ -2284,7 +2315,7 @@ if [[ "$PRUNE_SANITIZERS" == "1" ]]; then
         UBSAN_TRAP
 fi
 
-if [[ "$PRUNE_COVERAGE" == "1" ]]; then
+if is_enabled "$PRUNE_COVERAGE"; then
     local_coverage_syms=()
 
     echo
@@ -2300,7 +2331,7 @@ if [[ "$PRUNE_COVERAGE" == "1" ]]; then
     fi
 fi
 
-if [[ "$PRUNE_FAULT_INJECTION" == "1" ]]; then
+if is_enabled "$PRUNE_FAULT_INJECTION"; then
     local_fault_injection_syms=()
 
     echo
@@ -2321,7 +2352,7 @@ if [[ "$PRUNE_FAULT_INJECTION" == "1" ]]; then
     fi
 fi
 
-if [[ "$PRUNE_DANGEROUS" == "1" ]]; then
+if is_enabled "$PRUNE_DANGEROUS"; then
     echo
     echo "==> Disabling options explicitly marked DANGEROUS in Kconfig"
 
@@ -2339,7 +2370,7 @@ if [[ "$PRUNE_DANGEROUS" == "1" ]]; then
 fi
 
 
-if [[ "$PRUNE_SELFTEST" == "1" ]]; then
+if is_enabled "$PRUNE_SELFTEST"; then
     echo
     echo "==> Disabling selftest symbols"
 
@@ -2363,12 +2394,13 @@ if [[ "$PRUNE_SELFTEST" == "1" ]]; then
     fi
 fi
 
-if [[ "$KEEP_OBSERVABILITY" != "1" ]]; then
+if is_enabled "$PRUNE_OBSERVABILITY"; then
     echo
     echo "==> Aggressive mode: disabling tracing/observability"
     echo "    (this can affect perf/ftrace/bpftrace and similar tools)"
 
     disable_if_present \
+        DYNAMIC_FTRACE \
         BLK_DEV_IO_TRACE \
         BRANCH_PROFILE_NONE \
         DEBUG_FS \
@@ -2388,7 +2420,7 @@ if [[ "$KEEP_OBSERVABILITY" != "1" ]]; then
         UPROBE_EVENTS
 fi
 
-if [[ "$PRUNE_LEGACY" == "1" ]]; then
+if is_enabled "$PRUNE_LEGACY"; then
     echo
     echo "==> Disabling legacy/obsolete interfaces"
     echo "    (optional block; review compatibility before using it in production)"
@@ -2407,6 +2439,7 @@ if [[ "$PRUNE_LEGACY" == "1" ]]; then
 
     mapfile -t legacy_syms < <(discover_legacy_kconfig_symbols)
     if ((${#legacy_syms[@]} > 0)); then
+        echo
         echo "==> Disabling symbols marked as legacy/deprecated"
         disable_if_present "${legacy_syms[@]}"
     fi
@@ -2418,21 +2451,20 @@ if have_symbol DEBUG_INFO_NONE; then
     cfg --enable DEBUG_INFO_NONE || true
 fi
 # optional: BPF/observability
-if [[ "$KEEP_BPF" != "1" ]]; then
+if is_enabled "$PRUNE_BPF"; then
+    echo
+    echo "==> Disabling BPF features"
     disable_if_present DEBUG_INFO_BTF KPROBES
 fi
 
 # optional: 32-bit compat
-if [[ "$KEEP_COMPAT32" != "1" ]]; then
+if is_enabled "$PRUNE_COMPAT32"; then
+    echo
+    echo "==> Disabling COMPATIBILITY 32BIT support"
     disable_if_present IA32_EMULATION
 fi
 
-# optional: aggressive observability pruning
-if [[ "$KEEP_OBSERVABILITY" != "1" ]]; then
-    disable_if_present DYNAMIC_FTRACE
-fi
-
-if [[ "$PRUNE_DEBUG_TRACE" == "1" ]]; then
+if is_enabled "$PRUNE_DEBUG_TRACE"; then
     echo
     echo "==> Disabling debug/trace symbols"
 
@@ -2494,7 +2526,7 @@ if [[ "$PRUNE_DEBUG_TRACE" == "1" ]]; then
     fi
 fi
 
-if [[ "$PRUNE_HARDENING" == "1" ]]; then
+if is_enabled "$PRUNE_HARDENING"; then
     echo
     echo "==> Disabling hardening/mitigation symbols"
     echo "    (this reduces kernel security hardening)"
@@ -2622,7 +2654,7 @@ HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 
 # Uncommon or legacy network protocols for a general-purpose server
-if [[ "$PRUNE_UNUSED_NET" == "1" ]]; then
+if is_enabled "$PRUNE_UNUSED_NET"; then
     echo
     echo "==> Disabling uncommon/legacy network protocols"
     disable_if_present \
@@ -2645,7 +2677,7 @@ if [[ "$PRUNE_UNUSED_NET" == "1" ]]; then
 fi
 
 # Old / obsolete hardware
-if [[ "$PRUNE_OLD_HW" == "1" ]]; then
+if is_enabled "$PRUNE_OLD_HW"; then
     echo
     echo "==> Disabling legacy or uncommon hardware"
     disable_if_present \
@@ -2661,7 +2693,7 @@ if [[ "$PRUNE_OLD_HW" == "1" ]]; then
         SND_FIREWIRE
 fi
 
-if [[ "$PRUNE_X86_OLD_PLATFORMS" == "1" ]]; then
+if is_enabled "$PRUNE_X86_OLD_PLATFORMS"; then
     echo
     echo "==> Disabling special/old x86 platforms"
     disable_if_present \
@@ -2676,14 +2708,14 @@ if [[ "$PRUNE_X86_OLD_PLATFORMS" == "1" ]]; then
         X86_VSMP
 fi
 
-if [[ "$KEEP_LEGACY_ATA" != "1" ]]; then
+if is_enabled "$PRUNE_LEGACY_ATA"; then
     echo
     echo "==> Disabling legacy ATA/PATA support"
     disable_if_present ATA_SFF
 fi
 
 # Insecure or legacy protocols/compat
-if [[ "$PRUNE_INSECURE" == "1" ]]; then
+if is_enabled "$PRUNE_INSECURE"; then
     echo
     echo "==> Disabling legacy or less secure protocols/compat"
     disable_if_present \
@@ -2694,7 +2726,7 @@ if [[ "$PRUNE_INSECURE" == "1" ]]; then
 fi
 
 # Radio / proximity / IoT features usually unnecessary on servers
-if [[ "$PRUNE_RADIOS" == "1" ]]; then
+if is_enabled "$PRUNE_RADIOS"; then
     echo
     echo "==> Disabling unused radio and proximity protocols"
     disable_if_present \
@@ -2706,7 +2738,7 @@ if [[ "$PRUNE_RADIOS" == "1" ]]; then
 fi
 
 # FireWire / USB4-Thunderbolt / gadget debug
-if [[ "$PRUNE_DMA_ATTACK_SURFACE" == "1" ]]; then
+if is_enabled "$PRUNE_DMA_ATTACK_SURFACE"; then
     echo
     echo "==> Disabling buses and features with extra physical attack surface"
     disable_if_present \
@@ -2731,7 +2763,7 @@ echo "==> Running olddefconfig to normalize dependencies"
 env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
 
 echo
-if [[ "$DRY_RUN" == "1" ]]; then
+if is_enabled "$DRY_RUN"; then
     echo "==> Dry-run diff for $ORIGINAL_CONFIG_FILE"
     show_config_diff "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
     echo
