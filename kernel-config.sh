@@ -1499,22 +1499,56 @@ prepare_sorted_unique_symbols() {
     )
 }
 
+is_inverse_disable_symbol() {
+    local sym
+
+    sym="$(normalize_config_symbol_name "$1")"
+    case "$sym" in
+        *_DISABLE | *_DISABLE_* | *_DISABLED | *_DISABLED_* | *_DEFAULT_DISABLE | *_DEFAULT_DISABLE_* | *_DEFAULT_DISABLED | *_DEFAULT_DISABLED_*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 disable_discovered_and_fixed_symbols() {
     local discover_fn="$1"
     shift
+    local sym
     local -a syms=()
+    local -a disable_syms=()
+    local -a enable_inverse_syms=()
 
     if [[ -n "$discover_fn" ]]; then
         mapfile -t syms < <("$discover_fn")
     fi
 
     syms+=("$@")
-    disable_if_present "${syms[@]}"
+    for sym in "${syms[@]}"; do
+        if is_inverse_disable_symbol "$sym"; then
+            enable_inverse_syms+=("$sym")
+        else
+            disable_syms+=("$sym")
+        fi
+    done
+
+    if ((${#disable_syms[@]} > 0)); then
+        disable_if_present "${disable_syms[@]}"
+    fi
+
+    if ((${#enable_inverse_syms[@]} > 0)); then
+        enable_if_present "${enable_inverse_syms[@]}"
+    fi
 }
 
 enable_if_present() {
+    local -a unique_syms=()
     local sym
-    for sym in "$@"; do
+
+    prepare_sorted_unique_symbols unique_syms "$@"
+    for sym in "${unique_syms[@]}"; do
         if have_symbol "$sym"; then
             enable_config_symbol "$sym"
         fi
