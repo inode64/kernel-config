@@ -3019,10 +3019,13 @@ if is_enabled "$PRUNE_LEGACY"; then
     echo "==> Disabling legacy/obsolete interfaces"
     echo "    (optional block; review compatibility before using it in production)"
 
+    # Remove https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/commit/?id=d6e0f04bf22d9b25b530c5e04f82664eac942719 UPP-LITE
+
     disable_discovered_and_fixed_symbols \
         discover_legacy_kconfig_symbols \
         BINFMT_AOUT \
         BLK_DEV_FD \
+        NF_CT_PROTO_UDPLITE \
         LEGACY_PTYS \
         PARPORT \
         PROVE_RCU \
