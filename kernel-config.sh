@@ -478,14 +478,31 @@ capture_loaded_modules() {
     lsmod | awk 'NR > 1 { print $1 }'
 }
 
+normalize_kernel_module_name() {
+    local module_name="$1"
+
+    module_name="$(trim_whitespace "$module_name")"
+    module_name="${module_name//-/_}"
+
+    printf '%s\n' "$module_name"
+}
+
 module_exists_for_running_kernel() {
     local module_name="$1"
-    modinfo -k "$(uname -r)" "$module_name" >/dev/null 2>&1
+    local normalized_module_name
+
+    normalized_module_name="$(normalize_kernel_module_name "$module_name")"
+
+    modinfo -k "$(uname -r)" "$module_name" >/dev/null 2>&1 \
+        || modinfo -k "$(uname -r)" "$normalized_module_name" >/dev/null 2>&1
 }
 
 is_module_loaded_now() {
     local module_name="$1"
-    lsmod | awk 'NR > 1 { print $1 }' | grep -Fxq "$module_name"
+    local normalized_module_name
+
+    normalized_module_name="$(normalize_kernel_module_name "$module_name")"
+    capture_loaded_modules | grep -Fxq "$normalized_module_name"
 }
 
 discover_config_module_symbols() {
@@ -557,7 +574,7 @@ restore_loaded_modules_to_initial_state() {
     local -a missing_modules=()
 
     for current_module in "${initial_modules_arr[@]}"; do
-        initial_modules_map["$current_module"]=1
+        initial_modules_map["$(normalize_kernel_module_name "$current_module")"]=1
     done
 
     for attempt in 1 2 3; do
@@ -568,18 +585,18 @@ restore_loaded_modules_to_initial_state() {
 
         mapfile -t current_modules < <(capture_loaded_modules)
         for current_module in "${current_modules[@]}"; do
-            current_modules_map["$current_module"]=1
+            current_modules_map["$(normalize_kernel_module_name "$current_module")"]=1
         done
 
         for ((idx=${#current_modules[@]} - 1; idx >= 0; idx--)); do
             current_module="${current_modules[idx]}"
-            if [[ -z "${initial_modules_map[$current_module]:-}" ]]; then
+            if [[ -z "${initial_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
                 extra_modules+=("$current_module")
             fi
         done
 
         for current_module in "${initial_modules_arr[@]}"; do
-            if [[ -z "${current_modules_map[$current_module]:-}" ]]; then
+            if [[ -z "${current_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
                 missing_modules+=("$current_module")
             fi
         done
@@ -604,14 +621,14 @@ restore_loaded_modules_to_initial_state() {
 
     mapfile -t current_modules < <(capture_loaded_modules)
     for current_module in "${current_modules[@]}"; do
-        current_modules_map["$current_module"]=1
-        if [[ -z "${initial_modules_map[$current_module]:-}" ]]; then
+        current_modules_map["$(normalize_kernel_module_name "$current_module")"]=1
+        if [[ -z "${initial_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
             extra_modules+=("$current_module")
         fi
     done
 
     for current_module in "${initial_modules_arr[@]}"; do
-        if [[ -z "${current_modules_map[$current_module]:-}" ]]; then
+        if [[ -z "${current_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
             missing_modules+=("$current_module")
         fi
     done
@@ -650,7 +667,7 @@ probe_unloaded_module_candidate() {
 }
 
 probe_and_prune_unused_module_symbols() {
-    local running_kernel_release target_kernel_release module_name
+    local running_kernel_release target_kernel_release module_name normalized_module_name
     local probe_status
     local symbol module_list
     local -A initially_loaded_map=()
@@ -686,7 +703,7 @@ probe_and_prune_unused_module_symbols() {
     build_module_symbol_candidate_map
     mapfile -t initially_loaded_modules < <(capture_loaded_modules)
     for module_name in "${initially_loaded_modules[@]}"; do
-        initially_loaded_map["$module_name"]=1
+        initially_loaded_map["$(normalize_kernel_module_name "$module_name")"]=1
     done
 
     mapfile -t module_symbols < <(discover_config_module_symbols)
@@ -700,7 +717,8 @@ probe_and_prune_unused_module_symbols() {
         fi
 
         module_name="${module_candidates[0]}"
-        if [[ -n "${initially_loaded_map[$module_name]:-}" ]]; then
+        normalized_module_name="$(normalize_kernel_module_name "$module_name")"
+        if [[ -n "${initially_loaded_map[$normalized_module_name]:-}" ]]; then
             continue
         fi
 

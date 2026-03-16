@@ -130,6 +130,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `PRUNE_UNUSED_MODULES`
   Probes direct `CONFIG_*=m` module mappings that are not currently loaded. It disables symbols only when the module fails to load or does not remain initialized after probing; if the module is simply unused but loadable, it is only reported.
+  Module-name comparisons normalize `-` and `_` so Kbuild names like `kvm-amd` still match runtime names such as `kvm_amd`.
 
 ### Platform and hardware filters
 
