@@ -37,7 +37,7 @@ set -Eeuo pipefail
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
 #   APPLICATIONS=none         -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
-#   HOST_TYPE=native          -> native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
+#   HOST_TYPE=none            -> none, native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
 #   ./kernel-config.sh /path/to/kernel
@@ -272,7 +272,7 @@ init_tunable NUMA_SUPPORT none
 init_tunable NR_CPUS none
 init_tunable PROTECTED_CONFIG_SYMBOLS CONFIG_ARCH_PKEY_BITS
 init_tunable APPLICATIONS none
-init_tunable HOST_TYPE native
+init_tunable HOST_TYPE none
 init_tunable PRUNE_BPF false
 init_tunable PRUNE_COMPAT32 false
 init_tunable PRUNE_UNUSED_NET false
@@ -1543,10 +1543,13 @@ probe_xfs_deprecated_features() {
 
 resolve_host_type() {
     local mode
-    mode="$(printf '%s' "$HOST_TYPE" | tr '[:upper:]' '[:lower:]')"
+    mode="${HOST_TYPE,,}"
 
     case "$mode" in
-        "" | native)
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        native)
             printf '%s\n' "native"
             ;;
         qemu | kvm)
@@ -1556,7 +1559,7 @@ resolve_host_type() {
             printf '%s\n' "$mode"
             ;;
         *)
-            echo "Invalid HOST_TYPE: $HOST_TYPE (use native, qemu, vmware, hyperv, or virtualbox)" >&2
+            echo "Invalid HOST_TYPE: $HOST_TYPE (use none, native, qemu, vmware, hyperv, or virtualbox)" >&2
             exit 1
             ;;
     esac
@@ -3015,7 +3018,9 @@ if [[ "$NR_CPUS_EFFECTIVE" != "none" ]]; then
 fi
 
 HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
-configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+if [[ "$HOST_TYPE_EFFECTIVE" != "none" ]]; then
+    configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+fi
 
 # Uncommon or legacy network protocols for a general-purpose server
 if is_enabled "$PRUNE_UNUSED_NET"; then
