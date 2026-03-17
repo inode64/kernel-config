@@ -920,11 +920,10 @@ load_protected_config_symbols() {
 
 is_protected_config_symbol() {
     local requested_sym="$1"
-    local normalized_requested protected_sym
+    local protected_sym
 
-    normalized_requested="$(normalize_config_symbol_name "$requested_sym")"
     for protected_sym in "${PROTECTED_CONFIG_SYMBOL_LIST[@]:-}"; do
-        if [[ "$protected_sym" == "$normalized_requested" ]]; then
+        if [[ "$protected_sym" == "$requested_sym" ]]; then
             return 0
         fi
     done
