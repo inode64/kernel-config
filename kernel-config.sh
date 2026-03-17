@@ -2035,6 +2035,10 @@ configure_optimization_profile() {
 
 configure_host_type_profile() {
     local host_type="$1"
+    local sym desc
+    local -A enable_set=()
+    local -a type_syms=()
+    local -a disable_syms=()
 
     local -a common_guest_syms=(
         HYPERVISOR_GUEST
@@ -2097,181 +2101,13 @@ configure_host_type_profile() {
         VBOXGUEST
         VBOXSF_FS
     )
-    local -a native_disable_syms=(
-        HYPERVISOR_GUEST
-        PARAVIRT
-        PARAVIRT_XXL
-        PARAVIRT_SPINLOCKS
-        PARAVIRT_CLOCK
-        PARAVIRT_TIME_ACCOUNTING
-        KVM_GUEST
-        VIRTIO
-        VIRTIO_PCI
-        VIRTIO_PCI_LIB
-        VIRTIO_PCI_LIB_LEGACY
-        VIRTIO_MMIO
-        VIRTIO_MMIO_CMDLINE_DEVICES
-        VIRTIO_BLK
-        VIRTIO_NET
-        VIRTIO_CONSOLE
-        VIRTIO_BALLOON
-        VIRTIO_FS
-        SCSI_VIRTIO
-        HW_RANDOM_VIRTIO
-        VIRTIO_VSOCKETS
-        VIRTIO_VSOCKETS_COMMON
-        PVPANIC
-        PVPANIC_MMIO
-        PVPANIC_PCI
-        FW_CFG_SYSFS
-        FW_CFG_SYSFS_CMDLINE
-        VMWARE_VMCI
-        VMWARE_BALLOON
-        VMWARE_PVSCSI
-        VMXNET3
-        VMWARE_VMCI_VSOCKETS
-        HYPERV
-        HYPERV_TIMER
-        HYPERV_UTILS
-        HYPERV_BALLOON
-        HYPERV_VMBUS
-        HYPERV_NET
-        HYPERV_STORAGE
-        PCI_HYPERV
-        PCI_HYPERV_INTERFACE
-        HYPERV_IOMMU
-        HYPERV_VSOCKETS
-        VBOXGUEST
-        VBOXSF_FS
-        VSOCKETS
-        VSOCKETS_LOOPBACK
-    )
-    local -a qemu_disable_syms=(
-        VMWARE_VMCI
-        VMWARE_BALLOON
-        VMWARE_PVSCSI
-        VMXNET3
-        VMWARE_VMCI_VSOCKETS
-        HYPERV
-        HYPERV_TIMER
-        HYPERV_UTILS
-        HYPERV_BALLOON
-        HYPERV_VMBUS
-        HYPERV_NET
-        HYPERV_STORAGE
-        PCI_HYPERV
-        PCI_HYPERV_INTERFACE
-        HYPERV_IOMMU
-        HYPERV_VSOCKETS
-        VBOXGUEST
-        VBOXSF_FS
-    )
-    local -a vmware_disable_syms=(
-        KVM_GUEST
-        VIRTIO
-        VIRTIO_PCI
-        VIRTIO_PCI_LIB
-        VIRTIO_PCI_LIB_LEGACY
-        VIRTIO_MMIO
-        VIRTIO_MMIO_CMDLINE_DEVICES
-        VIRTIO_BLK
-        VIRTIO_NET
-        VIRTIO_CONSOLE
-        VIRTIO_BALLOON
-        VIRTIO_FS
-        SCSI_VIRTIO
-        HW_RANDOM_VIRTIO
-        VIRTIO_VSOCKETS
-        VIRTIO_VSOCKETS_COMMON
-        PVPANIC
-        PVPANIC_MMIO
-        PVPANIC_PCI
-        FW_CFG_SYSFS
-        FW_CFG_SYSFS_CMDLINE
-        HYPERV
-        HYPERV_TIMER
-        HYPERV_UTILS
-        HYPERV_BALLOON
-        HYPERV_VMBUS
-        HYPERV_NET
-        HYPERV_STORAGE
-        PCI_HYPERV
-        PCI_HYPERV_INTERFACE
-        HYPERV_IOMMU
-        HYPERV_VSOCKETS
-        VBOXGUEST
-        VBOXSF_FS
-    )
-    local -a hyperv_disable_syms=(
-        KVM_GUEST
-        VIRTIO
-        VIRTIO_PCI
-        VIRTIO_PCI_LIB
-        VIRTIO_PCI_LIB_LEGACY
-        VIRTIO_MMIO
-        VIRTIO_MMIO_CMDLINE_DEVICES
-        VIRTIO_BLK
-        VIRTIO_NET
-        VIRTIO_CONSOLE
-        VIRTIO_BALLOON
-        VIRTIO_FS
-        SCSI_VIRTIO
-        HW_RANDOM_VIRTIO
-        VIRTIO_VSOCKETS
-        VIRTIO_VSOCKETS_COMMON
-        PVPANIC
-        PVPANIC_MMIO
-        PVPANIC_PCI
-        FW_CFG_SYSFS
-        FW_CFG_SYSFS_CMDLINE
-        VMWARE_VMCI
-        VMWARE_BALLOON
-        VMWARE_PVSCSI
-        VMXNET3
-        VMWARE_VMCI_VSOCKETS
-        VBOXGUEST
-        VBOXSF_FS
-    )
-    local -a virtualbox_disable_syms=(
-        KVM_GUEST
-        VIRTIO
-        VIRTIO_PCI
-        VIRTIO_PCI_LIB
-        VIRTIO_PCI_LIB_LEGACY
-        VIRTIO_MMIO
-        VIRTIO_MMIO_CMDLINE_DEVICES
-        VIRTIO_BLK
-        VIRTIO_NET
-        VIRTIO_CONSOLE
-        VIRTIO_BALLOON
-        VIRTIO_FS
-        SCSI_VIRTIO
-        HW_RANDOM_VIRTIO
-        VIRTIO_VSOCKETS
-        VIRTIO_VSOCKETS_COMMON
-        PVPANIC
-        PVPANIC_MMIO
-        PVPANIC_PCI
-        FW_CFG_SYSFS
-        FW_CFG_SYSFS_CMDLINE
-        VMWARE_VMCI
-        VMWARE_BALLOON
-        VMWARE_PVSCSI
-        VMXNET3
-        VMWARE_VMCI_VSOCKETS
-        HYPERV
-        HYPERV_TIMER
-        HYPERV_UTILS
-        HYPERV_BALLOON
-        HYPERV_VMBUS
-        HYPERV_NET
-        HYPERV_STORAGE
-        PCI_HYPERV
-        PCI_HYPERV_INTERFACE
-        HYPERV_IOMMU
-        HYPERV_VSOCKETS
-        VSOCKETS
-        VSOCKETS_LOOPBACK
+
+    local -a all_guest_syms=(
+        "${common_guest_syms[@]}"
+        "${qemu_syms[@]}"
+        "${vmware_syms[@]}"
+        "${hyperv_syms[@]}"
+        "${virtualbox_syms[@]}"
     )
 
     echo
@@ -2280,31 +2116,45 @@ configure_host_type_profile() {
     case "$host_type" in
         native)
             echo "    (disabling guest virtualization drivers for bare metal)"
-            disable_if_present "${native_disable_syms[@]}"
+            disable_if_present "${all_guest_syms[@]}"
             ;;
-        qemu)
-            echo "    (enabling KVM/QEMU guest drivers and disabling other guest stacks)"
+        qemu | vmware | hyperv | virtualbox)
+            case "$host_type" in
+                qemu)
+                    type_syms=("${qemu_syms[@]}")
+                    desc="enabling KVM/QEMU guest drivers and disabling other guest stacks"
+                    ;;
+                vmware)
+                    type_syms=("${vmware_syms[@]}")
+                    desc="enabling VMware guest drivers and disabling other guest stacks"
+                    ;;
+                hyperv)
+                    type_syms=("${hyperv_syms[@]}")
+                    desc="enabling Hyper-V guest drivers and disabling other guest stacks"
+                    ;;
+                virtualbox)
+                    type_syms=("${virtualbox_syms[@]}")
+                    desc="enabling VirtualBox guest drivers and disabling other guest stacks"
+                    ;;
+            esac
+
+            echo "    ($desc)"
+
+            for sym in "${common_guest_syms[@]}" "${type_syms[@]}"; do
+                enable_set["$sym"]=1
+            done
+
+            for sym in "${all_guest_syms[@]}"; do
+                if [[ -z "${enable_set[$sym]:-}" ]]; then
+                    disable_syms+=("$sym")
+                fi
+            done
+
             enable_if_present "${common_guest_syms[@]}"
-            enable_if_present "${qemu_syms[@]}"
-            disable_if_present "${qemu_disable_syms[@]}"
-            ;;
-        vmware)
-            echo "    (enabling VMware guest drivers and disabling other guest stacks)"
-            enable_if_present "${common_guest_syms[@]}"
-            enable_if_present "${vmware_syms[@]}"
-            disable_if_present "${vmware_disable_syms[@]}"
-            ;;
-        hyperv)
-            echo "    (enabling Hyper-V guest drivers and disabling other guest stacks)"
-            enable_if_present "${common_guest_syms[@]}"
-            enable_if_present "${hyperv_syms[@]}"
-            disable_if_present "${hyperv_disable_syms[@]}"
-            ;;
-        virtualbox)
-            echo "    (enabling VirtualBox guest drivers and disabling other guest stacks)"
-            enable_if_present "${common_guest_syms[@]}"
-            enable_if_present "${virtualbox_syms[@]}"
-            disable_if_present "${virtualbox_disable_syms[@]}"
+            enable_if_present "${type_syms[@]}"
+            if ((${#disable_syms[@]} > 0)); then
+                disable_if_present "${disable_syms[@]}"
+            fi
             ;;
     esac
 }
