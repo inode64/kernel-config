@@ -1123,28 +1123,59 @@ detect_host_uefi_support() {
     fi
 }
 
-resolve_uefi_support() {
-    local mode
-    mode="$(printf '%s' "$UEFI_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+resolve_on_off_support() {
+    local var_name="$1"
+    local detect_fn="$2"
+    local extra_on="${3:-}"
+    local extra_off="${4:-}"
+    local raw mode alias
+
+    raw="${!var_name}"
+    mode="${raw,,}"
 
     case "$mode" in
         "" | none)
             printf '%s\n' "none"
+            return
             ;;
         auto)
-            detect_host_uefi_support
+            if [[ -n "$detect_fn" ]]; then
+                "$detect_fn"
+            else
+                printf '%s\n' "auto"
+            fi
+            return
             ;;
-        on | yes | true | 1 | enable | enabled | uefi)
+        on | yes | true | 1 | enable | enabled)
             printf '%s\n' "on"
+            return
             ;;
-        off | no | false | 0 | disable | disabled | bios | legacy)
+        off | no | false | 0 | disable | disabled)
             printf '%s\n' "off"
-            ;;
-        *)
-            echo "Invalid UEFI_SUPPORT: $UEFI_SUPPORT (use none, auto, on, or off)" >&2
-            exit 1
+            return
             ;;
     esac
+
+    for alias in $extra_on; do
+        if [[ "$mode" == "$alias" ]]; then
+            printf '%s\n' "on"
+            return
+        fi
+    done
+
+    for alias in $extra_off; do
+        if [[ "$mode" == "$alias" ]]; then
+            printf '%s\n' "off"
+            return
+        fi
+    done
+
+    echo "Invalid $var_name: $raw (use none, auto, on, or off)" >&2
+    exit 1
+}
+
+resolve_uefi_support() {
+    resolve_on_off_support UEFI_SUPPORT detect_host_uefi_support "uefi" "bios legacy"
 }
 
 detect_host_initrd_support() {
@@ -1179,27 +1210,7 @@ detect_host_initrd_support() {
 }
 
 resolve_initrd_support() {
-    local mode
-    mode="$(printf '%s' "$INITRD_SUPPORT" | tr '[:upper:]' '[:lower:]')"
-
-    case "$mode" in
-        "" | none)
-            printf '%s\n' "none"
-            ;;
-        auto)
-            detect_host_initrd_support
-            ;;
-        on | yes | true | 1 | enable | enabled | initrd | initramfs)
-            printf '%s\n' "on"
-            ;;
-        off | no | false | 0 | disable | disabled)
-            printf '%s\n' "off"
-            ;;
-        *)
-            echo "Invalid INITRD_SUPPORT: $INITRD_SUPPORT (use none, auto, on, or off)" >&2
-            exit 1
-            ;;
-    esac
+    resolve_on_off_support INITRD_SUPPORT detect_host_initrd_support "initrd initramfs"
 }
 
 detect_host_tpm_versions() {
@@ -1255,27 +1266,7 @@ detect_host_tpm_versions() {
 }
 
 resolve_tpm_support() {
-    local mode
-    mode="$(printf '%s' "$TPM_SUPPORT" | tr '[:upper:]' '[:lower:]')"
-
-    case "$mode" in
-        "" | none)
-            printf '%s\n' "none"
-            ;;
-        auto)
-            detect_host_tpm_versions
-            ;;
-        on | yes | true | 1 | enable | enabled | tpm)
-            printf '%s\n' "on"
-            ;;
-        off | no | false | 0 | disable | disabled)
-            printf '%s\n' "off"
-            ;;
-        *)
-            echo "Invalid TPM_SUPPORT: $TPM_SUPPORT (use none, auto, on, or off)" >&2
-            exit 1
-            ;;
-    esac
+    resolve_on_off_support TPM_SUPPORT detect_host_tpm_versions "tpm"
 }
 
 detect_host_dma_engine_support() {
@@ -1291,51 +1282,11 @@ detect_host_dma_engine_support() {
 }
 
 resolve_dma_engine_support() {
-    local mode
-    mode="$(printf '%s' "$DMA_ENGINE_SUPPORT" | tr '[:upper:]' '[:lower:]')"
-
-    case "$mode" in
-        "" | none)
-            printf '%s\n' "none"
-            ;;
-        auto)
-            detect_host_dma_engine_support
-            ;;
-        on | yes | true | 1 | enable | enabled | dma | dmaengine)
-            printf '%s\n' "on"
-            ;;
-        off | no | false | 0 | disable | disabled)
-            printf '%s\n' "off"
-            ;;
-        *)
-            echo "Invalid DMA_ENGINE_SUPPORT: $DMA_ENGINE_SUPPORT (use none, auto, on, or off)" >&2
-            exit 1
-            ;;
-    esac
+    resolve_on_off_support DMA_ENGINE_SUPPORT detect_host_dma_engine_support "dma dmaengine"
 }
 
 resolve_iommu_support() {
-    local mode
-    mode="$(printf '%s' "$IOMMU_SUPPORT" | tr '[:upper:]' '[:lower:]')"
-
-    case "$mode" in
-        "" | none)
-            printf '%s\n' "none"
-            ;;
-        auto)
-            printf '%s\n' "auto"
-            ;;
-        on | yes | true | 1 | enable | enabled | iommu)
-            printf '%s\n' "on"
-            ;;
-        off | no | false | 0 | disable | disabled)
-            printf '%s\n' "off"
-            ;;
-        *)
-            echo "Invalid IOMMU_SUPPORT: $IOMMU_SUPPORT (use none, auto, on, or off)" >&2
-            exit 1
-            ;;
-    esac
+    resolve_on_off_support IOMMU_SUPPORT "" "iommu"
 }
 
 detect_host_numa_support() {
@@ -1368,27 +1319,7 @@ detect_host_numa_support() {
 }
 
 resolve_numa_support() {
-    local mode
-    mode="$(printf '%s' "$NUMA_SUPPORT" | tr '[:upper:]' '[:lower:]')"
-
-    case "$mode" in
-        "" | none)
-            printf '%s\n' "none"
-            ;;
-        auto)
-            detect_host_numa_support
-            ;;
-        on | yes | true | 1 | enable | enabled | numa)
-            printf '%s\n' "on"
-            ;;
-        off | no | false | 0 | disable | disabled)
-            printf '%s\n' "off"
-            ;;
-        *)
-            echo "Invalid NUMA_SUPPORT: $NUMA_SUPPORT (use none, auto, on, or off)" >&2
-            exit 1
-            ;;
-    esac
+    resolve_on_off_support NUMA_SUPPORT detect_host_numa_support "numa"
 }
 
 count_cpu_list_entries() {
