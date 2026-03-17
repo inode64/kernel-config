@@ -1522,26 +1522,7 @@ resolve_application_profiles() {
     printf '%s\n' "${profiles[@]}"
 }
 
-resolve_qemu_host_cpu_vendor() {
-    local vendor_mode resolved_vendor
-
-    vendor_mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
-    case "$vendor_mode" in
-        "" | none | off | 0)
-            detect_host_cpu_vendor
-            ;;
-        *)
-            resolved_vendor="$(resolve_cpu_vendor_filter)"
-            if [[ "$resolved_vendor" == "none" ]]; then
-                detect_host_cpu_vendor
-            else
-                printf '%s\n' "$resolved_vendor"
-            fi
-            ;;
-    esac
-}
-
-resolve_iommu_host_cpu_vendor() {
+resolve_cpu_vendor_or_detect() {
     local vendor_mode resolved_vendor
 
     vendor_mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
@@ -2847,7 +2828,7 @@ configure_application_profiles() {
                 done
                 ;;
             qemu)
-                qemu_cpu_vendor="$(resolve_qemu_host_cpu_vendor)"
+                qemu_cpu_vendor="$(resolve_cpu_vendor_or_detect)"
                 case "$qemu_cpu_vendor" in
                     amd | intel)
                         echo "    (qemu uses ${qemu_cpu_vendor^^} host virtualization support)"
@@ -3214,7 +3195,7 @@ if [[ "$IOMMU_SUPPORT_EFFECTIVE" != "none" ]]; then
         echo
         echo "==> Skipping IOMMU_SUPPORT: .config is not x86"
     else
-        IOMMU_CPU_VENDOR="$(resolve_iommu_host_cpu_vendor)"
+        IOMMU_CPU_VENDOR="$(resolve_cpu_vendor_or_detect)"
         configure_iommu_support_profile "$IOMMU_SUPPORT_EFFECTIVE" "$IOMMU_CPU_VENDOR"
     fi
 fi
