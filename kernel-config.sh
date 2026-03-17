@@ -2004,6 +2004,17 @@ configure_optimization_profile() {
     echo
     echo "==> Applying optimization profile: $profile"
 
+    # common: compiler and topology optimizations for all profiles
+    enable_if_present \
+        CC_OPTIMIZE_FOR_PERFORMANCE \
+        CPU_ISOLATION \
+        JUMP_LABEL \
+        SCHED_CLUSTER \
+        SCHED_MC \
+        SCHED_SMT
+
+    disable_if_present CC_OPTIMIZE_FOR_SIZE
+
     case "$profile" in
         server)
             echo "    (prioritizes throughput and low background overhead)"
@@ -2014,13 +2025,39 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
+                ENERGY_MODEL \
                 HZ_PERIODIC \
-                SCHED_AUTOGROUP
+                KSM \
+                PSI_DEFAULT_DISABLED \
+                SCHED_AUTOGROUP \
+                WQ_POWER_EFFICIENT_DEFAULT
 
             enable_if_present \
+                BLK_CGROUP \
+                BLK_CGROUP_IOCOST \
+                BLK_DEV_THROTTLING \
+                BLK_WBT \
+                BLK_WBT_MQ \
+                CFS_BANDWIDTH \
+                CGROUP_SCHED \
                 CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
                 CPU_FREQ_GOV_PERFORMANCE \
-                NO_HZ_IDLE
+                CPU_FREQ_STAT \
+                FAIR_GROUP_SCHED \
+                IRQ_TIME_ACCOUNTING \
+                KSM \
+                MEMCG \
+                NO_HZ_IDLE \
+                NUMA_BALANCING \
+                PSI \
+                TRANSPARENT_HUGEPAGE \
+                ZSWAP \
+                ZSWAP_DEFAULT_ON
+
+            if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
+                select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
+                    TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
+            fi
 
             configure_hz_profile server
 
@@ -2040,14 +2077,34 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
                 HZ_PERIODIC \
-                PREEMPT_RT
+                PREEMPT_RT \
+                PSI_DEFAULT_DISABLED
 
             enable_if_present \
+                BLK_WBT \
+                BLK_WBT_MQ \
+                CGROUP_SCHED \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_GOV_SCHEDUTIL \
+                ENERGY_MODEL \
+                FAIR_GROUP_SCHED \
+                HIGH_RES_TIMERS \
+                KSM \
+                MEMCG \
                 NO_HZ_IDLE \
+                NUMA_BALANCING \
+                PSI \
                 SCHED_AUTOGROUP \
-                HIGH_RES_TIMERS
+                TRANSPARENT_HUGEPAGE \
+                UCLAMP_TASK \
+                WQ_POWER_EFFICIENT_DEFAULT \
+                ZSWAP \
+                ZSWAP_DEFAULT_ON
+
+            if have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
+                select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
+                    TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+            fi
 
             configure_hz_profile desktop
 
@@ -2068,14 +2125,31 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
+                ENERGY_MODEL \
                 HZ_PERIODIC \
-                SCHED_AUTOGROUP
+                KSM \
+                NUMA_BALANCING \
+                PSI \
+                SCHED_AUTOGROUP \
+                WQ_POWER_EFFICIENT_DEFAULT \
+                ZSWAP
 
             enable_if_present \
+                BLK_WBT \
+                BLK_WBT_MQ \
+                CGROUP_SCHED \
                 CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
                 CPU_FREQ_GOV_PERFORMANCE \
+                FAIR_GROUP_SCHED \
                 HIGH_RES_TIMERS \
-                NO_HZ_IDLE
+                NO_HZ_FULL \
+                NO_HZ_IDLE \
+                PSI_DEFAULT_DISABLED \
+                RCU_BOOST \
+                RCU_NOCB_CPU \
+                RCU_NOCB_CPU_CB_BOOST \
+                RCU_NOCB_CPU_DEFAULT_ALL \
+                RT_GROUP_SCHED
 
             configure_hz_profile realtime
 
