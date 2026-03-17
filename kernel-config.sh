@@ -458,9 +458,26 @@ cfg() {
     scripts/config --file "$CONFIG_FILE" "$@"
 }
 
+declare -A _HAVE_SYMBOL_CACHE=()
+_HAVE_SYMBOL_CACHE_LOADED=false
+
+_load_have_symbol_cache() {
+    _HAVE_SYMBOL_CACHE=()
+    local sym
+    while IFS= read -r sym; do
+        _HAVE_SYMBOL_CACHE["$sym"]=1
+    done < <(awk -F'[= ]' '
+        /^CONFIG_[A-Z0-9_]+=/ { sub(/^CONFIG_/, "", $1); print $1 }
+        /^# CONFIG_[A-Z0-9_]+ is not set$/ { sub(/^# CONFIG_/, "", $2); print $2 }
+    ' "$CONFIG_FILE")
+    _HAVE_SYMBOL_CACHE_LOADED=true
+}
+
 have_symbol() {
-    local sym="$1"
-    grep -Eq "^(CONFIG_${sym}=|# CONFIG_${sym} is not set)" "$CONFIG_FILE"
+    if [[ "$_HAVE_SYMBOL_CACHE_LOADED" != "true" ]]; then
+        _load_have_symbol_cache
+    fi
+    [[ -n "${_HAVE_SYMBOL_CACHE[$1]:-}" ]]
 }
 
 find_kconfig_files() {
