@@ -458,26 +458,43 @@ cfg() {
     scripts/config --file "$CONFIG_FILE" "$@"
 }
 
-declare -A _HAVE_SYMBOL_CACHE=()
-_HAVE_SYMBOL_CACHE_LOADED=false
+declare -A _SYMBOL_VALUE_CACHE=()
+_SYMBOL_CACHE_LOADED=false
 
-_load_have_symbol_cache() {
-    _HAVE_SYMBOL_CACHE=()
-    local sym
-    while IFS= read -r sym; do
-        _HAVE_SYMBOL_CACHE["$sym"]=1
-    done < <(awk -F'[= ]' '
-        /^CONFIG_[A-Z0-9_]+=/ { sub(/^CONFIG_/, "", $1); print $1 }
-        /^# CONFIG_[A-Z0-9_]+ is not set$/ { sub(/^# CONFIG_/, "", $2); print $2 }
+_load_symbol_cache() {
+    _SYMBOL_VALUE_CACHE=()
+    local sym value
+    while IFS=$'\t' read -r sym value; do
+        _SYMBOL_VALUE_CACHE["$sym"]="$value"
+    done < <(awk '
+        /^CONFIG_[A-Z0-9_]+=/ {
+            line = $0
+            sub(/^CONFIG_/, "", line)
+            idx = index(line, "=")
+            print substr(line, 1, idx - 1) "\t" substr(line, idx + 1)
+        }
+        /^# CONFIG_[A-Z0-9_]+ is not set$/ {
+            sym = $0
+            sub(/^# CONFIG_/, "", sym)
+            sub(/ is not set$/, "", sym)
+            print sym "\tn"
+        }
     ' "$CONFIG_FILE")
-    _HAVE_SYMBOL_CACHE_LOADED=true
+    _SYMBOL_CACHE_LOADED=true
 }
 
 have_symbol() {
-    if [[ "$_HAVE_SYMBOL_CACHE_LOADED" != "true" ]]; then
-        _load_have_symbol_cache
+    if [[ "$_SYMBOL_CACHE_LOADED" != "true" ]]; then
+        _load_symbol_cache
     fi
-    [[ -n "${_HAVE_SYMBOL_CACHE[$1]:-}" ]]
+    [[ -n "${_SYMBOL_VALUE_CACHE[$1]+set}" ]]
+}
+
+symbol_value() {
+    if [[ "$_SYMBOL_CACHE_LOADED" != "true" ]]; then
+        _load_symbol_cache
+    fi
+    printf '%s\n' "${_SYMBOL_VALUE_CACHE[$1]:-}"
 }
 
 find_kconfig_files() {
@@ -505,14 +522,24 @@ normalize_kernel_module_name() {
     printf '%s\n' "$module_name"
 }
 
+_RUNNING_KERNEL_RELEASE=""
+
+running_kernel_release() {
+    if [[ -z "$_RUNNING_KERNEL_RELEASE" ]]; then
+        _RUNNING_KERNEL_RELEASE="$(uname -r)"
+    fi
+    printf '%s\n' "$_RUNNING_KERNEL_RELEASE"
+}
+
 module_exists_for_running_kernel() {
     local module_name="$1"
-    local normalized_module_name
+    local normalized_module_name kr
 
     normalized_module_name="$(normalize_kernel_module_name "$module_name")"
+    kr="$(running_kernel_release)"
 
-    modinfo -k "$(uname -r)" "$module_name" >/dev/null 2>&1 \
-        || modinfo -k "$(uname -r)" "$normalized_module_name" >/dev/null 2>&1
+    modinfo -k "$kr" "$module_name" >/dev/null 2>&1 \
+        || modinfo -k "$kr" "$normalized_module_name" >/dev/null 2>&1
 }
 
 is_module_loaded_now() {
@@ -584,7 +611,7 @@ build_module_symbol_candidate_map() {
 
 restore_loaded_modules_to_initial_state() {
     local -n initial_modules_arr="$1"
-    local attempt current_module
+    local attempt current_module normalized
     local -A initial_modules_map=()
     local -A current_modules_map=()
     local -a current_modules=()
@@ -592,7 +619,8 @@ restore_loaded_modules_to_initial_state() {
     local -a missing_modules=()
 
     for current_module in "${initial_modules_arr[@]}"; do
-        initial_modules_map["$(normalize_kernel_module_name "$current_module")"]=1
+        normalized="${current_module//-/_}"
+        initial_modules_map["$normalized"]=1
     done
 
     for attempt in 1 2 3; do
@@ -603,18 +631,21 @@ restore_loaded_modules_to_initial_state() {
 
         mapfile -t current_modules < <(capture_loaded_modules)
         for current_module in "${current_modules[@]}"; do
-            current_modules_map["$(normalize_kernel_module_name "$current_module")"]=1
+            normalized="${current_module//-/_}"
+            current_modules_map["$normalized"]=1
         done
 
         for ((idx=${#current_modules[@]} - 1; idx >= 0; idx--)); do
             current_module="${current_modules[idx]}"
-            if [[ -z "${initial_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
+            normalized="${current_module//-/_}"
+            if [[ -z "${initial_modules_map[$normalized]:-}" ]]; then
                 extra_modules+=("$current_module")
             fi
         done
 
         for current_module in "${initial_modules_arr[@]}"; do
-            if [[ -z "${current_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
+            normalized="${current_module//-/_}"
+            if [[ -z "${current_modules_map[$normalized]:-}" ]]; then
                 missing_modules+=("$current_module")
             fi
         done
@@ -639,14 +670,16 @@ restore_loaded_modules_to_initial_state() {
 
     mapfile -t current_modules < <(capture_loaded_modules)
     for current_module in "${current_modules[@]}"; do
-        current_modules_map["$(normalize_kernel_module_name "$current_module")"]=1
-        if [[ -z "${initial_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
+        normalized="${current_module//-/_}"
+        current_modules_map["$normalized"]=1
+        if [[ -z "${initial_modules_map[$normalized]:-}" ]]; then
             extra_modules+=("$current_module")
         fi
     done
 
     for current_module in "${initial_modules_arr[@]}"; do
-        if [[ -z "${current_modules_map[$(normalize_kernel_module_name "$current_module")]:-}" ]]; then
+        normalized="${current_module//-/_}"
+        if [[ -z "${current_modules_map[$normalized]:-}" ]]; then
             missing_modules+=("$current_module")
         fi
     done
@@ -706,7 +739,7 @@ probe_and_prune_unused_module_symbols() {
         return
     fi
 
-    running_kernel_release="$(uname -r)"
+    running_kernel_release="$(running_kernel_release)"
     target_kernel_release="$(make -s kernelrelease 2>/dev/null || true)"
     if [[ -z "$target_kernel_release" ]]; then
         echo "    (could not resolve target kernelrelease; skipping)"
@@ -721,7 +754,7 @@ probe_and_prune_unused_module_symbols() {
     build_module_symbol_candidate_map
     mapfile -t initially_loaded_modules < <(capture_loaded_modules)
     for module_name in "${initially_loaded_modules[@]}"; do
-        initially_loaded_map["$(normalize_kernel_module_name "$module_name")"]=1
+        initially_loaded_map["${module_name//-/_}"]=1
     done
 
     mapfile -t module_symbols < <(discover_config_module_symbols)
@@ -735,7 +768,7 @@ probe_and_prune_unused_module_symbols() {
         fi
 
         module_name="${module_candidates[0]}"
-        normalized_module_name="$(normalize_kernel_module_name "$module_name")"
+        normalized_module_name="${module_name//-/_}"
         if [[ -n "${initially_loaded_map[$normalized_module_name]:-}" ]]; then
             continue
         fi
@@ -946,7 +979,9 @@ discover_fault_injection_kconfig_symbols() {
 }
 
 is_x86_config() {
-    grep -Eq '^(CONFIG_X86=y|CONFIG_X86_64=y|CONFIG_X86_32=y)' "$CONFIG_FILE"
+    [[ "$(symbol_value X86)" == "y" ]] \
+        || [[ "$(symbol_value X86_64)" == "y" ]] \
+        || [[ "$(symbol_value X86_32)" == "y" ]]
 }
 
 detect_host_cpu_vendor() {
@@ -987,15 +1022,6 @@ append_unique_item() {
     items_ref+=("$value")
 }
 
-trim_whitespace() {
-    local value="$1"
-
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-
-    printf '%s\n' "$value"
-}
-
 normalize_config_symbol_name() {
     local sym="$1"
 
@@ -1007,32 +1033,25 @@ normalize_config_symbol_name() {
     printf '%s\n' "$sym"
 }
 
+declare -A _PROTECTED_CONFIG_SYMBOL_MAP=()
+
 load_protected_config_symbols() {
     local raw_sym normalized_sym
     local -a raw_symbols=()
 
-    PROTECTED_CONFIG_SYMBOL_LIST=()
+    _PROTECTED_CONFIG_SYMBOL_MAP=()
 
     IFS=',' read -r -a raw_symbols <<<"$PROTECTED_CONFIG_SYMBOLS"
     for raw_sym in "${raw_symbols[@]}"; do
         normalized_sym="$(normalize_config_symbol_name "$raw_sym")"
         if [[ -n "$normalized_sym" ]]; then
-            append_unique_item "$normalized_sym" PROTECTED_CONFIG_SYMBOL_LIST
+            _PROTECTED_CONFIG_SYMBOL_MAP["$normalized_sym"]=1
         fi
     done
 }
 
 is_protected_config_symbol() {
-    local requested_sym="$1"
-    local protected_sym
-
-    for protected_sym in "${PROTECTED_CONFIG_SYMBOL_LIST[@]:-}"; do
-        if [[ "$protected_sym" == "$requested_sym" ]]; then
-            return 0
-        fi
-    done
-
-    return 1
+    [[ -n "${_PROTECTED_CONFIG_SYMBOL_MAP[$1]:-}" ]]
 }
 
 disable_config_symbol() {
@@ -1875,8 +1894,7 @@ list_config_hz_symbols() {
 }
 
 is_symbol_enabled_now() {
-    local sym="$1"
-    grep -Eq "^CONFIG_$(normalize_config_symbol_name "$sym")=y$" "$CONFIG_FILE"
+    [[ "$(symbol_value "$(normalize_config_symbol_name "$1")")" == "y" ]]
 }
 
 configure_hz_profile() {
@@ -3056,24 +3074,17 @@ fi
 TPM_RESOLVED="$(resolve_tpm_support)"
 if [[ "$TPM_RESOLVED" != "none" ]]; then
     TPM_HOST_VERSIONS="$(detect_host_tpm_versions)"
+    TPM_MODE="$TPM_RESOLVED"
 
-    if [[ "$TPM_RESOLVED" == "off" ]]; then
-        if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
-            mapfile -t TPM_EFFECTIVE <<<"$TPM_HOST_VERSIONS"
-            configure_tpm_support_profile "off" "${TPM_EFFECTIVE[@]}"
-        else
-            configure_tpm_support_profile "off"
-        fi
-    elif [[ "$TPM_RESOLVED" == "on" ]]; then
-        if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
-            mapfile -t TPM_EFFECTIVE <<<"$TPM_HOST_VERSIONS"
-            configure_tpm_support_profile "on" "${TPM_EFFECTIVE[@]}"
-        else
-            configure_tpm_support_profile "on"
-        fi
+    if [[ "$TPM_MODE" != "on" && "$TPM_MODE" != "off" ]]; then
+        TPM_MODE="on"
+    fi
+
+    if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
+        mapfile -t TPM_EFFECTIVE <<<"${TPM_HOST_VERSIONS:-$TPM_RESOLVED}"
+        configure_tpm_support_profile "$TPM_MODE" "${TPM_EFFECTIVE[@]}"
     else
-        mapfile -t TPM_EFFECTIVE <<<"$TPM_RESOLVED"
-        configure_tpm_support_profile "on" "${TPM_EFFECTIVE[@]}"
+        configure_tpm_support_profile "$TPM_MODE"
     fi
 fi
 
