@@ -777,9 +777,25 @@ discover_kconfig_symbols_by_pattern() {
                 IGNORECASE = 1
             }
 
+            /\\[[:space:]]*$/ {
+                in_continuation = 1
+                next
+            }
+
+            in_continuation {
+                in_continuation = /\\[[:space:]]*$/
+                next
+            }
+
             function menu_context_matches(depth) {
                 for (depth = menu_depth; depth >= 1; depth--) {
                     if (menu_matches[depth]) {
+                        return 1
+                    }
+                }
+
+                for (depth = if_depth; depth >= 1; depth--) {
+                    if (if_matches[depth]) {
                         return 1
                     }
                 }
@@ -791,6 +807,27 @@ discover_kconfig_symbols_by_pattern() {
                 if (sym != "" && is_toggle && (text ~ pattern || menu_context_matches())) {
                     print sym
                 }
+            }
+
+            /^[[:space:]]*(help|---help---)([[:space:]]*)$/ {
+                in_help = 1
+                help_indent = -1
+                next
+            }
+
+            in_help {
+                if (/^[[:space:]]*$/) next
+                if (match($0, /^[[:space:]]+/)) {
+                    cur_indent = RLENGTH
+                } else {
+                    cur_indent = 0
+                }
+                if (help_indent < 0) {
+                    help_indent = cur_indent
+                    next
+                }
+                if (cur_indent >= help_indent) next
+                in_help = 0
             }
 
             /^[[:space:]]*menu[[:space:]]*"[^"]+"/ {
@@ -807,16 +844,63 @@ discover_kconfig_symbols_by_pattern() {
                 next
             }
 
-            /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
+            /^[[:space:]]*if[[:space:]]/ {
+                save_ic = IGNORECASE; IGNORECASE = 0
+                kw = $0; sub(/^[[:space:]]*/, "", kw)
+                is_kconfig_kw = (substr(kw, 1, 3) == "if ")
+                IGNORECASE = save_ic
+                if (!is_kconfig_kw) next
+
+                if_depth++
+                if_matches[if_depth] = 0
+                if (menuconfig_pattern_match && last_menuconfig_sym != "") {
+                    cond = kw
+                    sub(/^if[[:space:]]+/, "", cond)
+                    if (match(cond, "(^|[^A-Za-z0-9_])" last_menuconfig_sym "($|[^A-Za-z0-9_])")) {
+                        if_matches[if_depth] = 1
+                    }
+                }
+                next
+            }
+
+            /^[[:space:]]*endif([[:space:]]|$)/ {
+                save_ic = IGNORECASE; IGNORECASE = 0
+                kw = $0; sub(/^[[:space:]]*/, "", kw)
+                is_kconfig_kw = (substr(kw, 1, 5) == "endif")
+                IGNORECASE = save_ic
+                if (!is_kconfig_kw) next
+
+                if (if_depth > 0) {
+                    delete if_matches[if_depth]
+                    if_depth--
+                }
+                next
+            }
+
+            /^[[:space:]]*menuconfig[[:space:]]+[A-Z0-9_]+/ {
                 sym = $2
                 is_toggle = 0
+                is_menuconfig = 1
+                last_menuconfig_sym = $2
+                menuconfig_pattern_match = 0
+                next
+            }
+
+            /^[[:space:]]*config[[:space:]]+[A-Z0-9_]+/ {
+                sym = $2
+                is_toggle = 0
+                is_menuconfig = 0
                 next
             }
 
             /^[[:space:]]*(bool|tristate)([[:space:]]|$)/ {
                 is_toggle = 1
                 if (match($0, /"[^"]+"/)) {
-                    maybe_emit(substr($0, RSTART, RLENGTH))
+                    text = substr($0, RSTART, RLENGTH)
+                    maybe_emit(text)
+                    if (is_menuconfig && text ~ pattern) {
+                        menuconfig_pattern_match = 1
+                    }
                 } else {
                     maybe_emit("")
                 }
@@ -825,6 +909,9 @@ discover_kconfig_symbols_by_pattern() {
 
             /^[[:space:]]*prompt[[:space:]]*"[^"]+"/ {
                 maybe_emit($0)
+                if (is_menuconfig && $0 ~ pattern) {
+                    menuconfig_pattern_match = 1
+                }
             }
         ' \
         | sort -u
