@@ -503,7 +503,7 @@ is_module_loaded_now() {
     local normalized_module_name
 
     normalized_module_name="$(normalize_kernel_module_name "$module_name")"
-    capture_loaded_modules | grep -Fxq "$normalized_module_name"
+    [[ -f "/sys/module/$normalized_module_name/initstate" ]]
 }
 
 discover_config_module_symbols() {
