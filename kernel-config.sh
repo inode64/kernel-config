@@ -176,7 +176,7 @@ is_boolean_tunable() {
 
 normalize_boolean_value() {
     local value
-    value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    value="${1,,}"
 
     case "$value" in
         1 | true | yes | on | enable | enabled)
@@ -993,7 +993,7 @@ set_val_config_symbol() {
 
 resolve_cpu_vendor_filter() {
     local mode
-    mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
+    mode="${CPU_VENDOR_FILTER,,}"
 
     case "$mode" in
         "" | none | off | 0)
@@ -1096,7 +1096,7 @@ detect_host_video_support() {
 
 resolve_video_support() {
     local mode
-    mode="$(printf '%s' "$VIDEO_SUPPORT" | tr '[:upper:]' '[:lower:]')"
+    mode="${VIDEO_SUPPORT,,}"
 
     case "$mode" in
         "" | none | off | 0)
@@ -1402,7 +1402,7 @@ detect_host_nr_cpus() {
 resolve_nr_cpus() {
     local raw detected
 
-    raw="$(printf '%s' "$NR_CPUS" | tr '[:upper:]' '[:lower:]')"
+    raw="${NR_CPUS,,}"
 
     case "$raw" in
         "" | none | off | keep)
@@ -1427,7 +1427,7 @@ resolve_application_profiles() {
     local saw_none=0
     local -a profiles=()
 
-    raw="$(printf '%s' "$APPLICATIONS" | tr '[:upper:]' '[:lower:]')"
+    raw="${APPLICATIONS,,}"
     raw="${raw//,/ }"
 
     for token in $raw; do
@@ -1474,7 +1474,7 @@ resolve_application_profiles() {
 resolve_cpu_vendor_or_detect() {
     local vendor_mode resolved_vendor
 
-    vendor_mode="$(printf '%s' "$CPU_VENDOR_FILTER" | tr '[:upper:]' '[:lower:]')"
+    vendor_mode="${CPU_VENDOR_FILTER,,}"
     case "$vendor_mode" in
         "" | none | off | 0)
             detect_host_cpu_vendor
@@ -1567,7 +1567,7 @@ resolve_host_type() {
 
 resolve_optimization_profile() {
     local mode
-    mode="$(printf '%s' "$OPTIMIZATION_PROFILE" | tr '[:upper:]' '[:lower:]')"
+    mode="${OPTIMIZATION_PROFILE,,}"
 
     case "$mode" in
         "" | none | off | 0)
