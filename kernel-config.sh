@@ -2004,14 +2004,20 @@ configure_optimization_profile() {
     echo
     echo "==> Applying optimization profile: $profile"
 
-    # common: compiler and topology optimizations for all profiles
+    # resolve NUMA early so profiles can use it
+    local numa_mode
+    numa_mode="$(resolve_numa_support)"
+
+    local wants_observability=true
+    if is_enabled "$PRUNE_OBSERVABILITY" || is_enabled "$PRUNE_DEBUG_TRACE"; then
+        wants_observability=false
+    fi
+
+    # common: compiler optimizations for all profiles
     enable_if_present \
         CC_OPTIMIZE_FOR_PERFORMANCE \
         CPU_ISOLATION \
-        JUMP_LABEL \
-        SCHED_CLUSTER \
-        SCHED_MC \
-        SCHED_SMT
+        JUMP_LABEL
 
     disable_if_present CC_OPTIMIZE_FOR_SIZE
 
@@ -2025,10 +2031,7 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
-                ENERGY_MODEL \
                 HZ_PERIODIC \
-                KSM \
-                PSI_DEFAULT_DISABLED \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
 
@@ -2042,14 +2045,10 @@ configure_optimization_profile() {
                 CGROUP_SCHED \
                 CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
                 CPU_FREQ_GOV_PERFORMANCE \
-                CPU_FREQ_STAT \
                 FAIR_GROUP_SCHED \
-                IRQ_TIME_ACCOUNTING \
                 KSM \
                 MEMCG \
                 NO_HZ_IDLE \
-                NUMA_BALANCING \
-                PSI \
                 TRANSPARENT_HUGEPAGE \
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
@@ -2057,6 +2056,20 @@ configure_optimization_profile() {
             if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
                 select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
                     TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
+            fi
+
+            # observability: only enable monitoring symbols when not pruning
+            if is_enabled "$wants_observability"; then
+                enable_if_present \
+                    CPU_FREQ_STAT \
+                    IRQ_TIME_ACCOUNTING \
+                    PSI
+                disable_if_present PSI_DEFAULT_DISABLED
+            fi
+
+            # NUMA-aware balancing: only if the host actually has NUMA
+            if [[ "$numa_mode" != "off" ]]; then
+                enable_if_present NUMA_BALANCING
             fi
 
             configure_hz_profile server
@@ -2077,8 +2090,7 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
                 HZ_PERIODIC \
-                PREEMPT_RT \
-                PSI_DEFAULT_DISABLED
+                PREEMPT_RT
 
             enable_if_present \
                 BLK_WBT \
@@ -2092,8 +2104,6 @@ configure_optimization_profile() {
                 KSM \
                 MEMCG \
                 NO_HZ_IDLE \
-                NUMA_BALANCING \
-                PSI \
                 SCHED_AUTOGROUP \
                 TRANSPARENT_HUGEPAGE \
                 UCLAMP_TASK \
@@ -2104,6 +2114,15 @@ configure_optimization_profile() {
             if have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
                 select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
                     TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+            fi
+
+            if is_enabled "$wants_observability"; then
+                enable_if_present PSI
+                disable_if_present PSI_DEFAULT_DISABLED
+            fi
+
+            if [[ "$numa_mode" != "off" ]]; then
+                enable_if_present NUMA_BALANCING
             fi
 
             configure_hz_profile desktop
@@ -2125,7 +2144,6 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
-                ENERGY_MODEL \
                 HZ_PERIODIC \
                 KSM \
                 NUMA_BALANCING \
