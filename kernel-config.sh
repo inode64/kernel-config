@@ -918,7 +918,7 @@ discover_kconfig_symbols_by_pattern() {
 }
 
 discover_legacy_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility)"
+    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))"
 }
 
 discover_debug_trace_kconfig_symbols() {
@@ -930,7 +930,7 @@ discover_hardening_kconfig_symbols() {
 }
 
 discover_selftest_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(self[- ]?tests?|selftest|kunit tests?|boot[- ]time self[- ]tests?)"
+    discover_kconfig_symbols_by_pattern "(self[- ]?tests?|selftest|kunit tests?|boot[- ]time self[- ]tests?|unit tests?|test for )"
 }
 
 discover_dangerous_kconfig_symbols() {
@@ -942,7 +942,7 @@ discover_coverage_kconfig_symbols() {
 }
 
 discover_fault_injection_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(fault[- ]?injection|fault injector|inject faults?|simulate io errors|failure injection)"
+    discover_kconfig_symbols_by_pattern "(fault[- ]?injection|fault injector|inject faults?|simulate io errors|failure injection|error[- ]?inj)"
 }
 
 is_x86_config() {
@@ -2802,6 +2802,8 @@ if is_enabled "$PRUNE_COVERAGE"; then
         discover_coverage_kconfig_symbols \
         GCOV_KERNEL \
         GCOV_PROFILE_ALL
+
+    enable_if_present BRANCH_PROFILE_NONE
 fi
 
 if is_enabled "$PRUNE_FAULT_INJECTION"; then
@@ -2989,6 +2991,8 @@ if is_enabled "$PRUNE_HARDENING"; then
     echo "    (this reduces kernel security hardening)"
 
     disable_discovered_and_fixed_symbols discover_hardening_kconfig_symbols
+
+    enable_if_present QCOM_RPMH
 fi
 
 OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
