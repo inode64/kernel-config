@@ -481,7 +481,8 @@ capture_loaded_modules() {
 normalize_kernel_module_name() {
     local module_name="$1"
 
-    module_name="$(trim_whitespace "$module_name")"
+    module_name="${module_name#"${module_name%%[![:space:]]*}"}"
+    module_name="${module_name%"${module_name##*[![:space:]]}"}"
     module_name="${module_name//-/_}"
 
     printf '%s\n' "$module_name"
@@ -894,9 +895,10 @@ trim_whitespace() {
 normalize_config_symbol_name() {
     local sym="$1"
 
-    sym="$(trim_whitespace "$sym")"
+    sym="${sym#"${sym%%[![:space:]]*}"}"
+    sym="${sym%"${sym##*[![:space:]]}"}"
     sym="${sym#CONFIG_}"
-    sym="$(printf '%s' "$sym" | tr '[:lower:]' '[:upper:]')"
+    sym="${sym^^}"
 
     printf '%s\n' "$sym"
 }
