@@ -181,7 +181,7 @@ is_boolean_tunable() {
 
 normalize_boolean_value() {
     local value
-    value="${1,,}"
+    value="${1@L}"
 
     case "$value" in
         1 | true | yes | on | enable | enabled)
@@ -249,7 +249,8 @@ set_option() {
             CONFIG_FILE="$value"
             ;;
         *)
-            set_tunable "$(printf '%s' "$name" | tr '[:lower:]-' '[:upper:]_')" "$value"
+            local tunable_name="${name//-/_}"
+            set_tunable "${tunable_name@U}" "$value"
             ;;
     esac
 }
@@ -527,8 +528,7 @@ capture_loaded_modules() {
 normalize_kernel_module_name() {
     local module_name="$1"
 
-    module_name="${module_name#"${module_name%%[![:space:]]*}"}"
-    module_name="${module_name%"${module_name##*[![:space:]]}"}"
+    module_name="${module_name//[[:space:]]/}"
     module_name="${module_name//-/_}"
 
     printf '%s\n' "$module_name"
@@ -1039,10 +1039,9 @@ append_unique_item() {
 normalize_config_symbol_name() {
     local sym="$1"
 
-    sym="${sym#"${sym%%[![:space:]]*}"}"
-    sym="${sym%"${sym##*[![:space:]]}"}"
+    sym="${sym//[[:space:]]/}"
     sym="${sym#CONFIG_}"
-    sym="${sym^^}"
+    sym="${sym@U}"
 
     printf '%s\n' "$sym"
 }
@@ -1113,7 +1112,7 @@ set_val_config_symbol() {
 
 resolve_cpu_vendor_filter() {
     local mode
-    mode="${CPU_VENDOR_FILTER,,}"
+    mode="${CPU_VENDOR_FILTER@L}"
 
     case "$mode" in
         "" | none | off | 0)
@@ -1216,7 +1215,7 @@ detect_host_video_support() {
 
 resolve_video_support() {
     local mode
-    mode="${VIDEO_SUPPORT,,}"
+    mode="${VIDEO_SUPPORT@L}"
 
     case "$mode" in
         "" | none | off | 0)
@@ -1251,7 +1250,7 @@ resolve_on_off_support() {
     local raw mode alias
 
     raw="${!var_name}"
-    mode="${raw,,}"
+    mode="${raw@L}"
 
     case "$mode" in
         "" | none)
@@ -1342,7 +1341,10 @@ detect_host_tpm_versions() {
 
         version=""
         if [[ -r "$path/tpm_version_major" ]]; then
-            case "$(tr -d '[:space:]' < "$path/tpm_version_major")" in
+            local tpm_ver_raw
+            tpm_ver_raw="$(<"$path/tpm_version_major")"
+            tpm_ver_raw="${tpm_ver_raw//[[:space:]]/}"
+            case "$tpm_ver_raw" in
                 1)
                     version="1.2"
                     ;;
@@ -1354,9 +1356,11 @@ detect_host_tpm_versions() {
 
         if [[ -z "$version" ]]; then
             if [[ -r "$path/device/description" ]]; then
-                description="$(tr '[:upper:]' '[:lower:]' < "$path/device/description")"
+                description="$(<"$path/device/description")"
+                description="${description@L}"
             elif [[ -r "$path/description" ]]; then
-                description="$(tr '[:upper:]' '[:lower:]' < "$path/description")"
+                description="$(<"$path/description")"
+                description="${description@L}"
             else
                 description=""
             fi
@@ -1423,7 +1427,8 @@ detect_host_numa_support() {
     fi
 
     if [[ -r /sys/devices/system/node/online ]]; then
-        online="$(tr -d '[:space:]' < /sys/devices/system/node/online)"
+        online="$(</sys/devices/system/node/online)"
+        online="${online//[[:space:]]/}"
         case "$online" in
             "" | 0)
                 printf '%s\n' "off"
@@ -1484,7 +1489,8 @@ detect_host_nr_cpus() {
         /sys/devices/system/cpu/possible \
         /sys/devices/system/cpu/online; do
         [[ -r "$path" ]] || continue
-        cpu_list="$(tr -d '[:space:]' < "$path")"
+        cpu_list="$(<"$path")"
+        cpu_list="${cpu_list//[[:space:]]/}"
         count="$(count_cpu_list_entries "$cpu_list" 2>/dev/null || true)"
         if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
             printf '%s\n' "$count"
@@ -1522,7 +1528,7 @@ detect_host_nr_cpus() {
 resolve_nr_cpus() {
     local raw
 
-    raw="${NR_CPUS,,}"
+    raw="${NR_CPUS@L}"
 
     case "$raw" in
         "" | none | off | keep)
@@ -1547,7 +1553,7 @@ resolve_application_profiles() {
     local saw_none=0
     local -a profiles=()
 
-    raw="${APPLICATIONS,,}"
+    raw="${APPLICATIONS@L}"
     raw="${raw//,/ }"
 
     for token in $raw; do
@@ -1594,7 +1600,7 @@ resolve_application_profiles() {
 resolve_cpu_vendor_or_detect() {
     local vendor_mode
 
-    vendor_mode="${CPU_VENDOR_FILTER,,}"
+    vendor_mode="${CPU_VENDOR_FILTER@L}"
     case "$vendor_mode" in
         "" | none | off | 0)
             detect_host_cpu_vendor
@@ -1663,7 +1669,7 @@ probe_xfs_deprecated_features() {
 
 resolve_host_type() {
     local mode
-    mode="${HOST_TYPE,,}"
+    mode="${HOST_TYPE@L}"
 
     case "$mode" in
         "" | none)
@@ -1687,7 +1693,7 @@ resolve_host_type() {
 
 resolve_optimization_profile() {
     local mode
-    mode="${OPTIMIZATION_PROFILE,,}"
+    mode="${OPTIMIZATION_PROFILE@L}"
 
     case "$mode" in
         "" | none | off | 0)
@@ -2847,7 +2853,7 @@ configure_application_profiles() {
                 qemu_cpu_vendor="$(resolve_cpu_vendor_or_detect)"
                 case "$qemu_cpu_vendor" in
                     amd | intel)
-                        echo "    (qemu uses ${qemu_cpu_vendor^^} host virtualization support)"
+                        echo "    (qemu uses ${qemu_cpu_vendor@U} host virtualization support)"
                         ;;
                     unknown)
                         echo "    (qemu host CPU vendor could not be detected; enabling generic KVM support only)"
@@ -3144,8 +3150,8 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
             CPU_VENDOR_TO_DISABLE="amd"
         fi
 
-        echo "==> Adjusting x86 options for ${CPU_VENDOR_EFFECTIVE^^} CPU"
-        echo "    (disabling ${CPU_VENDOR_TO_DISABLE^^}-specific symbols)"
+        echo "==> Adjusting x86 options for ${CPU_VENDOR_EFFECTIVE@U} CPU"
+        echo "    (disabling ${CPU_VENDOR_TO_DISABLE@U}-specific symbols)"
 
         mapfile -t cpu_vendor_syms < <(discover_vendor_kconfig_symbols "$CPU_VENDOR_TO_DISABLE")
         if ((${#cpu_vendor_syms[@]} > 0)); then
