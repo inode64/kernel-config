@@ -559,11 +559,11 @@ is_module_loaded_now() {
 }
 
 discover_config_module_symbols() {
-    awk -F= '/^CONFIG_[A-Z0-9_]+=m$/ {
-        sym = $1
-        sub(/^CONFIG_/, "", sym)
-        print sym
-    }' "$CONFIG_FILE"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    local sym
+    for sym in "${!_SYMBOL_VALUE_CACHE[@]}"; do
+        [[ "${_SYMBOL_VALUE_CACHE[$sym]}" == "m" ]] && printf '%s\n' "$sym"
+    done
 }
 
 build_module_symbol_candidate_map() {
@@ -740,7 +740,7 @@ probe_and_prune_unused_module_symbols() {
     echo
     echo "==> Probing currently unloaded module configs"
 
-    if [[ "$(id -u)" != "0" ]]; then
+    if ((EUID != 0)); then
         echo "    (requires root to load/unload modules safely; skipping)"
         return
     fi
@@ -996,12 +996,15 @@ is_x86_config() {
 }
 
 detect_host_cpu_vendor() {
-    local vendor_id=""
+    local vendor_id="" line
 
     if [[ -r /proc/cpuinfo ]]; then
-        vendor_id="$(
-            awk -F': *' '/^vendor_id[[:space:]]*:/{print $2; exit}' /proc/cpuinfo 2>/dev/null || true
-        )"
+        while IFS= read -r line; do
+            if [[ "$line" == vendor_id* ]]; then
+                vendor_id="${line#*: }"
+                break
+            fi
+        done < /proc/cpuinfo
     fi
 
     case "$vendor_id" in
@@ -1128,9 +1131,11 @@ detect_host_video_support() {
     while IFS= read -r -d '' path; do
         module=""
         if [[ -L "$path/device/driver/module" ]]; then
-            module="$(basename "$(readlink -f "$path/device/driver/module")")"
+            module="$(readlink -f "$path/device/driver/module")"
+            module="${module##*/}"
         elif [[ -L "$path/device/driver" ]]; then
-            module="$(basename "$(readlink -f "$path/device/driver")")"
+            module="$(readlink -f "$path/device/driver")"
+            module="${module##*/}"
         fi
 
         case "$module" in
@@ -1292,14 +1297,10 @@ detect_host_initrd_support() {
     local ramdisk_size=""
 
     if [[ -r /sys/kernel/boot_params/data ]]; then
-        ramdisk_image="$(
-            od -An -j $((0x218)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null \
-                | awk '{print $1; exit}'
-        )"
-        ramdisk_size="$(
-            od -An -j $((0x21c)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null \
-                | awk '{print $1; exit}'
-        )"
+        ramdisk_image="$(od -An -j $((0x218)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null)" || true
+        ramdisk_image="${ramdisk_image//[[:space:]]/}"
+        ramdisk_size="$(od -An -j $((0x21c)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null)" || true
+        ramdisk_size="${ramdisk_size//[[:space:]]/}"
 
         if [[ -n "$ramdisk_image" && -n "$ramdisk_size" ]]; then
             if [[ "$ramdisk_image" != "0" && "$ramdisk_size" != "0" ]]; then
@@ -1311,7 +1312,8 @@ detect_host_initrd_support() {
         fi
     fi
 
-    if [[ -r /proc/cmdline ]] && grep -Eq '(^|[[:space:]])initrd=' /proc/cmdline 2>/dev/null; then
+    local _cmdline
+    if [[ -r /proc/cmdline ]] && { _cmdline="$(</proc/cmdline)"; [[ "$_cmdline" =~ (^|[[:space:]])initrd= ]]; }; then
         printf '%s\n' "on"
     else
         printf '%s\n' "unknown"
@@ -1891,16 +1893,11 @@ enable_if_present() {
 }
 
 list_config_hz_symbols() {
-    awk '
-        /^CONFIG_HZ_[0-9]+=|^# CONFIG_HZ_[0-9]+ is not set$/ {
-            sym = $0
-            sub(/^# /, "", sym)
-            sub(/^CONFIG_/, "", sym)
-            sub(/=.*/, "", sym)
-            sub(/ is not set$/, "", sym)
-            print sym
-        }
-    ' "$CONFIG_FILE"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    local sym
+    for sym in "${!_SYMBOL_VALUE_CACHE[@]}"; do
+        [[ "$sym" == HZ_[0-9]* ]] && printf '%s\n' "$sym"
+    done
 }
 
 is_symbol_enabled_now() {
@@ -2734,9 +2731,10 @@ configure_numa_support_profile() {
 }
 
 get_config_numeric_value() {
-    local sym="$1"
-
-    awk -F= -v sym="CONFIG_${sym}" '$1 == sym { print $2; exit }' "$CONFIG_FILE" 2>/dev/null || true
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    if [[ -v _SYMBOL_VALUE_CACHE[$1] ]]; then
+        printf '%s\n' "${_SYMBOL_VALUE_CACHE[$1]}"
+    fi
 }
 
 clamp_nr_cpus_to_config_range() {
