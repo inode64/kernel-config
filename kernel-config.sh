@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); then
+    echo "This script requires bash 4.3 or later (found ${BASH_VERSION})" >&2
+    exit 1
+fi
+
 # Usage:
 #   ./kernel-config.sh [OPTIONS] [KERNEL_SRCDIR] [CONFIG_FILE] [VAR=VALUE...]
 #
@@ -485,6 +490,10 @@ _load_symbol_cache() {
         }
     ' "$CONFIG_FILE")
     _SYMBOL_CACHE_LOADED=true
+}
+
+invalidate_symbol_cache() {
+    _SYMBOL_CACHE_LOADED=false
 }
 
 have_symbol() {
@@ -2472,7 +2481,7 @@ configure_uefi_support_profile() {
             )
             ;;
         off)
-            echo "    (pruning common EFI runtime, boot stub, and EFI partition support)"
+            echo "    (pruning common EFI runtime and boot stub support; keeping GPT/EFI_PARTITION)"
             disable_syms=(
                 EFI
                 EFI_STUB
@@ -2491,7 +2500,6 @@ configure_uefi_support_profile() {
                 EFI_CUSTOM_SSDT_OVERLAYS
                 EFI_DISABLE_RUNTIME
                 EFI_EMBEDDED_FIRMWARE
-                EFI_PARTITION
                 EFIVAR_FS
             )
             ;;
@@ -3026,10 +3034,12 @@ if is_enabled "$PRUNE_LEGACY"; then
         USELIB
 fi
 
-# extra: debug info choice
-if have_symbol DEBUG_INFO_NONE; then
-    echo "Selecting: CONFIG_DEBUG_INFO_NONE"
-    enable_config_symbol DEBUG_INFO_NONE
+# extra: debug info choice — only when actively pruning debug/coverage symbols
+if is_enabled "$PRUNE_DEBUG_TRACE" || is_enabled "$PRUNE_COVERAGE"; then
+    if have_symbol DEBUG_INFO_NONE; then
+        echo "Selecting: CONFIG_DEBUG_INFO_NONE"
+        enable_config_symbol DEBUG_INFO_NONE
+    fi
 fi
 # optional: BPF/observability
 if is_enabled "$PRUNE_BPF"; then
@@ -3113,6 +3123,8 @@ if is_enabled "$PRUNE_HARDENING"; then
     enable_if_present QCOM_RPMH
 fi
 
+invalidate_symbol_cache
+
 OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
 configure_optimization_profile "$OPTIMIZATION_PROFILE_EFFECTIVE"
 
@@ -3173,15 +3185,20 @@ fi
 
 TPM_RESOLVED="$(resolve_tpm_support)"
 if [[ "$TPM_RESOLVED" != "none" ]]; then
-    TPM_HOST_VERSIONS="$(detect_host_tpm_versions)"
     TPM_MODE="$TPM_RESOLVED"
 
     if [[ "$TPM_MODE" != "on" && "$TPM_MODE" != "off" ]]; then
+        # auto-detected: TPM_RESOLVED contains version strings (1.2, 2.0, unknown)
+        # reuse them directly instead of calling detect_host_tpm_versions again
+        TPM_HOST_VERSIONS="$TPM_RESOLVED"
         TPM_MODE="on"
+    else
+        # explicit on/off: detect versions for informational logging
+        TPM_HOST_VERSIONS="$(detect_host_tpm_versions)"
     fi
 
     if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
-        mapfile -t TPM_EFFECTIVE <<<"${TPM_HOST_VERSIONS:-$TPM_RESOLVED}"
+        mapfile -t TPM_EFFECTIVE <<<"$TPM_HOST_VERSIONS"
         configure_tpm_support_profile "$TPM_MODE" "${TPM_EFFECTIVE[@]}"
     else
         configure_tpm_support_profile "$TPM_MODE"
@@ -3323,6 +3340,8 @@ if is_enabled "$PRUNE_DMA_ATTACK_SURFACE"; then
         USB_GADGETFS
 fi
 
+invalidate_symbol_cache
+
 APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
 if [[ "$APPLICATIONS_RESOLVED" != "none" ]]; then
     mapfile -t APPLICATIONS_EFFECTIVE <<<"$APPLICATIONS_RESOLVED"
@@ -3335,6 +3354,7 @@ fi
 
 echo
 echo "==> Running olddefconfig to normalize dependencies"
+echo "    (note: Kconfig 'select' statements may re-enable symbols that were disabled above)"
 env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
 
 echo
