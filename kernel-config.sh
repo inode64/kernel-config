@@ -526,12 +526,8 @@ capture_loaded_modules() {
 }
 
 normalize_kernel_module_name() {
-    local module_name="$1"
-
-    module_name="${module_name//[[:space:]]/}"
-    module_name="${module_name//-/_}"
-
-    printf '%s\n' "$module_name"
+    REPLY="${1//[[:space:]]/}"
+    REPLY="${REPLY//-/_}"
 }
 
 _RUNNING_KERNEL_RELEASE=""
@@ -547,7 +543,8 @@ module_exists_for_running_kernel() {
     local module_name="$1"
     local normalized_module_name kr
 
-    normalized_module_name="$(normalize_kernel_module_name "$module_name")"
+    normalize_kernel_module_name "$module_name"
+    normalized_module_name="$REPLY"
     kr="$(running_kernel_release)"
 
     modinfo -k "$kr" "$module_name" >/dev/null 2>&1 \
@@ -556,10 +553,9 @@ module_exists_for_running_kernel() {
 
 is_module_loaded_now() {
     local module_name="$1"
-    local normalized_module_name
 
-    normalized_module_name="$(normalize_kernel_module_name "$module_name")"
-    [[ -f "/sys/module/$normalized_module_name/initstate" ]]
+    normalize_kernel_module_name "$module_name"
+    [[ -f "/sys/module/$REPLY/initstate" ]]
 }
 
 discover_config_module_symbols() {
@@ -993,9 +989,10 @@ discover_fault_injection_kconfig_symbols() {
 }
 
 is_x86_config() {
-    [[ "$(symbol_value X86)" == "y" ]] \
-        || [[ "$(symbol_value X86_64)" == "y" ]] \
-        || [[ "$(symbol_value X86_32)" == "y" ]]
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    [[ "${_SYMBOL_VALUE_CACHE[X86]:-}" == "y" ]] \
+        || [[ "${_SYMBOL_VALUE_CACHE[X86_64]:-}" == "y" ]] \
+        || [[ "${_SYMBOL_VALUE_CACHE[X86_32]:-}" == "y" ]]
 }
 
 detect_host_cpu_vendor() {
@@ -1037,13 +1034,9 @@ append_unique_item() {
 }
 
 normalize_config_symbol_name() {
-    local sym="$1"
-
-    sym="${sym//[[:space:]]/}"
-    sym="${sym#CONFIG_}"
-    sym="${sym@U}"
-
-    printf '%s\n' "$sym"
+    REPLY="${1//[[:space:]]/}"
+    REPLY="${REPLY#CONFIG_}"
+    REPLY="${REPLY@U}"
 }
 
 declare -A _PROTECTED_CONFIG_SYMBOL_MAP=()
@@ -1056,9 +1049,9 @@ load_protected_config_symbols() {
 
     IFS=',' read -r -a raw_symbols <<<"$PROTECTED_CONFIG_SYMBOLS"
     for raw_sym in "${raw_symbols[@]}"; do
-        normalized_sym="$(normalize_config_symbol_name "$raw_sym")"
-        if [[ -n "$normalized_sym" ]]; then
-            _PROTECTED_CONFIG_SYMBOL_MAP["$normalized_sym"]=1
+        normalize_config_symbol_name "$raw_sym"
+        if [[ -n "$REPLY" ]]; then
+            _PROTECTED_CONFIG_SYMBOL_MAP["$REPLY"]=1
         fi
     done
 }
@@ -1068,10 +1061,9 @@ is_protected_config_symbol() {
 }
 
 disable_config_symbol() {
-    local sym="$1"
-    local normalized_sym
+    normalize_config_symbol_name "$1"
+    local normalized_sym="$REPLY"
 
-    normalized_sym="$(normalize_config_symbol_name "$sym")"
     if is_protected_config_symbol "$normalized_sym"; then
         echo "Skipping protected symbol: CONFIG_${normalized_sym}"
         return 0
@@ -1082,10 +1074,9 @@ disable_config_symbol() {
 }
 
 enable_config_symbol() {
-    local sym="$1"
-    local normalized_sym
+    normalize_config_symbol_name "$1"
+    local normalized_sym="$REPLY"
 
-    normalized_sym="$(normalize_config_symbol_name "$sym")"
     if is_protected_config_symbol "$normalized_sym"; then
         echo "Skipping protected symbol: CONFIG_${normalized_sym}"
         return 0
@@ -1096,11 +1087,10 @@ enable_config_symbol() {
 }
 
 set_val_config_symbol() {
-    local sym="$1"
     local value="$2"
-    local normalized_sym
+    normalize_config_symbol_name "$1"
+    local normalized_sym="$REPLY"
 
-    normalized_sym="$(normalize_config_symbol_name "$sym")"
     if is_protected_config_symbol "$normalized_sym"; then
         echo "Skipping protected symbol: CONFIG_${normalized_sym}"
         return 0
@@ -1834,22 +1824,21 @@ prepare_sorted_unique_symbols() {
         return
     fi
 
+    local -A _dedup=()
+    for sym in "$@"; do
+        normalize_config_symbol_name "$sym"
+        if [[ -n "$REPLY" ]] && ! [[ -v _dedup[$REPLY] ]]; then
+            _dedup["$REPLY"]=1
+        fi
+    done
+
     # shellcheck disable=SC2034
-    mapfile -t symbols_ref < <(
-        for sym in "$@"; do
-            normalized_sym="$(normalize_config_symbol_name "$sym")"
-            if [[ -n "$normalized_sym" ]]; then
-                printf '%s\n' "$normalized_sym"
-            fi
-        done | sort -u
-    )
+    readarray -t symbols_ref < <(printf '%s\n' "${!_dedup[@]}" | sort)
 }
 
 is_inverse_disable_symbol() {
-    local sym
-
-    sym="$(normalize_config_symbol_name "$1")"
-    case "$sym" in
+    normalize_config_symbol_name "$1"
+    case "$REPLY" in
         *_DISABLE | *_DISABLE_* | *_DISABLED | *_DISABLED_*)
             return 0
             ;;
@@ -1915,7 +1904,9 @@ list_config_hz_symbols() {
 }
 
 is_symbol_enabled_now() {
-    [[ "$(symbol_value "$(normalize_config_symbol_name "$1")")" == "y" ]]
+    normalize_config_symbol_name "$1"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    [[ -v _SYMBOL_VALUE_CACHE[$REPLY] ]] && [[ "${_SYMBOL_VALUE_CACHE[$REPLY]}" == "y" ]]
 }
 
 configure_hz_profile() {
@@ -2000,12 +1991,12 @@ configure_hz_profile() {
 
 select_if_present() {
     local selected="$1"
-    local normalized_selected
     shift
 
     if have_symbol "$selected"; then
         disable_if_present "$@"
-        normalized_selected="$(normalize_config_symbol_name "$selected")"
+        normalize_config_symbol_name "$selected"
+        local normalized_selected="$REPLY"
         if is_protected_config_symbol "$normalized_selected"; then
             echo "Skipping protected symbol: CONFIG_${normalized_selected}"
         else
