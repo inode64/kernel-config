@@ -52,7 +52,7 @@ detect_default_ksrcdir() {
     local candidate
     candidate="$(
         find "$PWD" -maxdepth 1 -mindepth 1 -type d -name 'linux-*' 2>/dev/null \
-            | sort \
+            | sort -rV \
             | head -n 1
     )"
 
@@ -611,7 +611,7 @@ build_module_symbol_candidate_map() {
 
 restore_loaded_modules_to_initial_state() {
     local -n initial_modules_arr="$1"
-    local attempt current_module normalized
+    local current_module normalized
     local -A initial_modules_map=()
     local -A current_modules_map=()
     local -a current_modules=()
@@ -623,7 +623,7 @@ restore_loaded_modules_to_initial_state() {
         initial_modules_map["$normalized"]=1
     done
 
-    for attempt in 1 2 3; do
+    for _ in 1 2 3; do
         current_modules=()
         current_modules_map=()
         extra_modules=()
@@ -1506,7 +1506,7 @@ detect_host_nr_cpus() {
 }
 
 resolve_nr_cpus() {
-    local raw detected
+    local raw
 
     raw="${NR_CPUS,,}"
 
@@ -1578,7 +1578,7 @@ resolve_application_profiles() {
 }
 
 resolve_cpu_vendor_or_detect() {
-    local vendor_mode resolved_vendor
+    local vendor_mode
 
     vendor_mode="${CPU_VENDOR_FILTER,,}"
     case "$vendor_mode" in
@@ -1586,12 +1586,7 @@ resolve_cpu_vendor_or_detect() {
             detect_host_cpu_vendor
             ;;
         *)
-            resolved_vendor="$(resolve_cpu_vendor_filter)"
-            if [[ "$resolved_vendor" == "none" ]]; then
-                detect_host_cpu_vendor
-            else
-                printf '%s\n' "$resolved_vendor"
-            fi
+            resolve_cpu_vendor_filter
             ;;
     esac
 }
@@ -1829,7 +1824,7 @@ is_inverse_disable_symbol() {
 
     sym="$(normalize_config_symbol_name "$1")"
     case "$sym" in
-        *_DISABLE | *_DISABLE_* | *_DISABLED | *_DISABLED_* | *_DEFAULT_DISABLE | *_DEFAULT_DISABLE_* | *_DEFAULT_DISABLED | *_DEFAULT_DISABLED_*)
+        *_DISABLE | *_DISABLE_* | *_DISABLED | *_DISABLED_*)
             return 0
             ;;
         *)
