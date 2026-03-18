@@ -611,7 +611,7 @@ build_module_symbol_candidate_map() {
 
 restore_loaded_modules_to_initial_state() {
     local -n initial_modules_arr="$1"
-    local current_module normalized
+    local current_module normalized idx
     local -A initial_modules_map=()
     local -A current_modules_map=()
     local -a current_modules=()
@@ -1633,6 +1633,11 @@ probe_xfs_deprecated_features() {
         return
     fi
 
+    if [[ "$need_v4" == "0" && "$need_ascii_ci" == "0" ]]; then
+        printf '%s\n' "clean"
+        return
+    fi
+
     if [[ "$need_v4" == "1" ]]; then
         printf '%s\n' "v4"
     fi
@@ -1809,6 +1814,7 @@ prepare_sorted_unique_symbols() {
         return
     fi
 
+    # shellcheck disable=SC2034
     mapfile -t symbols_ref < <(
         for sym in "$@"; do
             normalized_sym="$(normalize_config_symbol_name "$sym")"
@@ -2417,6 +2423,9 @@ configure_xfs_feature_support() {
             none)
                 echo "    (no mounted XFS filesystems detected)"
                 ;;
+            clean)
+                echo "    (all mounted XFS filesystems use modern format; disabling deprecated feature support)"
+                ;;
             v4)
                 need_v4=1
                 ;;
@@ -2762,7 +2771,7 @@ configure_nr_cpus_profile() {
 }
 
 configure_application_profiles() {
-    local profile
+    local profile sym
     local qemu_cpu_vendor=""
     local -a enable_syms=()
 
@@ -2973,7 +2982,6 @@ if is_enabled "$PRUNE_OBSERVABILITY"; then
     disable_if_present \
         DYNAMIC_FTRACE \
         BLK_DEV_IO_TRACE \
-        BRANCH_PROFILE_NONE \
         DEBUG_FS \
         FTRACE \
         FUNCTION_GRAPH_TRACER \
@@ -2989,6 +2997,8 @@ if is_enabled "$PRUNE_OBSERVABILITY"; then
         TRACEPOINTS \
         TRACING \
         UPROBE_EVENTS
+
+    enable_if_present BRANCH_PROFILE_NONE
 fi
 
 if is_enabled "$PRUNE_LEGACY"; then
