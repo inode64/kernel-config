@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); then
-    echo "This script requires bash 4.3 or later (found ${BASH_VERSION})" >&2
+if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 2))); then
+    echo "This script requires bash 5.2 or later (found ${BASH_VERSION})" >&2
     exit 1
 fi
 
@@ -456,7 +456,8 @@ if is_enabled "$DRY_RUN"; then
     WORK_CONFIG_FILE="$DRY_RUN_TEMP"
     echo "Dry-run: using temporary config copy $WORK_CONFIG_FILE"
 else
-    BACKUP="${ORIGINAL_CONFIG_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
+    printf -v _backup_ts '%(%Y%m%d-%H%M%S)T' -1
+    BACKUP="${ORIGINAL_CONFIG_FILE}.bak.${_backup_ts}"
     cp -a "$ORIGINAL_CONFIG_FILE" "$BACKUP"
     echo "Backup: $BACKUP"
 fi
@@ -468,7 +469,7 @@ cfg() {
 }
 
 declare -A _SYMBOL_VALUE_CACHE=()
-_SYMBOL_CACHE_LOADED=false
+declare -i _SYMBOL_CACHE_LOADED=0
 
 _load_symbol_cache() {
     _SYMBOL_VALUE_CACHE=()
@@ -489,25 +490,23 @@ _load_symbol_cache() {
             print sym "\tn"
         }
     ' "$CONFIG_FILE")
-    _SYMBOL_CACHE_LOADED=true
+    _SYMBOL_CACHE_LOADED=1
 }
 
 invalidate_symbol_cache() {
-    _SYMBOL_CACHE_LOADED=false
+    _SYMBOL_CACHE_LOADED=0
 }
 
 have_symbol() {
-    if [[ "$_SYMBOL_CACHE_LOADED" != "true" ]]; then
-        _load_symbol_cache
-    fi
-    [[ -n "${_SYMBOL_VALUE_CACHE[$1]+set}" ]]
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    [[ -v _SYMBOL_VALUE_CACHE[$1] ]]
 }
 
 symbol_value() {
-    if [[ "$_SYMBOL_CACHE_LOADED" != "true" ]]; then
-        _load_symbol_cache
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    if [[ -v _SYMBOL_VALUE_CACHE[$1] ]]; then
+        printf '%s\n' "${_SYMBOL_VALUE_CACHE[$1]}"
     fi
-    printf '%s\n' "${_SYMBOL_VALUE_CACHE[$1]:-}"
 }
 
 find_kconfig_files() {
@@ -519,7 +518,7 @@ find_kbuild_files() {
 }
 
 declare -A MODULE_SYMBOL_TO_MODULES=()
-MODULE_SYMBOL_MAP_READY=false
+declare -i MODULE_SYMBOL_MAP_READY=0
 
 capture_loaded_modules() {
     lsmod | awk 'NR > 1 { print $1 }'
@@ -574,14 +573,16 @@ discover_config_module_symbols() {
 build_module_symbol_candidate_map() {
     local sym module existing_modules
 
-    if [[ "$MODULE_SYMBOL_MAP_READY" == "true" ]]; then
-        return
-    fi
+    ((MODULE_SYMBOL_MAP_READY)) && return
 
     MODULE_SYMBOL_TO_MODULES=()
     while IFS=$'\t' read -r sym module; do
         [[ -n "$sym" && -n "$module" ]] || continue
-        existing_modules="${MODULE_SYMBOL_TO_MODULES[$sym]:-}"
+        if [[ -v MODULE_SYMBOL_TO_MODULES[$sym] ]]; then
+            existing_modules="${MODULE_SYMBOL_TO_MODULES[$sym]}"
+        else
+            existing_modules=""
+        fi
         case " $existing_modules " in
             *" $module "*)
                 ;;
@@ -619,7 +620,7 @@ build_module_symbol_candidate_map() {
             | sort -u
     )
 
-    MODULE_SYMBOL_MAP_READY=true
+    MODULE_SYMBOL_MAP_READY=1
 }
 
 restore_loaded_modules_to_initial_state() {
@@ -651,14 +652,14 @@ restore_loaded_modules_to_initial_state() {
         for ((idx=${#current_modules[@]} - 1; idx >= 0; idx--)); do
             current_module="${current_modules[idx]}"
             normalized="${current_module//-/_}"
-            if [[ -z "${initial_modules_map[$normalized]:-}" ]]; then
+            if ! [[ -v initial_modules_map[$normalized] ]]; then
                 extra_modules+=("$current_module")
             fi
         done
 
         for current_module in "${initial_modules_arr[@]}"; do
             normalized="${current_module//-/_}"
-            if [[ -z "${current_modules_map[$normalized]:-}" ]]; then
+            if ! [[ -v current_modules_map[$normalized] ]]; then
                 missing_modules+=("$current_module")
             fi
         done
@@ -731,6 +732,7 @@ probe_unloaded_module_candidate() {
 }
 
 probe_and_prune_unused_module_symbols() {
+    local -
     local running_kernel_release target_kernel_release module_name normalized_module_name
     local probe_status
     local symbol module_list
@@ -772,8 +774,8 @@ probe_and_prune_unused_module_symbols() {
 
     mapfile -t module_symbols < <(discover_config_module_symbols)
     for symbol in "${module_symbols[@]}"; do
-        module_list="${MODULE_SYMBOL_TO_MODULES[$symbol]:-}"
-        [[ -n "$module_list" ]] || continue
+        [[ -v MODULE_SYMBOL_TO_MODULES[$symbol] ]] || continue
+        module_list="${MODULE_SYMBOL_TO_MODULES[$symbol]}"
 
         read -r -a module_candidates <<<"$module_list"
         if ((${#module_candidates[@]} != 1)); then
@@ -782,7 +784,7 @@ probe_and_prune_unused_module_symbols() {
 
         module_name="${module_candidates[0]}"
         normalized_module_name="${module_name//-/_}"
-        if [[ -n "${initially_loaded_map[$normalized_module_name]:-}" ]]; then
+        if [[ -v initially_loaded_map[$normalized_module_name] ]]; then
             continue
         fi
 
@@ -790,10 +792,9 @@ probe_and_prune_unused_module_symbols() {
             continue
         fi
 
-        set +e
+        set +e  # restored automatically via local -
         probe_unloaded_module_candidate "$module_name" initially_loaded_modules
         probe_status="$?"
-        set -e
 
         case "$probe_status" in
             0)
@@ -1064,7 +1065,7 @@ load_protected_config_symbols() {
 }
 
 is_protected_config_symbol() {
-    [[ -n "${_PROTECTED_CONFIG_SYMBOL_MAP[$1]:-}" ]]
+    [[ -v _PROTECTED_CONFIG_SYMBOL_MAP[$1] ]]
 }
 
 disable_config_symbol() {
@@ -2308,7 +2309,7 @@ configure_host_type_profile() {
             done
 
             for sym in "${all_guest_syms[@]}"; do
-                if [[ -z "${enable_set[$sym]:-}" ]]; then
+                if ! [[ -v enable_set[$sym] ]]; then
                     disable_syms+=("$sym")
                 fi
             done
