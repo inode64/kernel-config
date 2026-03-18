@@ -305,6 +305,10 @@ while (($# > 0)); do
         --*=*)
             opt_name="${1%%=*}"
             opt_name="${opt_name#--}"
+            if [[ -z "$opt_name" ]]; then
+                echo "Invalid option: $1" >&2
+                exit 1
+            fi
             set_option "$opt_name" "${1#*=}"
             ;;
         --*)
@@ -2952,7 +2956,6 @@ if is_enabled "$PRUNE_DANGEROUS"; then
         USB4_DEBUGFS_MARGINING \
         USB4_DEBUGFS_WRITE
 fi
-
 
 if is_enabled "$PRUNE_SELFTEST"; then
     echo
