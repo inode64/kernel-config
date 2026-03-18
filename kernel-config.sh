@@ -682,14 +682,14 @@ restore_loaded_modules_to_initial_state() {
     for current_module in "${current_modules[@]}"; do
         normalized="${current_module//-/_}"
         current_modules_map["$normalized"]=1
-        if [[ -z "${initial_modules_map[$normalized]:-}" ]]; then
+        if ! [[ -v initial_modules_map[$normalized] ]]; then
             extra_modules+=("$current_module")
         fi
     done
 
     for current_module in "${initial_modules_arr[@]}"; do
         normalized="${current_module//-/_}"
-        if [[ -z "${current_modules_map[$normalized]:-}" ]]; then
+        if ! [[ -v current_modules_map[$normalized] ]]; then
             missing_modules+=("$current_module")
         fi
     done
@@ -1045,7 +1045,7 @@ normalize_config_symbol_name() {
 declare -A _PROTECTED_CONFIG_SYMBOL_MAP=()
 
 load_protected_config_symbols() {
-    local raw_sym normalized_sym
+    local raw_sym
     local -a raw_symbols=()
 
     _PROTECTED_CONFIG_SYMBOL_MAP=()
