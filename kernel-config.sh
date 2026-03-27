@@ -1466,7 +1466,7 @@ resolve_numa_support() {
 
 count_cpu_list_entries() {
     local cpu_list="$1"
-    local token start end count=0
+    local cpu_tokens token start end count=0
 
     IFS=',' read -r -a cpu_tokens <<<"$cpu_list"
     for token in "${cpu_tokens[@]}"; do
