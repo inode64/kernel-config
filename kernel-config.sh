@@ -1850,7 +1850,6 @@ disable_if_present() {
 
 prepare_sorted_unique_symbols() {
     local -n symbols_ref="$1"
-    local sym normalized_sym
     shift
 
     symbols_ref=()
