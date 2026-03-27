@@ -255,7 +255,6 @@ set_option() {
                 echo "--all-optimizations is a flag and does not accept true/false values" >&2
                 exit 1
             fi
-            ALL_OPTIMIZATIONS=true
             apply_all_optimizations
             ;;
         *)
@@ -264,12 +263,6 @@ set_option() {
             ;;
     esac
 }
-
-if [[ -v ALL_OPTIMIZATIONS ]]; then
-    echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
-    exit 1
-fi
-ALL_OPTIMIZATIONS=false
 
 init_tunable DRY_RUN false
 init_tunable OPTIMIZATION_PROFILE none
