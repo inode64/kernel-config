@@ -18,7 +18,7 @@ fi
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --all-optimizations
 #
 # Optional variables and flags:
-#   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset
+#   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset (flag-only via --all-optimizations)
 #   DRY_RUN                   -> show only the config symbols that would change without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
@@ -118,6 +118,7 @@ Notes:
   CLI flags and VAR=VALUE arguments override environment variables.
   Boolean flags are off unless enabled explicitly with --foo.
   VAR=VALUE and --foo=value accept true/false, yes/no, on/off, enable/disable, and 1/0.
+  --all-optimizations is flag-only and does not accept a value.
   --dry-run shows only the config symbols that would change without modifying the real file.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
@@ -170,7 +171,7 @@ is_boolean_option() {
 
 is_boolean_tunable() {
     case "$1" in
-        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        DRY_RUN | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             return 0
             ;;
         *)
@@ -220,13 +221,14 @@ set_tunable() {
         fi
 
         printf -v "$name" '%s' "$normalized_value"
-        if [[ "$name" == "ALL_OPTIMIZATIONS" ]] && is_enabled "$normalized_value"; then
-            apply_all_optimizations
-        fi
         return
     fi
 
     case "$name" in
+        ALL_OPTIMIZATIONS)
+            echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
+            exit 1
+            ;;
         OPTIMIZATION_PROFILE | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
             printf -v "$name" '%s' "$value"
             ;;
@@ -248,12 +250,26 @@ set_option() {
         config-file)
             CONFIG_FILE="$value"
             ;;
+        all-optimizations)
+            if [[ "$value" != "__flag__" ]]; then
+                echo "--all-optimizations is a flag and does not accept true/false values" >&2
+                exit 1
+            fi
+            ALL_OPTIMIZATIONS=true
+            apply_all_optimizations
+            ;;
         *)
             local tunable_name="${name//-/_}"
             set_tunable "${tunable_name@U}" "$value"
             ;;
     esac
 }
+
+if [[ -v ALL_OPTIMIZATIONS ]]; then
+    echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
+    exit 1
+fi
+ALL_OPTIMIZATIONS=false
 
 init_tunable DRY_RUN false
 init_tunable OPTIMIZATION_PROFILE none
@@ -288,7 +304,6 @@ init_tunable PRUNE_LEGACY_ATA false
 init_tunable PRUNE_INSECURE false
 init_tunable PRUNE_RADIOS false
 init_tunable PRUNE_DMA_ATTACK_SURFACE false
-init_tunable ALL_OPTIMIZATIONS false
 
 KSRCDIR="${KSRCDIR:-}"
 CONFIG_FILE="${CONFIG_FILE:-}"
@@ -320,7 +335,11 @@ while (($# > 0)); do
         --*)
             opt_name="${1#--}"
             if is_boolean_option "$opt_name"; then
-                set_option "$opt_name" "true"
+                if [[ "$opt_name" == "all-optimizations" ]]; then
+                    set_option "$opt_name" "__flag__"
+                else
+                    set_option "$opt_name" "true"
+                fi
             else
                 shift
                 if (($# == 0)); then

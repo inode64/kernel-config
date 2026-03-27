@@ -82,7 +82,9 @@ Precedence:
 2. CLI flags override environment variables.
 3. Trailing `VAR=VALUE` arguments also override earlier defaults.
 
-Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` and `--foo=value`, accepted boolean values are `true/`, `yes/no`, `on/off`, `enable/disable`, and `1/0`.
+Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` and `--foo=value`, accepted boolean values are `true/false`, `yes/no`, `on/off`, `enable/disable`, and `1/0`.
+
+`--all-optimizations` is flag-only. Do not pass `ALL_OPTIMIZATIONS=true|false` or `--all-optimizations=<value>`.
 
 `--dry-run` is a boolean flag. When enabled, the script prints only the final `.config` symbols that would change and leaves the real file untouched.
 
@@ -97,6 +99,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset. It does not enable hardening pruning.
+  This setting is flag-only and must be enabled with `--all-optimizations`.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
   Adjusts defaults such as scheduler/preemption/HZ choices.
