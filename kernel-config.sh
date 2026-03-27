@@ -1382,6 +1382,19 @@ detect_host_tpm_versions() {
 }
 
 resolve_tpm_support() {
+    local mode detected
+
+    mode="${TPM_SUPPORT@L}"
+    if [[ "$mode" == "auto" ]]; then
+        detected="$(detect_host_tpm_versions)"
+        if [[ "$detected" == "none" ]]; then
+            printf '%s\n' "off"
+        else
+            printf '%s\n' "$detected"
+        fi
+        return
+    fi
+
     resolve_on_off_support TPM_SUPPORT detect_host_tpm_versions "tpm"
 }
 
