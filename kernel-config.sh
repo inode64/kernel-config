@@ -255,7 +255,6 @@ set_option() {
                 echo "--all-optimizations is a flag and does not accept true/false values" >&2
                 exit 1
             fi
-            ALL_OPTIMIZATIONS=true
             apply_all_optimizations
             ;;
         *)
@@ -264,12 +263,6 @@ set_option() {
             ;;
     esac
 }
-
-if [[ -v ALL_OPTIMIZATIONS ]]; then
-    echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
-    exit 1
-fi
-ALL_OPTIMIZATIONS=false
 
 init_tunable DRY_RUN false
 init_tunable OPTIMIZATION_PROFILE none
@@ -1473,7 +1466,7 @@ resolve_numa_support() {
 
 count_cpu_list_entries() {
     local cpu_list="$1"
-    local token start end count=0
+    local cpu_tokens token start end count=0
 
     IFS=',' read -r -a cpu_tokens <<<"$cpu_list"
     for token in "${cpu_tokens[@]}"; do
@@ -1850,7 +1843,7 @@ disable_if_present() {
 
 prepare_sorted_unique_symbols() {
     local -n symbols_ref="$1"
-    local sym normalized_sym
+    local sym
     shift
 
     symbols_ref=()
@@ -1940,11 +1933,9 @@ is_symbol_enabled_now() {
 
 configure_hz_profile() {
     local profile="$1"
-    local selected_sym=""
     local sym
     local -a hz_syms=()
-    local -a allowed_syms=()
-    local -a disallowed_syms=()
+    local -a preferred_syms=()
     local -a other_syms=()
 
     mapfile -t hz_syms < <(list_config_hz_symbols)
@@ -1952,63 +1943,34 @@ configure_hz_profile() {
         return
     fi
 
-    for sym in "${hz_syms[@]}"; do
-        if is_symbol_enabled_now "$sym"; then
-            selected_sym="$sym"
-            break
-        fi
-    done
-
     case "$profile" in
         server)
-            for sym in "${hz_syms[@]}"; do
-                if [[ "$sym" == "HZ_1000" ]]; then
-                    disallowed_syms+=("$sym")
-                else
-                    allowed_syms+=("$sym")
-                fi
-            done
+            preferred_syms=(HZ_100 HZ_250 HZ_300 HZ_1000)
             ;;
         desktop)
-            for sym in "${hz_syms[@]}"; do
-                if [[ "$sym" == "HZ_100" ]]; then
-                    disallowed_syms+=("$sym")
-                else
-                    allowed_syms+=("$sym")
-                fi
-            done
+            preferred_syms=(HZ_1000 HZ_300 HZ_250 HZ_100)
             ;;
         realtime)
-            for sym in "${hz_syms[@]}"; do
-                if [[ "$sym" == "HZ_1000" ]]; then
-                    allowed_syms+=("$sym")
-                else
-                    disallowed_syms+=("$sym")
-                fi
-            done
+            preferred_syms=(HZ_1000 HZ_300 HZ_250 HZ_100)
             ;;
         *)
             return
             ;;
     esac
 
-    if ((${#allowed_syms[@]} == 0)); then
+    local selected_sym=""
+    for sym in "${preferred_syms[@]}"; do
+        if have_symbol "$sym"; then
+            selected_sym="$sym"
+            break
+        fi
+    done
+
+    if [[ -z "$selected_sym" ]]; then
         echo "    (no compatible HZ_* option found for profile $profile; leaving current HZ selection unchanged)"
         return
     fi
 
-    if [[ -n "$selected_sym" ]]; then
-        for sym in "${allowed_syms[@]}"; do
-            if [[ "$selected_sym" == "$sym" ]]; then
-                if ((${#disallowed_syms[@]} > 0)); then
-                    disable_if_present "${disallowed_syms[@]}"
-                fi
-                return
-            fi
-        done
-    fi
-
-    selected_sym="${allowed_syms[0]}"
     for sym in "${hz_syms[@]}"; do
         if [[ "$sym" != "$selected_sym" ]]; then
             other_syms+=("$sym")
@@ -2152,9 +2114,14 @@ configure_optimization_profile() {
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
 
-            if have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
-                select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
-                    TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+            if have_symbol TRANSPARENT_HUGEPAGE_MADVISE || have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
+                if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
+                    select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
+                        TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
+                else
+                    select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
+                        TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+                fi
             fi
 
             if is_enabled "$wants_observability"; then
@@ -2168,13 +2135,15 @@ configure_optimization_profile() {
 
             configure_hz_profile desktop
 
-            if have_symbol PREEMPT_DYNAMIC; then
-                select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
-            elif have_symbol PREEMPT; then
-                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
+            if have_symbol PREEMPT; then
+                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
+            elif have_symbol PREEMPT_LAZY; then
+                select_if_present PREEMPT_LAZY PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
             elif have_symbol PREEMPT_VOLUNTARY; then
-                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
             fi
+
+            enable_if_present PREEMPT_DYNAMIC
             ;;
         realtime)
             echo "    (prioritizes low latency and deterministic wakeups)"
@@ -2201,14 +2170,11 @@ configure_optimization_profile() {
                 CPU_FREQ_GOV_PERFORMANCE \
                 FAIR_GROUP_SCHED \
                 HIGH_RES_TIMERS \
-                NO_HZ_FULL \
                 NO_HZ_IDLE \
                 PSI_DEFAULT_DISABLED \
                 RCU_BOOST \
                 RCU_NOCB_CPU \
-                RCU_NOCB_CPU_CB_BOOST \
-                RCU_NOCB_CPU_DEFAULT_ALL \
-                RT_GROUP_SCHED
+                RCU_NOCB_CPU_CB_BOOST
 
             configure_hz_profile realtime
 
