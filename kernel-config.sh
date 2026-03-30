@@ -1848,6 +1848,56 @@ disable_if_present() {
     done
 }
 
+optimize_compression() {
+    disable_if_present \
+        CONFIG_KERNEL_GZIP \
+        CONFIG_KERNEL_BZIP2 \
+        CONFIG_KERNEL_LZMA \
+        CONFIG_KERNEL_XZ \
+        CONFIG_KERNEL_LZO \
+        CONFIG_KERNEL_LZ4
+
+    enable_if_present \
+        CONFIG_KERNEL_ZSTD
+
+    disable_if_present \
+        CONFIG_RD_GZIP \
+        CONFIG_RD_BZIP2 \
+        CONFIG_RD_LZMA \
+        CONFIG_RD_XZ \
+        CONFIG_RD_LZO \
+        CONFIG_RD_LZ4
+
+    enable_if_present \
+        CONFIG_RD_ZSTD
+
+    enable_if_present \
+        CONFIG_ZSWAP \
+        CONFIG_ZSWAP_DEFAULT_ON \
+        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZO
+
+    disable_if_present \
+        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_842 \
+        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4 \
+        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4HC \
+        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD
+
+    disable_if_present \
+        CONFIG_XZ_DEC \
+        CONFIG_LZ4_COMPRESS \
+        CONFIG_LZ4_DECOMPRESS \
+        CONFIG_CRYPTO_842 \
+        CONFIG_CRYPTO_LZ4 \
+        CONFIG_CRYPTO_LZ4HC
+
+    disable_if_present \
+        CONFIG_FW_LOADER_COMPRESS \
+        CONFIG_FW_LOADER_COMPRESS_ZSTD
+
+    disable_if_present \
+        CONFIG_FW_LOADER_COMPRESS_XZ
+}
+
 prepare_sorted_unique_symbols() {
     local -n symbols_ref="$1"
     local sym normalized_sym
@@ -2928,6 +2978,12 @@ configure_application_profiles() {
 }
 
 load_protected_config_symbols
+
+if is_enabled "$ALL_OPTIMIZATIONS"; then
+    echo
+    echo "==> Applying compression optimization preset"
+    optimize_compression
+fi
 
 if is_enabled "$PRUNE_SANITIZERS"; then
     echo
