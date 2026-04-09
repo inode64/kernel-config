@@ -3105,6 +3105,7 @@ if is_enabled "$PRUNE_LEGACY"; then
 
     disable_discovered_and_fixed_symbols \
         discover_legacy_kconfig_symbols \
+        COMPAT_BRK \
         BINFMT_AOUT \
         BLK_DEV_FD \
         NF_CT_PROTO_UDPLITE \
