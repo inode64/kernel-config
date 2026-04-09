@@ -2139,7 +2139,10 @@ configure_optimization_profile() {
                 FAIR_GROUP_SCHED \
                 KSM \
                 MEMCG \
+                NO_HZ_FULL \
                 NO_HZ_IDLE \
+                RCU_NOCB_CPU \
+                RCU_NOCB_CPU_DEFAULT_ALL \
                 TRANSPARENT_HUGEPAGE \
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
@@ -3105,11 +3108,12 @@ if is_enabled "$PRUNE_LEGACY"; then
 
     disable_discovered_and_fixed_symbols \
         discover_legacy_kconfig_symbols \
-        COMPAT_BRK \
         BINFMT_AOUT \
         BLK_DEV_FD \
-        NF_CT_PROTO_UDPLITE \
+        COMPAT_BRK \
         LEGACY_PTYS \
+        NF_CT_PROTO_UDPLITE \
+        NO_HZ \
         PARPORT \
         PROVE_RCU \
         SYSFS_DEPRECATED \
