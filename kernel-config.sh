@@ -18,7 +18,7 @@ fi
 #   ./kernel-config.sh --kernel-srcdir /usr/src/linux --all-optimizations
 #
 # Optional variables and flags:
-#   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset
+#   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset (flag-only via --all-optimizations)
 #   DRY_RUN                   -> show only the config symbols that would change without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
@@ -118,6 +118,7 @@ Notes:
   CLI flags and VAR=VALUE arguments override environment variables.
   Boolean flags are off unless enabled explicitly with --foo.
   VAR=VALUE and --foo=value accept true/false, yes/no, on/off, enable/disable, and 1/0.
+  --all-optimizations is flag-only and does not accept a value.
   --dry-run shows only the config symbols that would change without modifying the real file.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
@@ -170,7 +171,7 @@ is_boolean_option() {
 
 is_boolean_tunable() {
     case "$1" in
-        DRY_RUN | ALL_OPTIMIZATIONS | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        DRY_RUN | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             return 0
             ;;
         *)
@@ -220,13 +221,14 @@ set_tunable() {
         fi
 
         printf -v "$name" '%s' "$normalized_value"
-        if [[ "$name" == "ALL_OPTIMIZATIONS" ]] && is_enabled "$normalized_value"; then
-            apply_all_optimizations
-        fi
         return
     fi
 
     case "$name" in
+        ALL_OPTIMIZATIONS)
+            echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
+            exit 1
+            ;;
         OPTIMIZATION_PROFILE | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
             printf -v "$name" '%s' "$value"
             ;;
@@ -247,6 +249,13 @@ set_option() {
             ;;
         config-file)
             CONFIG_FILE="$value"
+            ;;
+        all-optimizations)
+            if [[ "$value" != "__flag__" ]]; then
+                echo "--all-optimizations is a flag and does not accept true/false values" >&2
+                exit 1
+            fi
+            apply_all_optimizations
             ;;
         *)
             local tunable_name="${name//-/_}"
@@ -288,7 +297,6 @@ init_tunable PRUNE_LEGACY_ATA false
 init_tunable PRUNE_INSECURE false
 init_tunable PRUNE_RADIOS false
 init_tunable PRUNE_DMA_ATTACK_SURFACE false
-init_tunable ALL_OPTIMIZATIONS false
 
 KSRCDIR="${KSRCDIR:-}"
 CONFIG_FILE="${CONFIG_FILE:-}"
@@ -320,7 +328,11 @@ while (($# > 0)); do
         --*)
             opt_name="${1#--}"
             if is_boolean_option "$opt_name"; then
-                set_option "$opt_name" "true"
+                if [[ "$opt_name" == "all-optimizations" ]]; then
+                    set_option "$opt_name" "__flag__"
+                else
+                    set_option "$opt_name" "true"
+                fi
             else
                 shift
                 if (($# == 0)); then
@@ -1382,6 +1394,19 @@ detect_host_tpm_versions() {
 }
 
 resolve_tpm_support() {
+    local mode detected
+
+    mode="${TPM_SUPPORT@L}"
+    if [[ "$mode" == "auto" ]]; then
+        detected="$(detect_host_tpm_versions)"
+        if [[ "$detected" == "none" ]]; then
+            printf '%s\n' "off"
+        else
+            printf '%s\n' "$detected"
+        fi
+        return
+    fi
+
     resolve_on_off_support TPM_SUPPORT detect_host_tpm_versions "tpm"
 }
 
@@ -1441,7 +1466,7 @@ resolve_numa_support() {
 
 count_cpu_list_entries() {
     local cpu_list="$1"
-    local token start end count=0
+    local cpu_tokens token start end count=0
 
     IFS=',' read -r -a cpu_tokens <<<"$cpu_list"
     for token in "${cpu_tokens[@]}"; do
@@ -1818,7 +1843,7 @@ disable_if_present() {
 
 prepare_sorted_unique_symbols() {
     local -n symbols_ref="$1"
-    local sym normalized_sym
+    local sym
     shift
 
     symbols_ref=()
@@ -1908,11 +1933,9 @@ is_symbol_enabled_now() {
 
 configure_hz_profile() {
     local profile="$1"
-    local selected_sym=""
     local sym
     local -a hz_syms=()
-    local -a allowed_syms=()
-    local -a disallowed_syms=()
+    local -a preferred_syms=()
     local -a other_syms=()
 
     mapfile -t hz_syms < <(list_config_hz_symbols)
@@ -1920,63 +1943,34 @@ configure_hz_profile() {
         return
     fi
 
-    for sym in "${hz_syms[@]}"; do
-        if is_symbol_enabled_now "$sym"; then
-            selected_sym="$sym"
-            break
-        fi
-    done
-
     case "$profile" in
         server)
-            for sym in "${hz_syms[@]}"; do
-                if [[ "$sym" == "HZ_1000" ]]; then
-                    disallowed_syms+=("$sym")
-                else
-                    allowed_syms+=("$sym")
-                fi
-            done
+            preferred_syms=(HZ_100 HZ_250 HZ_300 HZ_1000)
             ;;
         desktop)
-            for sym in "${hz_syms[@]}"; do
-                if [[ "$sym" == "HZ_100" ]]; then
-                    disallowed_syms+=("$sym")
-                else
-                    allowed_syms+=("$sym")
-                fi
-            done
+            preferred_syms=(HZ_1000 HZ_300 HZ_250 HZ_100)
             ;;
         realtime)
-            for sym in "${hz_syms[@]}"; do
-                if [[ "$sym" == "HZ_1000" ]]; then
-                    allowed_syms+=("$sym")
-                else
-                    disallowed_syms+=("$sym")
-                fi
-            done
+            preferred_syms=(HZ_1000 HZ_300 HZ_250 HZ_100)
             ;;
         *)
             return
             ;;
     esac
 
-    if ((${#allowed_syms[@]} == 0)); then
+    local selected_sym=""
+    for sym in "${preferred_syms[@]}"; do
+        if have_symbol "$sym"; then
+            selected_sym="$sym"
+            break
+        fi
+    done
+
+    if [[ -z "$selected_sym" ]]; then
         echo "    (no compatible HZ_* option found for profile $profile; leaving current HZ selection unchanged)"
         return
     fi
 
-    if [[ -n "$selected_sym" ]]; then
-        for sym in "${allowed_syms[@]}"; do
-            if [[ "$selected_sym" == "$sym" ]]; then
-                if ((${#disallowed_syms[@]} > 0)); then
-                    disable_if_present "${disallowed_syms[@]}"
-                fi
-                return
-            fi
-        done
-    fi
-
-    selected_sym="${allowed_syms[0]}"
     for sym in "${hz_syms[@]}"; do
         if [[ "$sym" != "$selected_sym" ]]; then
             other_syms+=("$sym")
@@ -2120,9 +2114,14 @@ configure_optimization_profile() {
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
 
-            if have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
-                select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
-                    TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+            if have_symbol TRANSPARENT_HUGEPAGE_MADVISE || have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
+                if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
+                    select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
+                        TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
+                else
+                    select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
+                        TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+                fi
             fi
 
             if is_enabled "$wants_observability"; then
@@ -2136,13 +2135,15 @@ configure_optimization_profile() {
 
             configure_hz_profile desktop
 
-            if have_symbol PREEMPT_DYNAMIC; then
-                select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
-            elif have_symbol PREEMPT; then
-                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
+            if have_symbol PREEMPT; then
+                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
+            elif have_symbol PREEMPT_LAZY; then
+                select_if_present PREEMPT_LAZY PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
             elif have_symbol PREEMPT_VOLUNTARY; then
-                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
             fi
+
+            enable_if_present PREEMPT_DYNAMIC
             ;;
         realtime)
             echo "    (prioritizes low latency and deterministic wakeups)"
@@ -2169,14 +2170,11 @@ configure_optimization_profile() {
                 CPU_FREQ_GOV_PERFORMANCE \
                 FAIR_GROUP_SCHED \
                 HIGH_RES_TIMERS \
-                NO_HZ_FULL \
                 NO_HZ_IDLE \
                 PSI_DEFAULT_DISABLED \
                 RCU_BOOST \
                 RCU_NOCB_CPU \
-                RCU_NOCB_CPU_CB_BOOST \
-                RCU_NOCB_CPU_DEFAULT_ALL \
-                RT_GROUP_SCHED
+                RCU_NOCB_CPU_CB_BOOST
 
             configure_hz_profile realtime
 

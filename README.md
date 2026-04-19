@@ -82,7 +82,9 @@ Precedence:
 2. CLI flags override environment variables.
 3. Trailing `VAR=VALUE` arguments also override earlier defaults.
 
-Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` and `--foo=value`, accepted boolean values are `true/`, `yes/no`, `on/off`, `enable/disable`, and `1/0`.
+Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` and `--foo=value`, accepted boolean values are `true/false`, `yes/no`, `on/off`, `enable/disable`, and `1/0`.
+
+`--all-optimizations` is flag-only. Do not pass `ALL_OPTIMIZATIONS=true|false` or `--all-optimizations=<value>`.
 
 `--dry-run` is a boolean flag. When enabled, the script prints only the final `.config` symbols that would change and leaves the real file untouched.
 
@@ -97,9 +99,26 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset. It does not enable hardening pruning.
+  This setting is flag-only and must be enabled with `--all-optimizations`.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
   Adjusts defaults such as scheduler/preemption/HZ choices.
+
+  Current profile behavior:
+
+  - `server`
+    Prioritizes throughput and stable background behavior:
+    `PREEMPT_NONE`/`PREEMPT_VOLUNTARY` (when available), `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
+
+  - `desktop`
+    Prioritizes interactivity:
+    low-latency preemption (`PREEMPT` when available, otherwise `PREEMPT_LAZY` or `PREEMPT_VOLUNTARY`), `PREEMPT_DYNAMIC` when supported, `NO_HZ_IDLE`, `SCHED_AUTOGROUP`, and a high timer rate preference (`HZ_1000`, then `HZ_300`, `HZ_250`, `HZ_100`).
+    For THP defaults, it prefers `TRANSPARENT_HUGEPAGE_MADVISE` over `ALWAYS` when both are available.
+
+  - `realtime`
+    Prioritizes deterministic low-latency execution:
+    `PREEMPT_RT` when available, `HZ_1000` preference, `RCU_BOOST`, and `RCU_NOCB_CPU` support, while avoiding aggressive global defaults such as `NO_HZ_FULL` and `RCU_NOCB_CPU_DEFAULT_ALL`.
+    If you need full dynticks isolation, configure it explicitly at boot (for example `nohz_full=` and CPU isolation/affinity tuning).
 
 - `PRUNE_OBSERVABILITY`
   Disables tracing, perf, debugfs, and related observability features.
@@ -297,6 +316,51 @@ APPLICATIONS="samba,nfs-server,cryptsetup" \
 TPM_SUPPORT=auto \
 ./kernel-config.sh /usr/src/linux
 ```
+
+### Recommended profile presets
+
+These are practical starting points for each profile. Tune further for your hardware and workload.
+
+| Profile | Primary goal | Main tradeoff | Typical workloads |
+| --- | --- | --- | --- |
+| `server` | Maximize throughput and reduce background scheduling overhead | Less interactive responsiveness under mixed desktop-style bursts | Databases, API backends, virtualization hosts, fileservers |
+| `desktop` | Improve UI/app responsiveness and interactive latency | Slight throughput and efficiency penalty in sustained compute workloads | Workstations, laptops, developer desktops, multimedia editing |
+| `realtime` | Reduce latency jitter and improve deterministic wakeups | Requires extra boot/runtime isolation tuning for strict RT workloads | Low-latency audio, industrial control, robotics, telco packet processing |
+
+- Server baseline (throughput-oriented):
+
+```bash
+./kernel-config.sh \
+  --kernel-srcdir /usr/src/linux \
+  --optimization-profile server \
+  --cpu-vendor-filter auto \
+  --numa-support auto \
+  --iommu-support auto
+```
+
+- Desktop baseline (interactive):
+
+```bash
+./kernel-config.sh \
+  --kernel-srcdir /usr/src/linux \
+  --optimization-profile desktop \
+  --cpu-vendor-filter auto \
+  --video-support auto \
+  --uefi-support auto \
+  --initrd-support on
+```
+
+- Realtime baseline (low-latency, safe defaults):
+
+```bash
+./kernel-config.sh \
+  --kernel-srcdir /usr/src/linux \
+  --optimization-profile realtime \
+  --cpu-vendor-filter auto \
+  --iommu-support auto
+```
+
+For stricter realtime isolation, add explicit boot-time CPU isolation parameters (for example `nohz_full=`, `isolcpus=`, and `rcu_nocbs=`) and pin IRQs/workloads accordingly.
 
 ### Virtualization host
 
