@@ -169,7 +169,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 ### Virtualization and workload hints
 
-- `HOST_TYPE=native|qemu|vmware|hyperv|virtualbox`
+- `HOST_TYPE=baremetal|qemu|vmware|hyperv|virtualbox`
   Tunes guest/virtualization drivers for the selected host type.
 
 - `APPLICATIONS=<comma-separated-list>`

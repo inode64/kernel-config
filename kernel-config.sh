@@ -42,7 +42,7 @@ fi
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
 #   APPLICATIONS=none         -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
-#   HOST_TYPE=none            -> none, native, qemu, vmware, hyperv, virtualbox; tune guest-specific options
+#   HOST_TYPE=none            -> none, baremetal, qemu, vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
 #   ./kernel-config.sh /path/to/kernel
@@ -1667,8 +1667,8 @@ resolve_host_type() {
         "" | none)
             printf '%s\n' "none"
             ;;
-        native)
-            printf '%s\n' "native"
+        baremetal)
+            printf '%s\n' "baremetal"
             ;;
         qemu | kvm)
             printf '%s\n' "qemu"
@@ -1677,7 +1677,7 @@ resolve_host_type() {
             printf '%s\n' "$mode"
             ;;
         *)
-            echo "Invalid HOST_TYPE: $HOST_TYPE (use none, native, qemu, vmware, hyperv, or virtualbox)" >&2
+            echo "Invalid HOST_TYPE: $HOST_TYPE (use none, baremetal, qemu, vmware, hyperv, or virtualbox)" >&2
             exit 1
             ;;
     esac
@@ -2272,7 +2272,7 @@ configure_host_type_profile() {
     echo "==> Applying host type profile: $host_type"
 
     case "$host_type" in
-        native)
+        baremetal)
             echo "    (disabling guest virtualization drivers for bare metal)"
             disable_if_present "${all_guest_syms[@]}"
             ;;
