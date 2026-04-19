@@ -189,7 +189,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 ### Virtualization and workload hints
 
 - `HOST_TYPE=baremetal|qemu|vmware|hyperv|virtualbox`
-  Tunes guest/virtualization drivers for the selected host type.
+  Tunes guest/virtualization drivers for the selected host type. `kvm` is accepted as an alias for `qemu`.
 
 - `APPLICATIONS=<comma-separated-list>`
   Enables kernel features commonly required by selected applications.
