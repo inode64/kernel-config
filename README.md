@@ -98,7 +98,8 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
   Shows only the `.config` symbols that would change without modifying the real file.
 
 - `ALL_OPTIMIZATIONS`
-  Enables the script's optimization preset. It does not enable hardening pruning.
+  Enables the script's optimization preset, including compression defaults (kernel/initramfs `ZSTD` and zswap compressor tuning).
+  It does not enable hardening pruning.
   This setting is flag-only and must be enabled with `--all-optimizations`.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
