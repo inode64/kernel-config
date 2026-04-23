@@ -22,7 +22,7 @@ fi
 #   DRY_RUN                   -> show only the config symbols that would change without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
-#   PRUNE_LEGACY              -> do not touch legacy/compat options by default
+#   PRUNE_LEGACY              -> disable old compatibility options and legacy/deprecated symbols
 #   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
 #   PRUNE_HARDENING           -> disable hardening/mitigation symbols
 #   PRUNE_SELFTEST            -> disable selftest symbols
@@ -526,13 +526,6 @@ have_symbol() {
     [[ -v _SYMBOL_VALUE_CACHE[$1] ]]
 }
 
-symbol_value() {
-    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
-    if [[ -v _SYMBOL_VALUE_CACHE[$1] ]]; then
-        printf '%s\n' "${_SYMBOL_VALUE_CACHE[$1]}"
-    fi
-}
-
 find_kconfig_files() {
     find -L "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null
 }
@@ -993,7 +986,8 @@ discover_debug_trace_kconfig_symbols() {
 }
 
 discover_hardening_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)"
+    discover_kconfig_symbols_by_pattern "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)" \
+        | awk '$0 != "QCOM_RPMH"'
 }
 
 discover_selftest_kconfig_symbols() {
@@ -1476,6 +1470,20 @@ resolve_numa_support() {
     resolve_on_off_support NUMA_SUPPORT detect_host_numa_support "numa"
 }
 
+resolve_numa_support_for_profile() {
+    local mode
+    mode="${NUMA_SUPPORT@L}"
+
+    case "$mode" in
+        "" | none)
+            detect_host_numa_support
+            ;;
+        *)
+            resolve_numa_support
+            ;;
+    esac
+}
+
 count_cpu_list_entries() {
     local cpu_list="$1"
     local cpu_tokens token start end count=0
@@ -1801,7 +1809,7 @@ discover_vendor_kconfig_symbols() {
 
     # shellcheck disable=SC2016
     vendor_kconfig_files \
-        | xargs -0 awk -v include_re="$include_re" -v exclude_re="$exclude_re" '
+        | xargs -0 -r awk -v include_re="$include_re" -v exclude_re="$exclude_re" '
             function emit() {
                 if (sym != "" && saw_include && !saw_exclude) {
                     print sym
@@ -1939,12 +1947,6 @@ list_config_hz_symbols() {
     done
 }
 
-is_symbol_enabled_now() {
-    normalize_config_symbol_name "$1"
-    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
-    [[ -v _SYMBOL_VALUE_CACHE[$REPLY] ]] && [[ "${_SYMBOL_VALUE_CACHE[$REPLY]}" == "y" ]]
-}
-
 configure_hz_profile() {
     local profile="$1"
     local sym
@@ -2021,9 +2023,8 @@ configure_optimization_profile() {
     echo
     echo "==> Applying optimization profile: $profile"
 
-    # resolve NUMA early so profiles can use it
     local numa_mode
-    numa_mode="$(resolve_numa_support)"
+    numa_mode="$(resolve_numa_support_for_profile)"
 
     local wants_observability=true
     if is_enabled "$PRUNE_OBSERVABILITY" || is_enabled "$PRUNE_DEBUG_TRACE"; then
@@ -2084,8 +2085,8 @@ configure_optimization_profile() {
                 disable_if_present PSI_DEFAULT_DISABLED
             fi
 
-            # NUMA-aware balancing: only if the host actually has NUMA
-            if [[ "$numa_mode" != "off" ]]; then
+            # NUMA-aware balancing: only if the host actually has NUMA.
+            if [[ "$numa_mode" == "on" ]]; then
                 enable_if_present NUMA_BALANCING
             fi
 
@@ -2143,7 +2144,7 @@ configure_optimization_profile() {
                 disable_if_present PSI_DEFAULT_DISABLED
             fi
 
-            if [[ "$numa_mode" != "off" ]]; then
+            if [[ "$numa_mode" == "on" ]]; then
                 enable_if_present NUMA_BALANCING
             fi
 
@@ -3127,8 +3128,6 @@ if is_enabled "$PRUNE_HARDENING"; then
     echo "    (this reduces kernel security hardening)"
 
     disable_discovered_and_fixed_symbols discover_hardening_kconfig_symbols
-
-    enable_if_present QCOM_RPMH
 fi
 
 invalidate_symbol_cache

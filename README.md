@@ -32,7 +32,7 @@ It is not a full kernel config generator. It assumes you already have a baseline
 
 ## Requirements
 
-- Bash
+- Bash 5.2 or later
 - a Linux kernel source tree
 - a writable `.config`
 - `make`
