@@ -63,6 +63,9 @@ You can also point to a specific config file:
 ./kernel-config.sh --kernel-srcdir /usr/src/linux --config-file /usr/src/linux/.config
 ```
 
+Relative config paths are resolved from the kernel source directory, so `.config`
+means `<kernel-source>/.config`.
+
 ## Usage
 
 ```text

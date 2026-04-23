@@ -362,8 +362,19 @@ if [[ -z "$KSRCDIR" ]]; then
     KSRCDIR="${positionals[0]:-$(detect_default_ksrcdir)}"
 fi
 
+if [[ ! -d "$KSRCDIR" ]]; then
+    echo "Kernel source directory does not exist: $KSRCDIR" >&2
+    exit 1
+fi
+
+KSRCDIR="$(cd "$KSRCDIR" && pwd -P)"
+
 if [[ -z "$CONFIG_FILE" ]]; then
     CONFIG_FILE="${positionals[1]:-$KSRCDIR/.config}"
+fi
+
+if [[ "$CONFIG_FILE" != /* ]]; then
+    CONFIG_FILE="$KSRCDIR/$CONFIG_FILE"
 fi
 
 cd "$KSRCDIR"
@@ -599,6 +610,7 @@ build_module_symbol_candidate_map() {
                 ;;
         esac
     done < <(
+        # shellcheck disable=SC2016
         find_kbuild_files \
             | xargs -0 -r awk '
                 {
@@ -1686,6 +1698,8 @@ probe_xfs_deprecated_features() {
 
 resolve_host_type() {
     local mode
+    # HOST_TYPE is initialized dynamically through init_tunable.
+    # shellcheck disable=SC2153
     mode="${HOST_TYPE@L}"
 
     case "$mode" in
