@@ -21,6 +21,12 @@ fi
 #   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset (flag-only via --all-optimizations)
 #   DRY_RUN                   -> show only the config symbols that would change without modifying the real file
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
+#   VALIDATION_MODE=warn      -> warn or fail (strict) when olddefconfig overrides requested values
+#   PREEMPT_MODE=auto         -> auto, none, voluntary, lazy, full, rt; override profile preemption
+#   TIMER_HZ=auto             -> auto, 100, 250, 300, 1000; override profile timer frequency
+#   SCHED_CACHE_MODE=auto     -> auto, on, off; control cache-aware scheduler load balancing
+#   MGLRU_MODE=auto           -> auto, on, off; control Multi-Gen LRU and its default state
+#   NUMA_BALANCING_MODE=auto  -> auto, on, off; control NUMA balancing and 7.2 NUMA migration support
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
 #   PRUNE_LEGACY              -> disable old compatibility options and legacy/deprecated symbols
 #   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
@@ -80,6 +86,12 @@ Options:
   --dry-run
   --all-optimizations
   --optimization-profile PROFILE
+  --validation-mode MODE
+  --preempt-mode MODE
+  --timer-hz VALUE
+  --sched-cache-mode MODE
+  --mglru-mode MODE
+  --numa-balancing-mode MODE
   --cpu-vendor-filter MODE
   --video-support MODE
   --uefi-support MODE
@@ -122,6 +134,12 @@ Notes:
   --dry-run shows only the config symbols that would change without modifying the real file.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
+  --validation-mode accepts: warn or strict.
+  --preempt-mode accepts: auto, none, voluntary, lazy, full, or rt.
+  --timer-hz accepts: auto, 100, 250, 300, or 1000.
+  --sched-cache-mode accepts: auto, on, or off.
+  --mglru-mode accepts: auto, on, or off.
+  --numa-balancing-mode accepts: auto, on, or off.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
@@ -229,7 +247,7 @@ set_tunable() {
             echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
             exit 1
             ;;
-        OPTIMIZATION_PROFILE | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
+        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -266,6 +284,12 @@ set_option() {
 
 init_tunable DRY_RUN false
 init_tunable OPTIMIZATION_PROFILE none
+init_tunable VALIDATION_MODE warn
+init_tunable PREEMPT_MODE auto
+init_tunable TIMER_HZ auto
+init_tunable SCHED_CACHE_MODE auto
+init_tunable MGLRU_MODE auto
+init_tunable NUMA_BALANCING_MODE auto
 init_tunable PRUNE_OBSERVABILITY false
 init_tunable PRUNE_LEGACY false
 init_tunable PRUNE_DEBUG_TRACE false
@@ -396,6 +420,14 @@ if [[ ! -x scripts/config ]]; then
     exit 1
 fi
 
+KERNEL_VERSION="$(make -s kernelversion 2>/dev/null || true)"
+if [[ -n "$KERNEL_VERSION" ]]; then
+    echo "Kernel version: $KERNEL_VERSION"
+else
+    KERNEL_VERSION="unknown"
+    echo "Kernel version: unknown (continuing with symbol-based compatibility checks)"
+fi
+
 WORK_CONFIG_FILE="$ORIGINAL_CONFIG_FILE"
 BACKUP=""
 DRY_RUN_TEMP=""
@@ -492,6 +524,20 @@ cfg() {
     scripts/config --file "$CONFIG_FILE" "$@"
 }
 
+declare -A _REQUESTED_CONFIG_VALUES=()
+declare -a _CONFIG_REQUEST_ISSUES=()
+
+record_config_expectation() {
+    local sym="$1"
+    local value="$2"
+
+    _REQUESTED_CONFIG_VALUES["$sym"]="$value"
+}
+
+record_config_request_issue() {
+    _CONFIG_REQUEST_ISSUES+=("$1")
+}
+
 declare -A _SYMBOL_VALUE_CACHE=()
 declare -i _SYMBOL_CACHE_LOADED=0
 
@@ -519,6 +565,51 @@ _load_symbol_cache() {
 
 invalidate_symbol_cache() {
     _SYMBOL_CACHE_LOADED=0
+}
+
+validate_requested_config() {
+    local mode="$1"
+    local sym expected actual issue
+    local mismatch_count=0
+    local checked_count=0
+    local -a requested_syms=()
+
+    invalidate_symbol_cache
+    _load_symbol_cache
+
+    if ((${#_REQUESTED_CONFIG_VALUES[@]} > 0)); then
+        mapfile -t requested_syms < <(printf '%s\n' "${!_REQUESTED_CONFIG_VALUES[@]}" | sort)
+    fi
+
+    for issue in "${_CONFIG_REQUEST_ISSUES[@]}"; do
+        echo "Validation warning: $issue" >&2
+        ((mismatch_count += 1))
+    done
+
+    for sym in "${requested_syms[@]}"; do
+        expected="${_REQUESTED_CONFIG_VALUES[$sym]}"
+        actual="${_SYMBOL_VALUE_CACHE[$sym]:-missing}"
+        ((checked_count += 1))
+
+        if [[ "$actual" != "$expected" ]]; then
+            echo "Validation warning: CONFIG_${sym} requested=$expected effective=$actual" >&2
+            ((mismatch_count += 1))
+        fi
+    done
+
+    if ((mismatch_count == 0)); then
+        echo "==> Validation passed: $checked_count requested CONFIG values are effective"
+        return 0
+    fi
+
+    echo "==> Validation found $mismatch_count overridden or unavailable requested CONFIG values" >&2
+    if [[ "$mode" == "strict" ]]; then
+        echo "    (VALIDATION_MODE=strict: refusing to report success)" >&2
+        return 1
+    fi
+
+    echo "    (VALIDATION_MODE=warn: continuing with Kconfig's effective values)" >&2
+    return 0
 }
 
 have_symbol() {
@@ -1091,7 +1182,9 @@ disable_config_symbol() {
     fi
 
     echo "Disabling: CONFIG_${normalized_sym}"
-    cfg --disable "$normalized_sym" || true
+    if cfg --disable "$normalized_sym"; then
+        record_config_expectation "$normalized_sym" n
+    fi
 }
 
 enable_config_symbol() {
@@ -1104,7 +1197,9 @@ enable_config_symbol() {
     fi
 
     echo "Enabling: CONFIG_${normalized_sym}"
-    cfg --enable "$normalized_sym" || true
+    if cfg --enable "$normalized_sym"; then
+        record_config_expectation "$normalized_sym" y
+    fi
 }
 
 set_val_config_symbol() {
@@ -1118,7 +1213,9 @@ set_val_config_symbol() {
     fi
 
     echo "Setting: CONFIG_${normalized_sym}=$value"
-    cfg --set-val "$normalized_sym" "$value" || true
+    if cfg --set-val "$normalized_sym" "$value"; then
+        record_config_expectation "$normalized_sym" "$value"
+    fi
 }
 
 resolve_cpu_vendor_filter() {
@@ -1748,6 +1845,73 @@ resolve_optimization_profile() {
     esac
 }
 
+resolve_validation_mode() {
+    local mode="${VALIDATION_MODE@L}"
+
+    case "$mode" in
+        warn | strict)
+            printf '%s\n' "$mode"
+            ;;
+        *)
+            echo "Invalid VALIDATION_MODE: $VALIDATION_MODE (use warn or strict)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+resolve_preempt_mode() {
+    local mode="${PREEMPT_MODE@L}"
+
+    case "$mode" in
+        "" | auto)
+            printf '%s\n' "auto"
+            ;;
+        none | voluntary | lazy | full | rt)
+            printf '%s\n' "$mode"
+            ;;
+        *)
+            echo "Invalid PREEMPT_MODE: $PREEMPT_MODE (use auto, none, voluntary, lazy, full, or rt)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+resolve_timer_hz() {
+    local value="${TIMER_HZ@L}"
+
+    case "$value" in
+        "" | auto)
+            printf '%s\n' "auto"
+            ;;
+        100 | 250 | 300 | 1000)
+            printf '%s\n' "$value"
+            ;;
+        *)
+            echo "Invalid TIMER_HZ: $TIMER_HZ (use auto, 100, 250, 300, or 1000)" >&2
+            exit 1
+            ;;
+    esac
+}
+
+resolve_auto_on_off_mode() {
+    local name="$1"
+    local value="${!name}"
+    value="${value@L}"
+
+    case "$value" in
+        "" | auto)
+            printf '%s\n' "auto"
+            ;;
+        on | off)
+            printf '%s\n' "$value"
+            ;;
+        *)
+            echo "Invalid $name: ${!name} (use auto, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 vendor_kconfig_files() {
     local path
 
@@ -1994,6 +2158,9 @@ configure_hz_profile() {
     done
 
     select_if_present "$selected_sym" "${other_syms[@]}"
+    if have_symbol HZ; then
+        set_val_config_symbol HZ "${selected_sym#HZ_}"
+    fi
 }
 
 select_if_present() {
@@ -2008,8 +2175,158 @@ select_if_present() {
             echo "Skipping protected symbol: CONFIG_${normalized_selected}"
         else
             echo "Selecting: CONFIG_${normalized_selected}"
-            cfg --enable "$normalized_selected" || true
+            if cfg --enable "$normalized_selected"; then
+                record_config_expectation "$normalized_selected" y
+            fi
         fi
+    fi
+}
+
+configure_explicit_timer_hz() {
+    local value="$1"
+    local selected="HZ_${value}"
+    local sym
+    local -a hz_syms=()
+    local -a other_syms=()
+
+    echo
+    echo "==> Applying explicit timer frequency: ${value} Hz"
+
+    mapfile -t hz_syms < <(list_config_hz_symbols)
+    if have_symbol "$selected"; then
+        for sym in "${hz_syms[@]}"; do
+            [[ "$sym" == "$selected" ]] || other_syms+=("$sym")
+        done
+        select_if_present "$selected" "${other_syms[@]}"
+        if have_symbol HZ; then
+            set_val_config_symbol HZ "$value"
+        fi
+        return
+    fi
+
+    if ((${#hz_syms[@]} == 0)) && have_symbol HZ; then
+        set_val_config_symbol HZ "$value"
+        return
+    fi
+
+    record_config_request_issue "TIMER_HZ=$value is unavailable in this kernel configuration"
+}
+
+configure_explicit_preempt_mode() {
+    local mode="$1"
+    local selected=""
+    local sym
+    local -a all_syms=(PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_LAZY PREEMPT_RT PREEMPT_DYNAMIC)
+    local -a other_syms=()
+
+    case "$mode" in
+        none) selected="PREEMPT_NONE" ;;
+        voluntary) selected="PREEMPT_VOLUNTARY" ;;
+        lazy) selected="PREEMPT_LAZY" ;;
+        full) selected="PREEMPT" ;;
+        rt) selected="PREEMPT_RT" ;;
+    esac
+
+    echo
+    echo "==> Applying explicit preemption mode: $mode"
+
+    if ! have_symbol "$selected"; then
+        record_config_request_issue "PREEMPT_MODE=$mode requires unavailable CONFIG_${selected}"
+        return
+    fi
+
+    for sym in "${all_syms[@]}"; do
+        [[ "$sym" == "$selected" ]] || other_syms+=("$sym")
+    done
+    select_if_present "$selected" "${other_syms[@]}"
+
+    if [[ "$mode" == "full" || "$mode" == "lazy" ]]; then
+        enable_if_present PREEMPT_DYNAMIC
+    fi
+}
+
+enable_numa_balancing_support() {
+    local explicit_request="${1:-false}"
+
+    if ! have_symbol NUMA_BALANCING; then
+        if is_enabled "$explicit_request"; then
+            record_config_request_issue "NUMA_BALANCING_MODE=on requires unavailable CONFIG_NUMA_BALANCING"
+        fi
+        return
+    fi
+
+    # Linux 7.2 split NUMA-specific page migration from the generic
+    # CONFIG_MIGRATION symbol. Enable whichever dependency exists.
+    enable_if_present NUMA_MIGRATION MIGRATION NUMA_BALANCING NUMA_BALANCING_DEFAULT_ENABLED
+}
+
+disable_numa_balancing_support() {
+    disable_if_present NUMA_BALANCING_DEFAULT_ENABLED NUMA_BALANCING
+}
+
+configure_sched_cache_mode() {
+    local mode="$1"
+    local profile="$2"
+
+    if [[ "$mode" == "auto" ]]; then
+        if [[ "$profile" == "server" || "$profile" == "desktop" ]]; then
+            enable_if_present SCHED_CACHE
+        fi
+        return
+    fi
+
+    echo
+    echo "==> Applying scheduler cache mode: $mode"
+    if ! have_symbol SCHED_CACHE; then
+        record_config_request_issue "SCHED_CACHE_MODE=$mode requires unavailable CONFIG_SCHED_CACHE"
+        return
+    fi
+
+    if [[ "$mode" == "on" ]]; then
+        enable_if_present SCHED_CACHE
+    else
+        disable_if_present SCHED_CACHE
+    fi
+}
+
+configure_mglru_mode() {
+    local mode="$1"
+    local profile="$2"
+
+    if [[ "$mode" == "auto" ]]; then
+        if [[ "$profile" == "server" || "$profile" == "desktop" ]]; then
+            enable_if_present LRU_GEN LRU_GEN_ENABLED
+            disable_if_present LRU_GEN_STATS
+        fi
+        return
+    fi
+
+    echo
+    echo "==> Applying Multi-Gen LRU mode: $mode"
+    if ! have_symbol LRU_GEN; then
+        record_config_request_issue "MGLRU_MODE=$mode requires unavailable CONFIG_LRU_GEN"
+        return
+    fi
+
+    if [[ "$mode" == "on" ]]; then
+        enable_if_present LRU_GEN LRU_GEN_ENABLED
+        disable_if_present LRU_GEN_STATS
+    else
+        disable_if_present LRU_GEN_STATS LRU_GEN_ENABLED LRU_GEN
+    fi
+}
+
+configure_explicit_numa_balancing_mode() {
+    local mode="$1"
+
+    [[ "$mode" == "auto" ]] && return
+
+    echo
+    echo "==> Applying explicit NUMA balancing mode: $mode"
+    if [[ "$mode" == "on" ]]; then
+        enable_numa_balancing_support true
+    else
+        disable_numa_balancing_support
     fi
 }
 
@@ -2086,16 +2403,20 @@ configure_optimization_profile() {
             fi
 
             # NUMA-aware balancing: only if the host actually has NUMA.
-            if [[ "$numa_mode" == "on" ]]; then
-                enable_if_present NUMA_BALANCING
+            if [[ "$NUMA_BALANCING_MODE_EFFECTIVE" == "auto" && "$numa_mode" == "on" ]]; then
+                enable_numa_balancing_support false
             fi
 
-            configure_hz_profile server
+            if [[ "$TIMER_HZ_EFFECTIVE" == "auto" ]]; then
+                configure_hz_profile server
+            fi
 
-            if have_symbol PREEMPT_NONE; then
-                select_if_present PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
-            elif have_symbol PREEMPT_VOLUNTARY; then
-                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+            if [[ "$PREEMPT_MODE_EFFECTIVE" == "auto" ]]; then
+                if have_symbol PREEMPT_NONE; then
+                    select_if_present PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+                elif have_symbol PREEMPT_VOLUNTARY; then
+                    select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+                fi
             fi
             ;;
         desktop)
@@ -2144,21 +2465,25 @@ configure_optimization_profile() {
                 disable_if_present PSI_DEFAULT_DISABLED
             fi
 
-            if [[ "$numa_mode" == "on" ]]; then
-                enable_if_present NUMA_BALANCING
+            if [[ "$NUMA_BALANCING_MODE_EFFECTIVE" == "auto" && "$numa_mode" == "on" ]]; then
+                enable_numa_balancing_support false
             fi
 
-            configure_hz_profile desktop
-
-            if have_symbol PREEMPT; then
-                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
-            elif have_symbol PREEMPT_LAZY; then
-                select_if_present PREEMPT_LAZY PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
-            elif have_symbol PREEMPT_VOLUNTARY; then
-                select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
+            if [[ "$TIMER_HZ_EFFECTIVE" == "auto" ]]; then
+                configure_hz_profile desktop
             fi
 
-            enable_if_present PREEMPT_DYNAMIC
+            if [[ "$PREEMPT_MODE_EFFECTIVE" == "auto" ]]; then
+                if have_symbol PREEMPT; then
+                    select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
+                elif have_symbol PREEMPT_LAZY; then
+                    select_if_present PREEMPT_LAZY PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+                elif have_symbol PREEMPT_VOLUNTARY; then
+                    select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
+                fi
+
+                enable_if_present PREEMPT_DYNAMIC
+            fi
             ;;
         realtime)
             echo "    (prioritizes low latency and deterministic wakeups)"
@@ -2171,7 +2496,6 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
                 HZ_PERIODIC \
                 KSM \
-                NUMA_BALANCING \
                 PSI \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT \
@@ -2191,14 +2515,22 @@ configure_optimization_profile() {
                 RCU_NOCB_CPU \
                 RCU_NOCB_CPU_CB_BOOST
 
-            configure_hz_profile realtime
+            if [[ "$NUMA_BALANCING_MODE_EFFECTIVE" == "auto" ]]; then
+                disable_numa_balancing_support
+            fi
 
-            if have_symbol PREEMPT_RT; then
-                select_if_present PREEMPT_RT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC
-            elif have_symbol PREEMPT; then
-                select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
-            elif have_symbol PREEMPT_DYNAMIC; then
-                select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
+            if [[ "$TIMER_HZ_EFFECTIVE" == "auto" ]]; then
+                configure_hz_profile realtime
+            fi
+
+            if [[ "$PREEMPT_MODE_EFFECTIVE" == "auto" ]]; then
+                if have_symbol PREEMPT_RT; then
+                    select_if_present PREEMPT_RT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC
+                elif have_symbol PREEMPT; then
+                    select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
+                elif have_symbol PREEMPT_DYNAMIC; then
+                    select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
+                fi
             fi
             ;;
     esac
@@ -3132,8 +3464,27 @@ fi
 
 invalidate_symbol_cache
 
+VALIDATION_MODE_EFFECTIVE="$(resolve_validation_mode)"
+PREEMPT_MODE_EFFECTIVE="$(resolve_preempt_mode)"
+TIMER_HZ_EFFECTIVE="$(resolve_timer_hz)"
+SCHED_CACHE_MODE_EFFECTIVE="$(resolve_auto_on_off_mode SCHED_CACHE_MODE)"
+MGLRU_MODE_EFFECTIVE="$(resolve_auto_on_off_mode MGLRU_MODE)"
+NUMA_BALANCING_MODE_EFFECTIVE="$(resolve_auto_on_off_mode NUMA_BALANCING_MODE)"
+
 OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
 configure_optimization_profile "$OPTIMIZATION_PROFILE_EFFECTIVE"
+
+if [[ "$PREEMPT_MODE_EFFECTIVE" != "auto" ]]; then
+    configure_explicit_preempt_mode "$PREEMPT_MODE_EFFECTIVE"
+fi
+
+if [[ "$TIMER_HZ_EFFECTIVE" != "auto" ]]; then
+    configure_explicit_timer_hz "$TIMER_HZ_EFFECTIVE"
+fi
+
+configure_sched_cache_mode "$SCHED_CACHE_MODE_EFFECTIVE" "$OPTIMIZATION_PROFILE_EFFECTIVE"
+configure_mglru_mode "$MGLRU_MODE_EFFECTIVE" "$OPTIMIZATION_PROFILE_EFFECTIVE"
+configure_explicit_numa_balancing_mode "$NUMA_BALANCING_MODE_EFFECTIVE"
 
 CPU_VENDOR_EFFECTIVE="$(resolve_cpu_vendor_filter)"
 if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
@@ -3365,18 +3716,37 @@ echo "    (note: Kconfig 'select' statements may re-enable symbols that were dis
 env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
 
 echo
+VALIDATION_FAILED=false
+if ! validate_requested_config "$VALIDATION_MODE_EFFECTIVE"; then
+    VALIDATION_FAILED=true
+fi
+
+echo
 if is_enabled "$DRY_RUN"; then
     echo "==> Dry-run changes for $ORIGINAL_CONFIG_FILE"
     show_config_changes "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
     echo
-    echo "Dry-run complete. No files were modified."
+    if is_enabled "$VALIDATION_FAILED"; then
+        echo "Dry-run complete with strict validation failures. No files were modified." >&2
+    else
+        echo "Dry-run complete. No files were modified."
+    fi
 else
-    echo "Done."
-    echo
-    echo "Review changes with:"
-    echo "  diff -u \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\" | less"
-    echo
-    echo "If you have scripts/diffconfig:"
-    echo "  scripts/diffconfig \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\""
-    echo
+    if is_enabled "$VALIDATION_FAILED"; then
+        echo "Configuration was written, but strict validation failed." >&2
+        echo "Restore or review the backup before building: $BACKUP" >&2
+    else
+        echo "Done."
+        echo
+        echo "Review changes with:"
+        echo "  diff -u \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\" | less"
+        echo
+        echo "If you have scripts/diffconfig:"
+        echo "  scripts/diffconfig \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\""
+        echo
+    fi
+fi
+
+if is_enabled "$VALIDATION_FAILED"; then
+    exit 1
 fi
