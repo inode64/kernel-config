@@ -112,16 +112,43 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
   - `server`
     Prioritizes throughput and stable background behavior:
     `PREEMPT_NONE`/`PREEMPT_VOLUNTARY` (when available), `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
+    It also enables `SCHED_CACHE` and Multi-Gen LRU when those symbols are available.
 
   - `desktop`
     Prioritizes interactivity:
     low-latency preemption (`PREEMPT` when available, otherwise `PREEMPT_LAZY` or `PREEMPT_VOLUNTARY`), `PREEMPT_DYNAMIC` when supported, `NO_HZ_IDLE`, `SCHED_AUTOGROUP`, and a high timer rate preference (`HZ_1000`, then `HZ_300`, `HZ_250`, `HZ_100`).
     For THP defaults, it prefers `TRANSPARENT_HUGEPAGE_MADVISE` over `ALWAYS` when both are available.
+    It also enables `SCHED_CACHE` and Multi-Gen LRU when supported.
 
   - `realtime`
     Prioritizes deterministic low-latency execution:
     `PREEMPT_RT` when available, `HZ_1000` preference, `RCU_BOOST`, and `RCU_NOCB_CPU` support, while avoiding aggressive global defaults such as `NO_HZ_FULL` and `RCU_NOCB_CPU_DEFAULT_ALL`.
     If you need full dynticks isolation, configure it explicitly at boot (for example `nohz_full=` and CPU isolation/affinity tuning).
+
+- `VALIDATION_MODE=warn|strict`
+  Checks every config value requested by the script after `make olddefconfig`.
+  `warn` (the default) reports values changed by Kconfig dependencies and continues.
+  `strict` exits non-zero if any requested value is unavailable or was overridden.
+
+- `PREEMPT_MODE=auto|none|voluntary|lazy|full|rt`
+  Overrides the preemption choice made by `OPTIMIZATION_PROFILE`. `auto` keeps profile behavior.
+  An explicit unavailable mode is reported by final validation.
+
+- `TIMER_HZ=auto|100|250|300|1000`
+  Overrides the profile's timer frequency. `auto` keeps its ordered fallback behavior;
+  an explicit value requires that exact `HZ_*` choice (or a direct `CONFIG_HZ` integer).
+
+- `SCHED_CACHE_MODE=auto|on|off`
+  Controls cache-aware scheduler load balancing introduced by newer kernels.
+  `auto` enables it for `server` and `desktop` when available and otherwise preserves the baseline.
+
+- `MGLRU_MODE=auto|on|off`
+  Controls `CONFIG_LRU_GEN` and `CONFIG_LRU_GEN_ENABLED`.
+  `auto` enables Multi-Gen LRU for `server` and `desktop`. Historical debug statistics remain disabled.
+
+- `NUMA_BALANCING_MODE=auto|on|off`
+  Controls automatic NUMA memory/task placement independently of `NUMA_SUPPORT`.
+  On Linux 7.2 and newer, enabling it also enables `CONFIG_NUMA_MIGRATION`; on older trees it enables the generic migration dependency when present.
 
 - `PRUNE_OBSERVABILITY`
   Disables tracing, perf, debugfs, and related observability features.
@@ -277,6 +304,15 @@ Auto-detection only sees the currently running host. It does not try to infer ha
 ./kernel-config.sh --dry-run /usr/src/linux
 ```
 
+Use strict validation when checking a new kernel version:
+
+```bash
+./kernel-config.sh --dry-run \
+  --validation-mode strict \
+  --optimization-profile desktop \
+  /usr/src/linux
+```
+
 ### Server-oriented pruning
 
 ```bash
@@ -382,7 +418,12 @@ NR_CPUS=auto \
   --config-file /usr/src/linux/.config \
   VIDEO_SUPPORT=nouveau \
   UEFI_SUPPORT=off \
-  NR_CPUS=16
+  NR_CPUS=16 \
+  PREEMPT_MODE=full \
+  TIMER_HZ=250 \
+  SCHED_CACHE_MODE=on \
+  MGLRU_MODE=on \
+  NUMA_BALANCING_MODE=off
 ```
 
 ### Protect symbols from script changes
@@ -400,9 +441,14 @@ The script:
 - creates a backup named like `.config.bak.YYYYMMDD-HHMMSS`
 - prints each symbol it enables or disables
 - runs `make olddefconfig`
+- verifies requested values against the effective post-`olddefconfig` config
 - prints a suggested `diff` command at the end
 
 In `--dry-run`, it prints a compact `CONFIG_FOO: old -> new` summary instead of a unified diff.
+
+With `VALIDATION_MODE=strict`, a mismatch exits with status 1. In a normal run the
+updated config and its backup are retained for review; in `--dry-run` the original
+config remains untouched.
 
 If `PRUNE_UNUSED_MODULES` is enabled, the script temporarily probes unloaded modules and then restores the loaded-module set back to its initial state before continuing.
 If it cannot restore that initial module set for a probe, it stops further module probing and continues with the rest of the script.
@@ -431,6 +477,17 @@ scripts/diffconfig old.config new.config
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - `PROTECTED_CONFIG_SYMBOLS` only protects against changes made by this script. `make olddefconfig` can still adjust dependent symbols if Kconfig requires it.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.
+
+## Tests
+
+Run the self-contained performance-control tests with:
+
+```bash
+./tests/test-performance-controls.sh
+```
+
+The tests exercise explicit overrides, profile defaults, Linux 7.2 NUMA migration,
+strict post-Kconfig validation, invalid input, and dry-run safety using a temporary kernel fixture.
 
 ## License
 
