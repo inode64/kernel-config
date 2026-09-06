@@ -27,6 +27,7 @@ fi
 #   SCHED_CACHE_MODE=auto     -> auto, on, off; control cache-aware scheduler load balancing
 #   MGLRU_MODE=auto           -> auto, on, off; control Multi-Gen LRU and its default state
 #   NUMA_BALANCING_MODE=auto  -> auto, on, off; control NUMA balancing and 7.2 NUMA migration support
+#   NATIVE_CPU=none           -> none, on, off; build with -march=native via CONFIG_X86_NATIVE_CPU (6.16+, x86_64 only)
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
 #   PRUNE_LEGACY              -> disable old compatibility options and legacy/deprecated symbols
 #   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
@@ -37,7 +38,7 @@ fi
 #   PRUNE_FAULT_INJECTION     -> disable fault-injection/test failure symbols
 #   PRUNE_DANGEROUS           -> disable symbols explicitly marked DANGEROUS in Kconfig
 #   PRUNE_UNUSED_MODULES      -> probe module configs not currently loaded and disable direct module symbols that can be tested safely
-#   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor
+#   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor and select its pstate driver
 #   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
 #   UEFI_SUPPORT=none         -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none       -> none, auto, on, off; keep or prune initramfs/initrd boot support
@@ -92,6 +93,7 @@ Options:
   --sched-cache-mode MODE
   --mglru-mode MODE
   --numa-balancing-mode MODE
+  --native-cpu MODE
   --cpu-vendor-filter MODE
   --video-support MODE
   --uefi-support MODE
@@ -140,6 +142,7 @@ Notes:
   --sched-cache-mode accepts: auto, on, or off.
   --mglru-mode accepts: auto, on, or off.
   --numa-balancing-mode accepts: auto, on, or off.
+  --native-cpu accepts: none, on, or off (x86_64, kernel 6.16+; the kernel only runs on the build CPU).
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
@@ -247,7 +250,7 @@ set_tunable() {
             echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
             exit 1
             ;;
-        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
+        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -290,6 +293,7 @@ init_tunable TIMER_HZ auto
 init_tunable SCHED_CACHE_MODE auto
 init_tunable MGLRU_MODE auto
 init_tunable NUMA_BALANCING_MODE auto
+init_tunable NATIVE_CPU none
 init_tunable PRUNE_OBSERVABILITY false
 init_tunable PRUNE_LEGACY false
 init_tunable PRUNE_DEBUG_TRACE false
@@ -590,6 +594,12 @@ validate_requested_config() {
         expected="${_REQUESTED_CONFIG_VALUES[$sym]}"
         actual="${_SYMBOL_VALUE_CACHE[$sym]:-missing}"
         ((checked_count += 1))
+
+        # A symbol that became invisible after olddefconfig (its dependency was
+        # disabled) is not written to .config at all; that satisfies a request for "n".
+        if [[ "$expected" == "n" && "$actual" == "missing" ]]; then
+            continue
+        fi
 
         if [[ "$actual" != "$expected" ]]; then
             echo "Validation warning: CONFIG_${sym} requested=$expected effective=$actual" >&2
@@ -1044,6 +1054,8 @@ discover_kconfig_symbols_by_pattern() {
                 next
             }
 
+            # Only symbols with a prompt are user-settable; promptless bools are
+            # recomputed by olddefconfig and would only produce validation noise.
             /^[[:space:]]*(bool|tristate)([[:space:]]|$)/ {
                 is_toggle = 1
                 if (match($0, /"[^"]+"/)) {
@@ -1052,8 +1064,6 @@ discover_kconfig_symbols_by_pattern() {
                     if (is_menuconfig && text ~ pattern) {
                         menuconfig_pattern_match = 1
                     }
-                } else {
-                    maybe_emit("")
                 }
                 next
             }
@@ -1912,13 +1922,32 @@ resolve_auto_on_off_mode() {
     esac
 }
 
+resolve_native_cpu_mode() {
+    local value="${NATIVE_CPU@L}"
+
+    case "$value" in
+        "" | none)
+            printf '%s\n' "none"
+            ;;
+        on | off)
+            printf '%s\n' "$value"
+            ;;
+        *)
+            echo "Invalid NATIVE_CPU: $NATIVE_CPU (use none, on, or off)" >&2
+            exit 1
+            ;;
+    esac
+}
+
 vendor_kconfig_files() {
     local path
 
     for path in \
         "$KSRCDIR/arch/x86/Kconfig" \
+        "$KSRCDIR/arch/x86/Kconfig.cpu" \
         "$KSRCDIR/arch/x86/events/Kconfig" \
         "$KSRCDIR/arch/x86/kvm/Kconfig" \
+        "$KSRCDIR/drivers/cpufreq/Kconfig.x86" \
         "$KSRCDIR/drivers/dma/Kconfig" \
         "$KSRCDIR/drivers/dma/amd/Kconfig" \
         "$KSRCDIR/drivers/edac/Kconfig" \
@@ -1975,7 +2004,7 @@ discover_vendor_kconfig_symbols() {
     vendor_kconfig_files \
         | xargs -0 -r awk -v include_re="$include_re" -v exclude_re="$exclude_re" '
             function emit() {
-                if (sym != "" && saw_include && !saw_exclude) {
+                if (sym != "" && is_toggle && saw_include && !saw_exclude) {
                     print sym
                 }
             }
@@ -1993,8 +2022,14 @@ discover_vendor_kconfig_symbols() {
             /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
                 emit()
                 sym = $2
+                is_toggle = 0
                 saw_include = (sym ~ include_re)
                 saw_exclude = (sym ~ exclude_re)
+                next
+            }
+
+            /^[[:space:]]*(bool|tristate)([[:space:]]|$)/ {
+                is_toggle = 1
                 next
             }
 
@@ -2098,6 +2133,21 @@ enable_if_present() {
     prepare_sorted_unique_symbols unique_syms "$@"
     for sym in "${unique_syms[@]}"; do
         if have_symbol "$sym"; then
+            enable_config_symbol "$sym"
+        fi
+    done
+}
+
+# Like enable_if_present, but leaves symbols that are already =m or =y alone.
+# Used for "make available" items such as I/O schedulers or TCP algorithms.
+enable_if_unset() {
+    local -a unique_syms=()
+    local sym
+
+    prepare_sorted_unique_symbols unique_syms "$@"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    for sym in "${unique_syms[@]}"; do
+        if have_symbol "$sym" && [[ "${_SYMBOL_VALUE_CACHE[$sym]}" == "n" ]]; then
             enable_config_symbol "$sym"
         fi
     done
@@ -2330,6 +2380,84 @@ configure_explicit_numa_balancing_mode() {
     fi
 }
 
+configure_throughput_memory_defaults() {
+    local profile="$1"
+    local -a zswap_choice=(
+        ZSWAP_COMPRESSOR_DEFAULT_DEFLATE
+        ZSWAP_COMPRESSOR_DEFAULT_LZO
+        ZSWAP_COMPRESSOR_DEFAULT_842
+        ZSWAP_COMPRESSOR_DEFAULT_LZ4
+        ZSWAP_COMPRESSOR_DEFAULT_LZ4HC
+        ZSWAP_COMPRESSOR_DEFAULT_ZSTD
+    )
+    local -a preferred_compressors=()
+    local sym selected=""
+    local -a others=()
+
+    # PERSISTENT_HUGE_ZERO_FOLIO (6.18+), RSEQ_SLICE_EXTENSION (7.0+) and
+    # ZSWAP_SHRINKER_DEFAULT_ON are no-ops on older trees.
+    enable_if_present \
+        PERSISTENT_HUGE_ZERO_FOLIO \
+        RSEQ_SLICE_EXTENSION \
+        ZSMALLOC \
+        ZSWAP_SHRINKER_DEFAULT_ON
+
+    # zswap compressor: zstd favours ratio (server), lz4 favours latency (desktop)
+    case "$profile" in
+        server) preferred_compressors=(ZSWAP_COMPRESSOR_DEFAULT_ZSTD ZSWAP_COMPRESSOR_DEFAULT_LZ4) ;;
+        desktop) preferred_compressors=(ZSWAP_COMPRESSOR_DEFAULT_LZ4 ZSWAP_COMPRESSOR_DEFAULT_ZSTD) ;;
+    esac
+
+    for sym in "${preferred_compressors[@]}"; do
+        if have_symbol "$sym"; then
+            selected="$sym"
+            break
+        fi
+    done
+
+    if [[ -n "$selected" ]]; then
+        for sym in "${zswap_choice[@]}"; do
+            [[ "$sym" == "$selected" ]] || others+=("$sym")
+        done
+        select_if_present "$selected" "${others[@]}"
+    fi
+
+    # Tick-based cputime accounting avoids the per-transition overhead of
+    # VIRT_CPU_ACCOUNTING_GEN. NO_HZ_FULL selects the latter, so leave it alone then.
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    if [[ "${_SYMBOL_VALUE_CACHE[NO_HZ_FULL]:-n}" != "y" ]]; then
+        select_if_present TICK_CPU_ACCOUNTING VIRT_CPU_ACCOUNTING_GEN VIRT_CPU_ACCOUNTING_NATIVE
+    fi
+}
+
+configure_native_cpu_profile() {
+    local mode="$1"
+
+    echo
+    echo "==> Applying native CPU profile: $mode"
+
+    if ! is_x86_config; then
+        echo "    (CONFIG_X86_NATIVE_CPU is x86_64 only; .config is not x86, skipping)"
+        return
+    fi
+
+    if ! have_symbol X86_NATIVE_CPU; then
+        if [[ "$mode" == "on" ]]; then
+            record_config_request_issue "NATIVE_CPU=on requires unavailable CONFIG_X86_NATIVE_CPU (kernel 6.16+ with -march=native support)"
+        else
+            echo "    (CONFIG_X86_NATIVE_CPU not present in this tree; nothing to disable)"
+        fi
+        return
+    fi
+
+    if [[ "$mode" == "on" ]]; then
+        echo "    (the resulting kernel is only valid on the CPU model used to build it)"
+        enable_if_present X86_NATIVE_CPU
+    else
+        disable_if_present X86_NATIVE_CPU
+    fi
+}
+
 configure_optimization_profile() {
     local profile="$1"
 
@@ -2348,13 +2476,24 @@ configure_optimization_profile() {
         wants_observability=false
     fi
 
-    # common: compiler optimizations for all profiles
+    # common: compiler optimizations, topology-aware scheduling, and the
+    # tickless-friendly TEO cpuidle governor for all profiles
     enable_if_present \
         CC_OPTIMIZE_FOR_PERFORMANCE \
+        CPU_IDLE \
+        CPU_IDLE_GOV_TEO \
         CPU_ISOLATION \
-        JUMP_LABEL
+        JUMP_LABEL \
+        RSEQ \
+        SCHED_CLUSTER \
+        SCHED_MC \
+        SCHED_MC_PRIO \
+        SCHED_SMT
 
-    disable_if_present CC_OPTIMIZE_FOR_SIZE
+    # SLUB_TINY trades throughput for footprint; never wanted on a tuned kernel
+    disable_if_present \
+        CC_OPTIMIZE_FOR_SIZE \
+        SLUB_TINY
 
     case "$profile" in
         server)
@@ -2370,6 +2509,8 @@ configure_optimization_profile() {
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
 
+            # I/O schedulers and network algorithms are only made available
+            # (existing =m stays =m); DEFAULT_* choices are left untouched.
             enable_if_present \
                 BLK_CGROUP \
                 BLK_CGROUP_IOCOST \
@@ -2388,10 +2529,20 @@ configure_optimization_profile() {
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
 
+            enable_if_unset \
+                MQ_IOSCHED_DEADLINE \
+                MQ_IOSCHED_KYBER \
+                NET_SCH_FQ \
+                NET_SCH_FQ_CODEL \
+                TCP_CONG_ADVANCED \
+                TCP_CONG_BBR
+
             if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
                 select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
                     TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
             fi
+
+            configure_throughput_memory_defaults server
 
             # observability: only enable monitoring symbols when not pruning
             if is_enabled "$wants_observability"; then
@@ -2431,6 +2582,11 @@ configure_optimization_profile() {
                 HZ_PERIODIC \
                 PREEMPT_RT
 
+            enable_if_unset \
+                BFQ_GROUP_IOSCHED \
+                IOSCHED_BFQ \
+                MQ_IOSCHED_DEADLINE
+
             enable_if_present \
                 BLK_WBT \
                 BLK_WBT_MQ \
@@ -2459,6 +2615,8 @@ configure_optimization_profile() {
                         TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
                 fi
             fi
+
+            configure_throughput_memory_defaults desktop
 
             if is_enabled "$wants_observability"; then
                 enable_if_present PSI
@@ -2595,7 +2753,7 @@ configure_host_type_profile() {
         HYPERV_STORAGE
         PCI_HYPERV
         PCI_HYPERV_INTERFACE
-        HYPERV_IOMMU
+        HYPERV_IOMMU # removed in 7.1+; the IRQ remapping code is built with HYPERV
         VSOCKETS
         VSOCKETS_LOOPBACK
         HYPERV_VSOCKETS
@@ -2681,7 +2839,6 @@ configure_video_support_profile() {
             disable_syms=(
                 DRM_I915
                 DRM_XE
-                FB_INTEL
                 INTEL_GTT
                 DRM_NOUVEAU
                 FB_NVIDIA
@@ -2692,7 +2849,6 @@ configure_video_support_profile() {
             enable_syms=(
                 DRM_I915
                 DRM_XE
-                FB_INTEL
                 INTEL_GTT
             )
             disable_syms=(
@@ -2715,7 +2871,6 @@ configure_video_support_profile() {
                 FB_RADEON
                 DRM_I915
                 DRM_XE
-                FB_INTEL
                 INTEL_GTT
             )
             ;;
@@ -2727,7 +2882,6 @@ configure_video_support_profile() {
                 FB_RADEON
                 DRM_I915
                 DRM_XE
-                FB_INTEL
                 INTEL_GTT
                 DRM_NOUVEAU
                 FB_NVIDIA
@@ -3149,16 +3303,18 @@ configure_application_profiles() {
                 done
                 ;;
             openvswitch)
-                for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE GRE NET_UDP_TUNNEL; do
+                for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX NET_UDP_TUNNEL; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
             ceph)
+                # LIBCRC32C was removed in 6.15; newer trees select CRC32 from CEPH_LIB.
                 for sym in CEPH_LIB CEPH_FS CRYPTO LIBCRC32C; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
             nfs-client)
+                # NFS_V4_1 was folded into NFS_V4 in 7.0; NFS_V4_2 still exists.
                 for sym in NFS_FS NFS_V3 NFS_V4 NFS_V4_1 NFS_V4_2 SUNRPC SUNRPC_GSS LOCKD LOCKD_V4 GRACE_PERIOD DNS_RESOLVER; do
                     append_unique_item "$sym" enable_syms
                 done
@@ -3174,7 +3330,9 @@ configure_application_profiles() {
                 done
                 ;;
             wireguard)
-                for sym in WIREGUARD NET_UDP_TUNNEL UDP_TUNNEL CRYPTO_CHACHA20POLY1305 CRYPTO_CURVE25519 CRYPTO_LIB_CHACHA20POLY1305; do
+                # CRYPTO_CURVE25519 moved to the promptless CRYPTO_LIB_CURVE25519 in 6.18
+                # (selected by WIREGUARD); the old name is kept for 6.12-6.17 trees.
+                for sym in WIREGUARD NET_UDP_TUNNEL CRYPTO_CHACHA20POLY1305 CRYPTO_CURVE25519 CRYPTO_LIB_CHACHA20POLY1305; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
@@ -3253,7 +3411,7 @@ if is_enabled "$PRUNE_SANITIZERS"; then
         KASAN_SW_TAGS \
         KCOV \
         KCSAN \
-        KMEMLEAK \
+        DEBUG_KMEMLEAK \
         MEMTEST \
         UBSAN \
         UBSAN_BOUNDS \
@@ -3313,7 +3471,6 @@ if is_enabled "$PRUNE_SELFTEST"; then
     disable_discovered_and_fixed_symbols \
         discover_selftest_kconfig_symbols \
         CORESIGHT \
-        KDB \
         KGDB \
         KGDB_KDB \
         KGDB_TESTS \
@@ -3360,16 +3517,16 @@ if is_enabled "$PRUNE_LEGACY"; then
 
     # Remove https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/commit/?id=d6e0f04bf22d9b25b530c5e04f82664eac942719 UPP-LITE
 
+    # Version notes (kept for 6.12 LTS; missing symbols are skipped by have_symbol):
+    #   NF_CT_PROTO_UDPLITE -> removed in 7.1+
+    #   USELIB              -> removed in 6.15
     disable_discovered_and_fixed_symbols \
         discover_legacy_kconfig_symbols \
-        BINFMT_AOUT \
         BLK_DEV_FD \
         NF_CT_PROTO_UDPLITE \
         LEGACY_PTYS \
         PARPORT \
         PROVE_RCU \
-        SYSFS_DEPRECATED \
-        SYSFS_DEPRECATED_V2 \
         SYSFS_SYSCALL \
         UID16 \
         USELIB
@@ -3400,13 +3557,16 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
     echo
     echo "==> Disabling debug/trace symbols"
 
+    # Fixed entries cover symbols whose Kconfig prompt does not mention debugging
+    # or that live in Kconfig.* files outside the menu context (KFENCE, stats).
+    # SCHED_DEBUG exists up to 6.14 only (always-on since 6.15).
     disable_discovered_and_fixed_symbols \
         discover_debug_trace_kconfig_symbols \
         BOOTPARAM_HARDLOCKUP_PANIC \
         BOOTPARAM_HUNG_TASK_PANIC \
         BOOTPARAM_SOFTLOCKUP_PANIC \
+        CONTEXT_TRACKING_USER_FORCE \
         DEBUG_ATOMIC_SLEEP \
-        DEBUG_CREDENTIALS \
         DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
         DEBUG_INFO_REDUCED \
         DEBUG_IRQFLAGS \
@@ -3429,7 +3589,6 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
         DEBUG_RT_MUTEXES \
         DEBUG_RWSEMS \
         DEBUG_SG \
-        DEBUG_SLAB \
         DEBUG_SPINLOCK \
         DEBUG_VIRTUAL \
         DEBUG_VM \
@@ -3439,6 +3598,7 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
         DYNAMIC_DEBUG \
         GDB_SCRIPTS \
         HARDLOCKUP_DETECTOR \
+        KFENCE \
         LATENCYTOP \
         LOCKDEP \
         LOCKUP_DETECTOR \
@@ -3447,11 +3607,14 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
         PAGE_OWNER \
         PAGE_POISONING \
         PROVE_LOCKING \
+        RSEQ_STATS \
         SCHEDSTATS \
         SCHED_DEBUG \
         SLUB_DEBUG \
         SLUB_DEBUG_ON \
-        SOFTLOCKUP_DETECTOR
+        SLUB_STATS \
+        SOFTLOCKUP_DETECTOR \
+        ZSMALLOC_STAT
 fi
 
 if is_enabled "$PRUNE_HARDENING"; then
@@ -3459,7 +3622,21 @@ if is_enabled "$PRUNE_HARDENING"; then
     echo "==> Disabling hardening/mitigation symbols"
     echo "    (this reduces kernel security hardening)"
 
-    disable_discovered_and_fixed_symbols discover_hardening_kconfig_symbols
+    # Fixed entries: allocator/page randomization and page-table checking cost
+    # runtime but their prompts do not say "hardening", so pattern discovery misses them.
+    # RANDOM_KMALLOC_CACHES is the 6.12-7.0 name of KMALLOC_PARTITION_* (7.2+).
+    disable_discovered_and_fixed_symbols \
+        discover_hardening_kconfig_symbols \
+        KMALLOC_PARTITION_CACHES \
+        KMALLOC_PARTITION_RANDOM \
+        KMALLOC_PARTITION_TYPED \
+        PAGE_TABLE_CHECK \
+        PAGE_TABLE_CHECK_ENFORCED \
+        RANDOMIZE_KSTACK_OFFSET_DEFAULT \
+        RANDOM_KMALLOC_CACHES \
+        SHUFFLE_PAGE_ALLOCATOR \
+        SLAB_FREELIST_HARDENED \
+        SLAB_FREELIST_RANDOM
 fi
 
 invalidate_symbol_cache
@@ -3470,6 +3647,7 @@ TIMER_HZ_EFFECTIVE="$(resolve_timer_hz)"
 SCHED_CACHE_MODE_EFFECTIVE="$(resolve_auto_on_off_mode SCHED_CACHE_MODE)"
 MGLRU_MODE_EFFECTIVE="$(resolve_auto_on_off_mode MGLRU_MODE)"
 NUMA_BALANCING_MODE_EFFECTIVE="$(resolve_auto_on_off_mode NUMA_BALANCING_MODE)"
+NATIVE_CPU_EFFECTIVE="$(resolve_native_cpu_mode)"
 
 OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
 configure_optimization_profile "$OPTIMIZATION_PROFILE_EFFECTIVE"
@@ -3504,11 +3682,45 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
         echo "==> Adjusting x86 options for ${CPU_VENDOR_EFFECTIVE@U} CPU"
         echo "    (disabling ${CPU_VENDOR_TO_DISABLE@U}-specific symbols)"
 
+        # CPU_SUP_* only get a prompt under PROCESSOR_SELECT, which itself
+        # needs EXPERT. Without that, olddefconfig forces them back to y and
+        # SCHED_MC_PRIO re-selects the other vendor's pstate driver.
+        ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+        can_prune_cpu_sup=false
+        if [[ "${_SYMBOL_VALUE_CACHE[EXPERT]:-n}" == "y" ]] && have_symbol PROCESSOR_SELECT; then
+            enable_if_present PROCESSOR_SELECT
+            can_prune_cpu_sup=true
+        else
+            echo "    (CONFIG_EXPERT is off: CPU_SUP_* vendor support and the ${CPU_VENDOR_TO_DISABLE@U} pstate driver stay as-is)"
+        fi
+
         mapfile -t cpu_vendor_syms < <(discover_vendor_kconfig_symbols "$CPU_VENDOR_TO_DISABLE")
+        if ! is_enabled "$can_prune_cpu_sup"; then
+            cpu_vendor_syms_filtered=()
+            for cpu_vendor_sym in "${cpu_vendor_syms[@]}"; do
+                case "$cpu_vendor_sym" in
+                    CPU_SUP_* | X86_INTEL_PSTATE | X86_AMD_PSTATE) ;;
+                    *) cpu_vendor_syms_filtered+=("$cpu_vendor_sym") ;;
+                esac
+            done
+            cpu_vendor_syms=("${cpu_vendor_syms_filtered[@]}")
+        fi
+
         if ((${#cpu_vendor_syms[@]} > 0)); then
             disable_if_present "${cpu_vendor_syms[@]}"
         fi
+
+        # keep the vendor's own cpufreq driver (amd-pstate / intel_pstate)
+        if [[ "$CPU_VENDOR_EFFECTIVE" == "amd" ]]; then
+            enable_if_present X86_AMD_PSTATE
+        else
+            enable_if_present X86_INTEL_PSTATE
+        fi
     fi
+fi
+
+if [[ "$NATIVE_CPU_EFFECTIVE" != "none" ]]; then
+    configure_native_cpu_profile "$NATIVE_CPU_EFFECTIVE"
 fi
 
 VIDEO_SUPPORT_EFFECTIVE="$(resolve_video_support)"
@@ -3603,6 +3815,7 @@ fi
 if is_enabled "$PRUNE_UNUSED_NET"; then
     echo
     echo "==> Disabling uncommon/legacy network protocols"
+    # Version notes: IP_DCCP removed in 6.16; ATALK, CAIF removed in 7.1+.
     disable_if_present \
         6LOWPAN \
         AF_RXRPC \
@@ -3642,6 +3855,7 @@ fi
 if is_enabled "$PRUNE_X86_OLD_PLATFORMS"; then
     echo
     echo "==> Disabling special/old x86 platforms"
+    # X86_RDC321X removed in 7.1+.
     disable_if_present \
         X86_EXTENDED_PLATFORM \
         X86_GOLDFISH \
@@ -3666,7 +3880,6 @@ if is_enabled "$PRUNE_INSECURE"; then
     echo "==> Disabling legacy or less secure protocols/compat"
     disable_if_present \
         CIFS_ALLOW_INSECURE_LEGACY \
-        CIFS_WEAK_PW_HASH \
         NFS_V2 \
         NFSD_V2
 fi
@@ -3675,9 +3888,9 @@ fi
 if is_enabled "$PRUNE_RADIOS"; then
     echo
     echo "==> Disabling unused radio and proximity protocols"
+    # HAMRADIO removed in 7.1+.
     disable_if_present \
         NFC \
-        IRDA \
         IEEE802154 \
         6LOWPAN \
         HAMRADIO
