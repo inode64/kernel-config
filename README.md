@@ -109,16 +109,23 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
   Current profile behavior:
 
+  All profiles enable `CC_OPTIMIZE_FOR_PERFORMANCE`, topology-aware scheduling (`SCHED_MC`, `SCHED_SMT`, `SCHED_CLUSTER`, `SCHED_MC_PRIO`), the TEO cpuidle governor (`CPU_IDLE_GOV_TEO`), `RSEQ`, and disable `SLUB_TINY`.
+
   - `server`
     Prioritizes throughput and stable background behavior:
     `PREEMPT_NONE`/`PREEMPT_VOLUNTARY` (when available), `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
     It also enables `SCHED_CACHE` and Multi-Gen LRU when those symbols are available.
+    Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.
+    CPU time accounting switches to `TICK_CPU_ACCOUNTING` unless the baseline already uses `NO_HZ_FULL`.
+    It makes `mq-deadline`, `kyber`, BBR (`TCP_CONG_BBR`), `NET_SCH_FQ` and `NET_SCH_FQ_CODEL` available without changing the `DEFAULT_*` choices; symbols already built as modules stay `=m`.
 
   - `desktop`
     Prioritizes interactivity:
     low-latency preemption (`PREEMPT` when available, otherwise `PREEMPT_LAZY` or `PREEMPT_VOLUNTARY`), `PREEMPT_DYNAMIC` when supported, `NO_HZ_IDLE`, `SCHED_AUTOGROUP`, and a high timer rate preference (`HZ_1000`, then `HZ_300`, `HZ_250`, `HZ_100`).
     For THP defaults, it prefers `TRANSPARENT_HUGEPAGE_MADVISE` over `ALWAYS` when both are available.
     It also enables `SCHED_CACHE` and Multi-Gen LRU when supported.
+    Memory: zswap on with the `lz4` default compressor (falls back to `zstd`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, `RSEQ_SLICE_EXTENSION`, and `TICK_CPU_ACCOUNTING` (same rule as `server`).
+    It makes BFQ (`IOSCHED_BFQ`, `BFQ_GROUP_IOSCHED`) and `mq-deadline` available.
 
   - `realtime`
     Prioritizes deterministic low-latency execution:
@@ -150,6 +157,11 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
   Controls automatic NUMA memory/task placement independently of `NUMA_SUPPORT`.
   On Linux 7.2 and newer, enabling it also enables `CONFIG_NUMA_MIGRATION`; on older trees it enables the generic migration dependency when present.
 
+- `NATIVE_CPU=none|on|off`
+  Controls `CONFIG_X86_NATIVE_CPU` (Linux 6.16 and newer, x86_64 only), which builds the kernel with `-march=native`.
+  `on` requires the symbol to exist and the compiler to support the flag; otherwise final validation reports it.
+  The resulting kernel is only valid on the CPU model it was built on. Default `none` leaves the baseline untouched.
+
 - `PRUNE_OBSERVABILITY`
   Disables tracing, perf, debugfs, and related observability features.
 
@@ -157,10 +169,10 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
   Disables old compatibility options and symbols marked legacy/deprecated in Kconfig.
 
 - `PRUNE_DEBUG_TRACE`
-  Disables debug and trace options discovered from Kconfig prompts.
+  Disables debug and trace options discovered from Kconfig prompts, plus fixed entries whose prompt does not say so: `KFENCE`, `CONTEXT_TRACKING_USER_FORCE`, `SLUB_STATS`, `ZSMALLOC_STAT`, `RSEQ_STATS`.
 
 - `PRUNE_HARDENING`
-  Disables hardening and mitigation symbols discovered from Kconfig prompts.
+  Disables hardening and mitigation symbols discovered from Kconfig prompts, plus runtime-cost randomization that pattern discovery misses: `RANDOMIZE_KSTACK_OFFSET_DEFAULT`, `SLAB_FREELIST_RANDOM`, `SLAB_FREELIST_HARDENED`, `SHUFFLE_PAGE_ALLOCATOR`, `RANDOM_KMALLOC_CACHES` / `KMALLOC_PARTITION_*`, `PAGE_TABLE_CHECK`.
 
 - `PRUNE_SELFTEST`
   Disables selftests and test-only options discovered from Kconfig prompts.
@@ -184,7 +196,8 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 ### Platform and hardware filters
 
 - `CPU_VENDOR_FILTER=none|auto|amd|intel`
-  On x86, prunes options specific to the other CPU vendor.
+  On x86, prunes options specific to the other CPU vendor, including the other vendor's cpufreq driver from `drivers/cpufreq/Kconfig.x86`, and enables the matching one (`X86_AMD_PSTATE` or `X86_INTEL_PSTATE`).
+  `CPU_SUP_INTEL`/`CPU_SUP_AMD` are only user-visible under `PROCESSOR_SELECT`, which needs `CONFIG_EXPERT=y`; when `EXPERT` is off they and the other vendor's pstate driver are left untouched (Kconfig would force them back anyway).
 
 - `VIDEO_SUPPORT=none|auto|amd|intel|nvidia|nouveau`
   Keeps only the selected display driver stack.
@@ -423,7 +436,8 @@ NR_CPUS=auto \
   TIMER_HZ=250 \
   SCHED_CACHE_MODE=on \
   MGLRU_MODE=on \
-  NUMA_BALANCING_MODE=off
+  NUMA_BALANCING_MODE=off \
+  NATIVE_CPU=on
 ```
 
 ### Protect symbols from script changes
@@ -450,6 +464,9 @@ With `VALIDATION_MODE=strict`, a mismatch exits with status 1. In a normal run t
 updated config and its backup are retained for review; in `--dry-run` the original
 config remains untouched.
 
+A symbol the script disabled that disappears from the config after `make olddefconfig`
+(because its dependency was also disabled) counts as satisfied, not as a mismatch.
+
 If `PRUNE_UNUSED_MODULES` is enabled, the script temporarily probes unloaded modules and then restores the loaded-module set back to its initial state before continuing.
 If it cannot restore that initial module set for a probe, it stops further module probing and continues with the rest of the script.
 
@@ -465,10 +482,34 @@ If your kernel tree provides it:
 scripts/diffconfig old.config new.config
 ```
 
+## Kernel Version Compatibility
+
+The script targets Linux 6.12 and newer. Every symbol goes through a presence check
+against the current `.config`, so names that do not exist in a given tree are skipped
+silently. The fixed symbol lists keep names that still exist in 6.12 LTS but were
+removed later, annotated in the script with the removal version:
+
+| Symbol | Last version | Replacement / note |
+| --- | --- | --- |
+| `USELIB` | 6.14 | none (syscall removed) |
+| `LIBCRC32C` | 6.14 | `CRC32`, promptless and selected by `CEPH_LIB` |
+| `SCHED_DEBUG` | 6.14 | always on since 6.15 |
+| `IP_DCCP` | 6.15 | none (protocol removed) |
+| `CRYPTO_CURVE25519` | 6.17 | `CRYPTO_LIB_CURVE25519`, promptless and selected by `WIREGUARD` |
+| `NFS_V4_1` | 6.19 | folded into `NFS_V4`; `NFS_V4_2` remains |
+| `ATALK`, `CAIF`, `HAMRADIO`, `NF_CT_PROTO_UDPLITE`, `X86_RDC321X` | 7.0 | none (subsystems removed) |
+| `HYPERV_IOMMU` | 7.0 | built unconditionally with `HYPERV` |
+| `RANDOM_KMALLOC_CACHES` | 7.0 | `KMALLOC_PARTITION_CACHES` / `_RANDOM` / `_TYPED` |
+
+Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
+`PERSISTENT_HUGE_ZERO_FOLIO` 6.18+, `RSEQ_SLICE_EXTENSION` 7.0+, `SCHED_CACHE`,
+`NUMA_MIGRATION` and `KMALLOC_PARTITION_*` 7.2+) are no-ops on older kernels.
+
 ## Caveats
 
 - This script is opinionated. Review the final config before using it in production.
 - `PRUNE_HARDENING` reduces security hardening.
+- `NATIVE_CPU=on` produces a kernel that may not boot on a different CPU model.
 - `PRUNE_LEGACY` may remove compatibility features you still depend on.
 - `PRUNE_SANITIZERS`, `PRUNE_COVERAGE`, and `PRUNE_FAULT_INJECTION` remove test-oriented instrumentation.
 - `PRUNE_DANGEROUS` removes edge-case options that upstream Kconfig labels as dangerous or unsafe, such as late microcode loading or risky device/debug paths.
@@ -486,8 +527,9 @@ Run the self-contained performance-control tests with:
 ./tests/test-performance-controls.sh
 ```
 
-The tests exercise explicit overrides, profile defaults, Linux 7.2 NUMA migration,
-strict post-Kconfig validation, invalid input, and dry-run safety using a temporary kernel fixture.
+The tests exercise explicit overrides, profile defaults (server and desktop), Linux 7.2 NUMA migration,
+`NATIVE_CPU`, the fixed prune entries, strict post-Kconfig validation, invalid input, and dry-run safety
+using a temporary kernel fixture.
 
 ## License
 

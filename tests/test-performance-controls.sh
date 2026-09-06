@@ -36,6 +36,7 @@ scripts:
 
 olddefconfig:
 	@if [ "$${FORCE_SCHED_CACHE:-}" = y ]; then scripts/config --file "$$KCONFIG_CONFIG" --enable SCHED_CACHE; fi
+	@for sym in $${DROP_SYMBOLS:-}; do sed -i -e "/^CONFIG_$$sym=/d" -e "/^# CONFIG_$$sym is not set$$/d" "$$KCONFIG_CONFIG"; done
 EOF
 
     cat >"$tree/scripts/config" <<'EOF'
@@ -74,6 +75,31 @@ mv "$temp_file" "$config_file"
 EOF
     chmod +x "$tree/scripts/config"
 
+    mkdir -p "$tree/arch/x86" "$tree/drivers/cpufreq"
+    cat >"$tree/arch/x86/Kconfig.cpu" <<'EOF'
+config PROCESSOR_SELECT
+	bool "Supported processor vendors" if EXPERT
+
+config CPU_SUP_INTEL
+	default y
+	bool "Support Intel processors" if PROCESSOR_SELECT
+
+config CPU_SUP_AMD
+	default y
+	bool "Support AMD processors" if PROCESSOR_SELECT
+EOF
+    cat >"$tree/drivers/cpufreq/Kconfig.x86" <<'EOF'
+config X86_INTEL_PSTATE
+	bool "Intel P state control"
+
+config X86_AMD_PSTATE
+	bool "AMD Processor P-State driver"
+
+config X86_AMD_PSTATE_DEFAULT_MODE
+	int "AMD Processor P-State default mode"
+	depends on X86_AMD_PSTATE
+EOF
+
     cat >"$tree/.config" <<'EOF'
 CONFIG_X86=y
 CONFIG_MMU=y
@@ -99,6 +125,32 @@ CONFIG_NUMA=y
 # CONFIG_NUMA_BALANCING is not set
 # CONFIG_NUMA_BALANCING_DEFAULT_ENABLED is not set
 CONFIG_ARCH_PKEY_BITS=4
+# CONFIG_SCHED_MC is not set
+# CONFIG_CPU_IDLE_GOV_TEO is not set
+CONFIG_SLUB_TINY=y
+CONFIG_ZSWAP=y
+CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZO=y
+# CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4 is not set
+# CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD is not set
+CONFIG_VIRT_CPU_ACCOUNTING_GEN=y
+# CONFIG_TICK_CPU_ACCOUNTING is not set
+# CONFIG_NO_HZ_FULL is not set
+# CONFIG_X86_NATIVE_CPU is not set
+# CONFIG_MQ_IOSCHED_DEADLINE is not set
+# CONFIG_IOSCHED_BFQ is not set
+# CONFIG_TCP_CONG_BBR is not set
+CONFIG_KFENCE=y
+CONFIG_SLAB_FREELIST_RANDOM=y
+CONFIG_FIREWIRE=y
+CONFIG_FIREWIRE_OHCI=y
+CONFIG_NET_SCH_FQ=m
+CONFIG_EXPERT=y
+# CONFIG_PROCESSOR_SELECT is not set
+CONFIG_CPU_SUP_INTEL=y
+CONFIG_CPU_SUP_AMD=y
+# CONFIG_X86_INTEL_PSTATE is not set
+CONFIG_X86_AMD_PSTATE=y
+CONFIG_X86_AMD_PSTATE_DEFAULT_MODE=3
 EOF
 }
 
@@ -143,6 +195,121 @@ test_profile_auto_extensions() {
     assert_contains "$output" "CONFIG_PREEMPT_NONE: n -> y"
     assert_contains "$output" "CONFIG_SCHED_CACHE: n -> y"
     assert_contains "$output" "CONFIG_LRU_GEN_ENABLED: n -> y"
+    assert_contains "$output" "CONFIG_SCHED_MC: n -> y"
+    assert_contains "$output" "CONFIG_CPU_IDLE_GOV_TEO: n -> y"
+    assert_contains "$output" "CONFIG_SLUB_TINY: y -> n"
+    assert_contains "$output" "CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD: n -> y"
+    assert_contains "$output" "CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZO: y -> n"
+    assert_contains "$output" "CONFIG_TICK_CPU_ACCOUNTING: n -> y"
+    assert_contains "$output" "CONFIG_VIRT_CPU_ACCOUNTING_GEN: y -> n"
+    assert_contains "$output" "CONFIG_MQ_IOSCHED_DEADLINE: n -> y"
+    assert_contains "$output" "CONFIG_TCP_CONG_BBR: n -> y"
+    if grep -Fq 'CONFIG_X86_NATIVE_CPU' "$output"; then fail "server profile must not touch X86_NATIVE_CPU"; fi
+    if grep -Fq 'CONFIG_NET_SCH_FQ:' "$output"; then fail "server profile must keep NET_SCH_FQ=m"; fi
+}
+
+test_cpu_vendor_filter() {
+    local tree="$TEST_TMP/vendor"
+    local output="$TEST_TMP/vendor.out"
+    create_fixture "$tree"
+
+    "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --cpu-vendor-filter intel \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_PROCESSOR_SELECT: n -> y"
+    assert_contains "$output" "CONFIG_CPU_SUP_AMD: y -> n"
+    assert_contains "$output" "CONFIG_X86_AMD_PSTATE: y -> n"
+    assert_contains "$output" "CONFIG_X86_INTEL_PSTATE: n -> y"
+    if grep -Fq 'Disabling: CONFIG_X86_AMD_PSTATE_DEFAULT_MODE' "$output"; then fail "int symbols must not be pruned by the vendor filter"; fi
+
+    # without EXPERT the CPU_SUP_* prompts do not exist; they must be left alone
+    "$tree/scripts/config" --file "$tree/.config" --disable EXPERT
+    "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --cpu-vendor-filter intel \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_EXPERT is off"
+    assert_contains "$output" "CONFIG_X86_INTEL_PSTATE: n -> y"
+    if grep -Fq 'CONFIG_CPU_SUP_AMD:' "$output"; then fail "CPU_SUP_AMD must stay untouched without EXPERT"; fi
+    if grep -Fq 'CONFIG_X86_AMD_PSTATE:' "$output"; then fail "X86_AMD_PSTATE must stay untouched without EXPERT"; fi
+}
+
+test_desktop_profile() {
+    local tree="$TEST_TMP/desktop"
+    local output="$TEST_TMP/desktop.out"
+    create_fixture "$tree"
+
+    "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --optimization-profile desktop \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4: n -> y"
+    assert_contains "$output" "CONFIG_IOSCHED_BFQ: n -> y"
+    assert_contains "$output" "CONFIG_TICK_CPU_ACCOUNTING: n -> y"
+    assert_contains "$output" "CONFIG_CPU_IDLE_GOV_TEO: n -> y"
+}
+
+test_native_cpu() {
+    local tree="$TEST_TMP/native"
+    local output="$TEST_TMP/native.out"
+    create_fixture "$tree"
+
+    "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --native-cpu on \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_X86_NATIVE_CPU: n -> y"
+
+    # a tree without the symbol (kernel < 6.16) must report the explicit request
+    sed -i '/CONFIG_X86_NATIVE_CPU/d' "$tree/.config"
+    if "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --native-cpu on \
+        "$tree" "$tree/.config" >"$output" 2>&1; then
+        fail "NATIVE_CPU=on on a tree without X86_NATIVE_CPU unexpectedly succeeded"
+    fi
+    assert_contains "$output" "requires unavailable CONFIG_X86_NATIVE_CPU"
+}
+
+test_prune_gaps() {
+    local tree="$TEST_TMP/prune"
+    local output="$TEST_TMP/prune.out"
+    create_fixture "$tree"
+
+    "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --prune-hardening \
+        --prune-debug-trace \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_SLAB_FREELIST_RANDOM: y -> n"
+    assert_contains "$output" "CONFIG_KFENCE: y -> n"
+}
+
+test_missing_counts_as_disabled() {
+    local tree="$TEST_TMP/missing"
+    local output="$TEST_TMP/missing.out"
+    create_fixture "$tree"
+
+    # FIREWIRE_OHCI becomes invisible once FIREWIRE is off and vanishes from .config
+    DROP_SYMBOLS=FIREWIRE_OHCI "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --prune-dma-attack-surface \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_FIREWIRE: y -> n"
+    assert_contains "$output" "CONFIG_FIREWIRE_OHCI: y -> n"
 }
 
 test_strict_validation_failure() {
@@ -175,6 +342,11 @@ test_invalid_value() {
 
 test_explicit_controls
 test_profile_auto_extensions
+test_desktop_profile
+test_cpu_vendor_filter
+test_native_cpu
+test_prune_gaps
+test_missing_counts_as_disabled
 test_strict_validation_failure
 test_invalid_value
 
