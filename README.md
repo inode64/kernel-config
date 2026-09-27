@@ -234,6 +234,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `HOST_TYPE=baremetal|qemu|vmware|hyperv|virtualbox`
   Tunes guest/virtualization drivers for the selected host type. `kvm` is accepted as an alias for `qemu`.
+  `hyperv` also keeps the synthetic keyboard, mouse and video drivers: `DRM_HYPERV` when the baseline has DRM, otherwise `FB_HYPERV` (re-enabled even if `PRUNE_LEGACY` disabled it as deprecated).
 
 - `APPLICATIONS=<comma-separated-list>`
   Enables kernel features commonly required by selected applications.
@@ -517,6 +518,7 @@ Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
 - `PRUNE_UNUSED_MODULES` uses a host/runtime heuristic. It only auto-disables modules that fail to load or do not stay initialized during probing; modules that are merely unused but loadable are reported and kept.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
+- When a profile enables a symbol that was off in the baseline (for example `ZSWAP` or `LRU_GEN`), the script runs an intermediate `make olddefconfig` so the symbols that depend on it become visible and can be configured in the same run.
 - `PROTECTED_CONFIG_SYMBOLS` only protects against changes made by this script. `make olddefconfig` can still adjust dependent symbols if Kconfig requires it.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.
 

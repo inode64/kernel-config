@@ -2091,9 +2091,8 @@ optimize_compression() {
     # zswap defaults to zstd here; the server/desktop profiles run later and
     # keep their own compressor choice (zstd / lz4). CRYPTO_LZ4 is left alone
     # because the desktop profile selects it through ZSWAP_COMPRESSOR_DEFAULT_LZ4.
-    enable_if_present \
-        CONFIG_ZSWAP \
-        CONFIG_ZSWAP_DEFAULT_ON
+    enable_parents_if_present CONFIG_ZSWAP
+    enable_if_present CONFIG_ZSWAP_DEFAULT_ON
 
     select_if_present CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD \
         CONFIG_ZSWAP_COMPRESSOR_DEFAULT_DEFLATE \
@@ -2189,6 +2188,35 @@ enable_if_present() {
             enable_config_symbol "$sym"
         fi
     done
+}
+
+# Symbols that depend on a disabled parent are not written to .config, so
+# have_symbol cannot see them until Kconfig re-evaluates the file.
+refresh_config_visibility() {
+    env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
+    invalidate_symbol_cache
+}
+
+# Like enable_if_present, but refreshes the config when any symbol was not
+# already =y, so that symbols depending on it can be configured afterwards.
+enable_parents_if_present() {
+    local -a unique_syms=()
+    local sym
+    local needs_refresh=false
+
+    prepare_sorted_unique_symbols unique_syms "$@"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    for sym in "${unique_syms[@]}"; do
+        if have_symbol "$sym" && ! is_protected_config_symbol "$sym" \
+            && [[ "${_SYMBOL_VALUE_CACHE[$sym]}" != "y" ]]; then
+            needs_refresh=true
+        fi
+    done
+
+    enable_if_present "${unique_syms[@]}"
+    if is_enabled "$needs_refresh"; then
+        refresh_config_visibility
+    fi
 }
 
 # Like enable_if_present, but leaves symbols that are already =m or =y alone.
@@ -2398,7 +2426,8 @@ configure_mglru_mode() {
 
     if [[ "$mode" == "auto" ]]; then
         if [[ "$profile" == "server" || "$profile" == "desktop" ]]; then
-            enable_if_present LRU_GEN LRU_GEN_ENABLED
+            enable_parents_if_present LRU_GEN
+            enable_if_present LRU_GEN_ENABLED
             disable_if_present LRU_GEN_STATS
         fi
         return
@@ -2412,7 +2441,8 @@ configure_mglru_mode() {
     fi
 
     if [[ "$mode" == "on" ]]; then
-        enable_if_present LRU_GEN LRU_GEN_ENABLED
+        enable_parents_if_present LRU_GEN
+        enable_if_present LRU_GEN_ENABLED
         disable_if_present LRU_GEN_STATS
     else
         disable_if_present LRU_GEN_STATS LRU_GEN_ENABLED LRU_GEN
@@ -2562,6 +2592,13 @@ configure_optimization_profile() {
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
 
+            enable_parents_if_present \
+                BLK_CGROUP \
+                CGROUP_SCHED \
+                TCP_CONG_ADVANCED \
+                TRANSPARENT_HUGEPAGE \
+                ZSWAP
+
             # I/O schedulers and network algorithms are only made available
             # (existing =m stays =m); DEFAULT_* choices are left untouched.
             enable_if_present \
@@ -2635,6 +2672,11 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
                 HZ_PERIODIC \
                 PREEMPT_RT
+
+            enable_parents_if_present \
+                CGROUP_SCHED \
+                TRANSPARENT_HUGEPAGE \
+                ZSWAP
 
             enable_if_unset \
                 BFQ_GROUP_IOSCHED \
@@ -2760,11 +2802,14 @@ configure_host_type_profile() {
         PARAVIRT
         PARAVIRT_XXL
         PARAVIRT_SPINLOCKS
-        PARAVIRT_CLOCK
         PARAVIRT_TIME_ACCOUNTING
     )
+    # PARAVIRT_CLOCK is promptless and only selected by KVM_GUEST/XEN.
+    # VIRTIO_VSOCKETS_COMMON is promptless too and also selected by
+    # VSOCKETS_LOOPBACK, so it is left to Kconfig.
     local -a qemu_syms=(
         KVM_GUEST
+        PARAVIRT_CLOCK
         VIRTIO
         VIRTIO_PCI
         VIRTIO_PCI_LIB
@@ -2781,7 +2826,6 @@ configure_host_type_profile() {
         VSOCKETS
         VSOCKETS_LOOPBACK
         VIRTIO_VSOCKETS
-        VIRTIO_VSOCKETS_COMMON
         PVPANIC
         PVPANIC_MMIO
         PVPANIC_PCI
@@ -2811,6 +2855,15 @@ configure_host_type_profile() {
         VSOCKETS
         VSOCKETS_LOOPBACK
         HYPERV_VSOCKETS
+        HYPERV_KEYBOARD
+        HID_HYPERV_MOUSE
+    )
+    # Synthetic video: DRM_HYPERV replaces FB_HYPERV, which Kconfig marks as
+    # deprecated (so PRUNE_LEGACY disables it) but is the only console driver
+    # when the baseline has no DRM.
+    local -a hyperv_video_syms=(
+        DRM_HYPERV
+        FB_HYPERV
     )
     local -a virtualbox_syms=(
         VBOXGUEST
@@ -2822,6 +2875,7 @@ configure_host_type_profile() {
         "${qemu_syms[@]}"
         "${vmware_syms[@]}"
         "${hyperv_syms[@]}"
+        "${hyperv_video_syms[@]}"
         "${virtualbox_syms[@]}"
     )
 
@@ -2865,10 +2919,20 @@ configure_host_type_profile() {
                 fi
             done
 
-            enable_if_present "${common_guest_syms[@]}"
+            enable_parents_if_present "${common_guest_syms[@]}" "${type_syms[@]}"
             enable_if_present "${type_syms[@]}"
             if ((${#disable_syms[@]} > 0)); then
                 disable_if_present "${disable_syms[@]}"
+            fi
+
+            if [[ "$host_type" == "hyperv" ]]; then
+                ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+                if [[ "${_SYMBOL_VALUE_CACHE[DRM]:-n}" != "n" ]] && have_symbol DRM_HYPERV; then
+                    enable_if_present DRM_HYPERV
+                else
+                    echo "    (DRM_HYPERV is unavailable; keeping FB_HYPERV for the console)"
+                    enable_if_present FB_HYPERV
+                fi
             fi
             ;;
     esac
@@ -3448,6 +3512,7 @@ configure_application_profiles() {
     done
 
     if ((${#enable_syms[@]} > 0)); then
+        enable_parents_if_present "${enable_syms[@]}"
         enable_if_present "${enable_syms[@]}"
     fi
 }
