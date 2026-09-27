@@ -114,7 +114,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
   - `server`
     Prioritizes throughput and stable background behavior:
-    `PREEMPT_NONE`/`PREEMPT_VOLUNTARY` (when available), `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
+    `PREEMPT_NONE`/`PREEMPT_VOLUNTARY` (when available, otherwise `PREEMPT_LAZY`, the only non-full model left on x86 since 7.0), `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
     It also enables `SCHED_CACHE` and Multi-Gen LRU when those symbols are available.
     Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.
     CPU time accounting switches to `TICK_CPU_ACCOUNTING` unless the baseline already uses `NO_HZ_FULL`.
@@ -168,6 +168,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `PRUNE_LEGACY`
   Disables old compatibility options and symbols marked legacy/deprecated in Kconfig.
+  `DRM_FBDEV_EMULATION` is excluded even though its prompt says "legacy": DRM drivers need it for the framebuffer console.
 
 - `PRUNE_DEBUG_TRACE`
   Disables debug and trace options discovered from Kconfig prompts, plus fixed entries whose prompt does not say so: `KFENCE`, `CONTEXT_TRACKING_USER_FORCE`, `SLUB_STATS`, `ZSMALLOC_STAT`, `RSEQ_STATS`.
@@ -204,6 +205,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
   Keeps only the selected display driver stack.
 
   Notes:
+  `amd` enables `DRM_AMDGPU` and leaves `DRM_RADEON`/`FB_RADEON` as the baseline has them.
   `nvidia` means a proprietary NVIDIA setup, so the script prunes Nouveau and the in-tree AMD/Intel stacks.
 
 - `UEFI_SUPPORT=none|auto|on|off`
@@ -518,6 +520,8 @@ Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
 - `PRUNE_UNUSED_MODULES` uses a host/runtime heuristic. It only auto-disables modules that fail to load or do not stay initialized during probing; modules that are merely unused but loadable are reported and kept.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
+- Enabling a symbol that the baseline builds as a module keeps it `=m` instead of promoting it to built-in, so drivers that load firmware from the root filesystem (`amdgpu`, `iwlwifi`) keep working.
+- The `firehol` profile keeps the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable.
 - When a profile enables a symbol that was off in the baseline (for example `ZSWAP` or `LRU_GEN`), the script runs an intermediate `make olddefconfig` so the symbols that depend on it become visible and can be configured in the same run.
 - `PROTECTED_CONFIG_SYMBOLS` only protects against changes made by this script. `make olddefconfig` can still adjust dependent symbols if Kconfig requires it.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.

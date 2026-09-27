@@ -574,6 +574,24 @@ invalidate_symbol_cache() {
     _SYMBOL_CACHE_LOADED=0
 }
 
+# Symbols built as modules in the baseline. Enabling one of them keeps it =m:
+# promoting a working module to built-in only grows the image and can break
+# drivers that load firmware from the root filesystem (amdgpu, iwlwifi...).
+declare -A _BASELINE_MODULE_SYMBOLS=()
+
+load_baseline_module_symbols() {
+    local sym
+
+    _BASELINE_MODULE_SYMBOLS=()
+    while IFS= read -r sym; do
+        _BASELINE_MODULE_SYMBOLS["$sym"]=1
+    done < <(sed -n 's/^CONFIG_\([A-Z0-9_]\+\)=m$/\1/p' "$CONFIG_FILE")
+}
+
+is_baseline_module_symbol() {
+    [[ -v _BASELINE_MODULE_SYMBOLS[$1] ]]
+}
+
 validate_requested_config() {
     local mode="$1"
     local sym expected actual issue
@@ -1082,7 +1100,10 @@ discover_kconfig_symbols_by_pattern() {
 }
 
 discover_legacy_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))"
+    # DRM_FBDEV_EMULATION ("legacy fbdev support") is what gives DRM drivers a
+    # framebuffer console; without it the machine boots with a blank screen.
+    discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))" \
+        | awk '$0 != "DRM_FBDEV_EMULATION"'
 }
 
 discover_debug_trace_kconfig_symbols() {
@@ -1206,6 +1227,14 @@ enable_config_symbol() {
 
     if is_protected_config_symbol "$normalized_sym"; then
         echo "Skipping protected symbol: CONFIG_${normalized_sym}"
+        return 0
+    fi
+
+    if is_baseline_module_symbol "$normalized_sym"; then
+        echo "Enabling: CONFIG_${normalized_sym} (kept as module)"
+        if cfg --module "$normalized_sym"; then
+            record_config_expectation "$normalized_sym" m
+        fi
         return 0
     fi
 
@@ -2658,6 +2687,10 @@ configure_optimization_profile() {
                     select_if_present PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
                 elif have_symbol PREEMPT_VOLUNTARY; then
                     select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
+                elif have_symbol PREEMPT_LAZY; then
+                    # 7.0+ architectures with ARCH_HAS_PREEMPT_LAZY (x86) only
+                    # offer PREEMPT and PREEMPT_LAZY; lazy is the throughput one.
+                    select_if_present PREEMPT_LAZY PREEMPT PREEMPT_RT
                 fi
             fi
             ;;
@@ -2949,10 +2982,9 @@ configure_video_support_profile() {
     case "$mode" in
         amd)
             echo "    (keeping AMD display drivers and pruning Intel/NVIDIA stacks)"
+            # DRM_RADEON and FB_RADEON (pre-2015 cards) stay as the baseline has them
             enable_syms=(
                 DRM_AMDGPU
-                DRM_RADEON
-                FB_RADEON
             )
             disable_syms=(
                 DRM_I915
@@ -3411,7 +3443,9 @@ configure_application_profiles() {
                 done
                 ;;
             firehol)
-                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NF_CONNTRACK NF_NAT NF_TABLES IP_SET IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
+                # 6.17+ gates the iptables-legacy tables behind NETFILTER_XTABLES_LEGACY,
+                # which PRUNE_LEGACY disables; FireHOL still needs them with that backend.
+                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NETFILTER_XTABLES_LEGACY NF_CONNTRACK NF_NAT NF_TABLES IP_SET IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_IPTABLES_LEGACY IP6_NF_IPTABLES_LEGACY IP_NF_FILTER IP6_NF_FILTER IP_NF_MANGLE IP6_NF_MANGLE IP_NF_RAW IP6_NF_RAW IP_NF_NAT IP6_NF_NAT NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
@@ -3518,6 +3552,7 @@ configure_application_profiles() {
 }
 
 load_protected_config_symbols
+load_baseline_module_symbols
 
 if is_enabled "$ALL_OPTIMIZATIONS"; then
     echo
