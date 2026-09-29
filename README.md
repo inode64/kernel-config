@@ -116,6 +116,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
     Prioritizes throughput and stable background behavior:
     `PREEMPT_NONE`/`PREEMPT_VOLUNTARY` (when available, otherwise `PREEMPT_LAZY`, the only non-full model left on x86 since 7.0), `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
     It also enables `SCHED_CACHE` and Multi-Gen LRU when those symbols are available.
+    It disables the Project C alternative scheduler (`SCHED_ALT`, BMQ/PDS from gentoo-sources `USE=experimental`), which replaces EEVDF and rules out PSI, `SCHED_CACHE`, `SCHED_CORE`, NUMA balancing and sched_ext.
     Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.
     CPU time accounting switches to `TICK_CPU_ACCOUNTING` unless the baseline already uses `NO_HZ_FULL`.
     It makes `mq-deadline`, `kyber`, BBR (`TCP_CONG_BBR`), `NET_SCH_FQ` and `NET_SCH_FQ_CODEL` available without changing the `DEFAULT_*` choices; symbols already built as modules stay `=m`.
@@ -199,6 +200,7 @@ Boolean flags are off unless enabled explicitly with `--foo`. For `VAR=VALUE` an
 
 - `CPU_VENDOR_FILTER=none|auto|amd|intel`
   On x86, prunes options specific to the other CPU vendor, including the other vendor's cpufreq driver from `drivers/cpufreq/Kconfig.x86`, and enables the matching one (`X86_AMD_PSTATE` or `X86_INTEL_PSTATE`).
+  A symbol counts as vendor-specific only when every top-level `||` alternative of its `depends on` needs that vendor, so shared mitigations such as `MITIGATION_RETBLEED` (Intel and AMD Zen 1/2) are kept.
   `CPU_SUP_INTEL`/`CPU_SUP_AMD` are only user-visible under `PROCESSOR_SELECT`, which needs `CONFIG_EXPERT=y`; when `EXPERT` is off they and the other vendor's pstate driver are left untouched (Kconfig would force them back anyway).
 
 - `VIDEO_SUPPORT=none|auto|amd|intel|nvidia|nouveau`

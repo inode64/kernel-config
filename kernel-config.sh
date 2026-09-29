@@ -1107,7 +1107,11 @@ discover_legacy_kconfig_symbols() {
 }
 
 discover_debug_trace_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing|developer use only|debugging only|only be enabled for testing|intended for testing|testing purposes|test only|not suitable for production|not for use in production|not in production kernels|not be enabled in production|do not use (it )?on production|do not enable on production|production (systems?|kernels?|builds?))"
+    # PROC_MEM_FORCE_PTRACE only matches through "ptrace()": it is the hardened
+    # /proc/pid/mem choice, and disabling it falls back to PROC_MEM_ALWAYS_FORCE.
+    # IPV6_IOAM6_LWTUNNEL is IOAM in-band telemetry ("Trace insertion"), not debugging.
+    discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing|developer use only|debugging only|only be enabled for testing|intended for testing|testing purposes|test only|not suitable for production|not for use in production|not in production kernels|not be enabled in production|do not use (it )?on production|do not enable on production|production (systems?|kernels?|builds?))" \
+        | awk '$0 != "PROC_MEM_FORCE_PTRACE" && $0 != "IPV6_IOAM6_LWTUNNEL"'
 }
 
 discover_hardening_kconfig_symbols() {
@@ -2051,6 +2055,36 @@ discover_vendor_kconfig_symbols() {
                 return prefix !~ /!$/
             }
 
+            # A dependency is vendor-only when every top-level "||" alternative
+            # needs the vendor. MITIGATION_RETBLEED depends on
+            # "(CPU_SUP_INTEL && ...) || MITIGATION_UNRET_ENTRY || ..." and also
+            # covers AMD Zen 1/2, so a bare match on CPU_SUP_INTEL is not enough.
+            function vendor_only_dependency(text, pattern, expr, depth, i, c, part) {
+                expr = text
+                sub(/^[[:space:]]*depends on[[:space:]]+/, "", expr)
+                sub(/[[:space:]]*#.*$/, "", expr)
+                depth = 0
+                part = ""
+                for (i = 1; i <= length(expr); i++) {
+                    c = substr(expr, i, 1)
+                    if (c == "(") {
+                        depth++
+                    } else if (c == ")") {
+                        depth--
+                    } else if (depth == 0 && substr(expr, i, 2) == "||") {
+                        if (!positive_match(part, pattern)) {
+                            return 0
+                        }
+                        part = ""
+                        i++
+                        continue
+                    }
+                    part = part c
+                }
+
+                return positive_match(part, pattern)
+            }
+
             /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
                 emit()
                 sym = $2
@@ -2066,7 +2100,7 @@ discover_vendor_kconfig_symbols() {
             }
 
             /^[[:space:]]*depends on[[:space:]]+/ {
-                if (positive_match($0, include_re)) {
+                if (vendor_only_dependency($0, include_re)) {
                     saw_include = 1
                 }
 
@@ -2620,6 +2654,15 @@ configure_optimization_profile() {
                 HZ_PERIODIC \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
+
+            # Project C (BMQ/PDS, gentoo-sources USE=experimental) replaces EEVDF and
+            # rules out PSI, SCHED_CACHE, SCHED_CORE, NUMA_BALANCING and sched_ext; it
+            # defaults to y when the Gentoo defaults patch is not applied.
+            ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+            if [[ "${_SYMBOL_VALUE_CACHE[SCHED_ALT]:-n}" == "y" ]] && ! is_protected_config_symbol SCHED_ALT; then
+                disable_if_present SCHED_ALT
+                refresh_config_visibility
+            fi
 
             enable_parents_if_present \
                 BLK_CGROUP \
@@ -3504,7 +3547,9 @@ configure_application_profiles() {
                         ;;
                 esac
 
-                for sym in KVM KVM_X86 KVM_VFIO VFIO TUN VHOST VHOST_NET VHOST_VSOCK VHOST_IOTLB; do
+                # VSOCKETS is the parent of VHOST_VSOCK; HOST_TYPE=baremetal disables it
+                # together with the guest transports.
+                for sym in KVM KVM_X86 KVM_VFIO VFIO TUN VHOST VHOST_NET VSOCKETS VHOST_VSOCK VHOST_IOTLB; do
                     append_unique_item "$sym" enable_syms
                 done
 

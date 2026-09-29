@@ -185,6 +185,7 @@ test_profile_auto_extensions() {
     local output="$TEST_TMP/profile.out"
     create_fixture "$tree"
     "$tree/scripts/config" --file "$tree/.config" --disable SCHED_CACHE
+    "$tree/scripts/config" --file "$tree/.config" --enable SCHED_ALT
 
     "$SCRIPT" --dry-run \
         --validation-mode strict \
@@ -194,6 +195,7 @@ test_profile_auto_extensions() {
     assert_contains "$output" "CONFIG_HZ_100: n -> y"
     assert_contains "$output" "CONFIG_PREEMPT_NONE: n -> y"
     assert_contains "$output" "CONFIG_SCHED_CACHE: n -> y"
+    assert_contains "$output" "CONFIG_SCHED_ALT: y -> n"
     assert_contains "$output" "CONFIG_LRU_GEN_ENABLED: n -> y"
     assert_contains "$output" "CONFIG_SCHED_MC: n -> y"
     assert_contains "$output" "CONFIG_CPU_IDLE_GOV_TEO: n -> y"
@@ -237,6 +239,27 @@ test_cpu_vendor_filter() {
     assert_contains "$output" "CONFIG_X86_INTEL_PSTATE: n -> y"
     if grep -Fq 'CONFIG_CPU_SUP_AMD:' "$output"; then fail "CPU_SUP_AMD must stay untouched without EXPERT"; fi
     if grep -Fq 'CONFIG_X86_AMD_PSTATE:' "$output"; then fail "X86_AMD_PSTATE must stay untouched without EXPERT"; fi
+
+    # a dependency with a non-vendor "||" alternative is shared: RETBLEED also covers AMD Zen 1/2
+    cat >"$tree/arch/x86/Kconfig" <<'EOF'
+config MITIGATION_GDS
+	bool "Mitigate Gather Data Sampling"
+	depends on CPU_SUP_INTEL
+
+config MITIGATION_RETBLEED
+	bool "Mitigate RETBleed hardware bug"
+	depends on (CPU_SUP_INTEL && MITIGATION_SPECTRE_V2) || MITIGATION_UNRET_ENTRY || MITIGATION_IBPB_ENTRY
+EOF
+    "$tree/scripts/config" --file "$tree/.config" --enable MITIGATION_GDS
+    "$tree/scripts/config" --file "$tree/.config" --enable MITIGATION_RETBLEED
+    "$SCRIPT" --dry-run \
+        --validation-mode strict \
+        --cpu-vendor-filter amd \
+        "$tree" "$tree/.config" >"$output" 2>&1
+
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "CONFIG_MITIGATION_GDS: y -> n"
+    if grep -Fq 'CONFIG_MITIGATION_RETBLEED:' "$output"; then fail "shared mitigations must survive the AMD vendor filter"; fi
 }
 
 test_desktop_profile() {
