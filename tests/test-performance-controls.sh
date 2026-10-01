@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SCRIPT="$SCRIPT_DIR/kernel-config.sh"
+export INITRAMFS_GENERATOR=none
 TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/kernel-config-tests.XXXXXX")"
 
 cleanup() {
@@ -25,7 +26,8 @@ assert_contains() {
 
 create_fixture() {
     local tree="$1"
-    mkdir -p "$tree/scripts"
+    mkdir -p "$tree/scripts" "$tree/kernel"
+    touch "$tree/scripts/Kconfig.include" "$tree/kernel/Kconfig.preempt"
 
     cat >"$tree/Makefile" <<'EOF'
 kernelversion:
@@ -43,6 +45,7 @@ EOF
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if [[ "${1:-}" == "--keep-case" ]]; then shift; fi
 [[ "${1:-}" == "--file" ]] || exit 2
 config_file="$2"
 operation="$3"
@@ -59,6 +62,9 @@ awk -v symbol="$symbol" '
 case "$operation" in
     --enable)
         printf 'CONFIG_%s=y\n' "$symbol" >>"$temp_file"
+        ;;
+    --module)
+        printf 'CONFIG_%s=m\n' "$symbol" >>"$temp_file"
         ;;
     --disable)
         printf '# CONFIG_%s is not set\n' "$symbol" >>"$temp_file"
@@ -152,6 +158,23 @@ CONFIG_CPU_SUP_AMD=y
 CONFIG_X86_AMD_PSTATE=y
 CONFIG_X86_AMD_PSTATE_DEFAULT_MODE=3
 EOF
+    # The merged script discovers definitions from Kconfig, including symbols
+    # absent from .config; provide types/prompts instead of a config-only fixture.
+    awk '
+        /^CONFIG_[A-Za-z0-9_]+=/ {
+            sym=$0; sub(/^CONFIG_/, "", sym); sub(/=.*/, "", sym)
+            kind=($0 ~ /=m$/) ? "tristate" : ($0 ~ /=[0-9]+$/) ? "int" : "bool"
+        }
+        /^# CONFIG_[A-Za-z0-9_]+ is not set$/ {
+            sym=$2; sub(/^CONFIG_/, "", sym); kind="bool"
+        }
+        sym != "" {
+            if (sym !~ /^(PROCESSOR_SELECT|CPU_SUP_|X86_.*PSTATE)/)
+                printf "config %s\n    %s \"%s\"\n", sym, kind, sym
+            sym=""
+        }
+    ' "$tree/.config" >"$tree/Kconfig"
+    printf 'config SCHED_ALT\n    bool "Alternative scheduler"\n' >>"$tree/Kconfig"
 }
 
 test_explicit_controls() {
@@ -168,7 +191,6 @@ test_explicit_controls() {
         --numa-balancing-mode on \
         "$tree" "$tree/.config" >"$output" 2>&1
 
-    assert_contains "$output" "Kernel version: 7.2.0-test"
     assert_contains "$output" "Validation passed:"
     assert_contains "$output" "CONFIG_PREEMPT_VOLUNTARY: n -> y"
     assert_contains "$output" "CONFIG_HZ: 1000 -> 250"
@@ -294,6 +316,7 @@ test_native_cpu() {
 
     # a tree without the symbol (kernel < 6.16) must report the explicit request
     sed -i '/CONFIG_X86_NATIVE_CPU/d' "$tree/.config"
+    sed -i '/^config X86_NATIVE_CPU$/{N;d;}' "$tree/Kconfig"
     if "$SCRIPT" --dry-run \
         --validation-mode strict \
         --native-cpu on \
@@ -347,8 +370,8 @@ test_strict_validation_failure() {
         fail "strict validation unexpectedly succeeded"
     fi
 
-    assert_contains "$output" "CONFIG_SCHED_CACHE requested=n effective=y"
-    assert_contains "$output" "strict validation failures"
+    assert_contains "$output" "CONFIG_SCHED_CACHE requested=n final=y"
+    assert_contains "$output" "Strict validation failed"
 }
 
 test_invalid_value() {

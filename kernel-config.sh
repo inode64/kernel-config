@@ -6,6 +6,8 @@ if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 2))); 
     exit 1
 fi
 
+SCRIPT_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
+
 # Usage:
 #   ./kernel-config.sh [OPTIONS] [KERNEL_SRCDIR] [CONFIG_FILE] [VAR=VALUE...]
 #
@@ -20,6 +22,37 @@ fi
 # Optional variables and flags:
 #   ALL_OPTIMIZATIONS         -> enable the script's full optimization preset (flag-only via --all-optimizations)
 #   DRY_RUN                   -> show only the config symbols that would change without modifying the real file
+#   CHECK                     -> validate inputs and prerequisites without changing files or probing modules
+#   STRICT                    -> reject unmet requests or changed protected symbols after olddefconfig
+#   SCHED_CACHE=none           -> none, on, off; control cache-aware scheduler load balancing
+#   KERNEL_COMPRESSION=keep    -> keep, gzip, bzip2, lzma, xz, lzo, lz4, zstd
+#   INITRD_COMPRESSION=keep    -> keep, auto, none, gzip, bzip2, lzma, xz, lzo, lz4, zstd; retain existing decoders
+#   INITRAMFS_GENERATOR=auto   -> auto, genkernel, ugrd, none; read-only compatibility inspection
+#   INITRAMFS_CONFIG           -> optional producer configuration (relative to invocation directory)
+#   INITRAMFS_IMAGE            -> optional existing image to inspect (relative to invocation directory)
+#   INITRAMFS_COMPRESSION=auto -> producer CLI compression override; does not edit/run the producer
+#   UCLAMP=keep                -> keep, on, off; utilization clamping capability
+#   AUTOGROUP=keep             -> keep, on, off; automatic session grouping capability
+#   MODULE_FORCE_LOAD=keep     -> keep, on, off; permit forced loading of modules
+#   MODULE_FORCE_UNLOAD=keep   -> keep, on, off; permit forced unloading of modules
+#   NFS_UDP=keep               -> keep, on, off; NFS client UDP transport (inverse Kconfig option)
+#   OBSOLETE_CRYPTO=keep       -> keep, on, off; obsolete algorithms, independent of the AF_ALG ABI
+#   AUDIT_KCONFIG              -> read-only warning report; also accepts Kconfig-only snapshots
+#   FIRMWARE_COMPRESSION=keep  -> keep, on, off; on enables XZ and ZSTD firmware decoding
+#   PREEMPTION=keep       -> keep, none, voluntary, full, lazy, rt; select preemption model
+#   PREEMPT_DYNAMIC=keep       -> keep, on, off; allow boot-time preemption changes
+#   TICK_MODE=keep       -> keep, periodic, idle, full; select timer tick handling
+#   THP=keep       -> keep, off, always, madvise, never; transparent hugepage policy
+#   LRU_GEN=keep       -> keep, on, off; multi-generation LRU and its default activation
+#   ZSWAP=keep       -> keep, on, off; compressed swap cache and its default activation
+#   ZSWAP_COMPRESSOR=keep       -> keep, lzo, lz4, lz4hc, zstd, deflate, 842
+#   ZRAM=keep       -> keep, off, module, builtin; compressed RAM block device
+#   ZRAM_COMPRESSOR=keep       -> keep, lzo-rle, lzo, lz4, lz4hc, zstd, deflate, 842
+#   NUMA_BALANCING=keep       -> keep, on, off; NUMA memory placement and its default activation
+#   KMALLOC_PARTITION=keep       -> keep, off, random, typed; slab cache partitioning
+#   TCP_CONGESTION=keep       -> keep, cubic, bbr, reno; default TCP congestion control
+#   IO_URING=keep       -> keep, on, off; io_uring support
+#   PRUNE_RUNTIME_VERIFICATION -> disable Runtime Verification and its monitors
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
 #   VALIDATION_MODE=warn      -> warn or fail (strict) when olddefconfig overrides requested values
 #   PREEMPT_MODE=auto         -> auto, none, voluntary, lazy, full, rt; override profile preemption
@@ -85,6 +118,40 @@ Options:
   --kernel-srcdir PATH
   --config-file PATH
   --dry-run
+  --check
+  --audit-kconfig
+  --strict
+  --sched-cache MODE
+  --kernel-compression FORMAT
+  --initrd-compression FORMAT
+  --initramfs-generator NAME
+  --initramfs-config PATH
+  --initramfs-image PATH
+  --initramfs-compression FORMAT
+  --uclamp MODE
+  --autogroup MODE
+  --module-force-load MODE
+  --module-force-unload MODE
+  --nfs-udp MODE
+  --obsolete-crypto MODE
+  --firmware-compression MODE
+  --preemption VALUE
+  --preempt-dynamic VALUE
+  --tick-mode VALUE
+  --thp VALUE
+  --lru-gen VALUE
+  --zswap VALUE
+  --zswap-compressor VALUE
+  --zram VALUE
+  --zram-compressor VALUE
+  --numa-balancing VALUE
+  --kmalloc-partition VALUE
+  --tcp-congestion VALUE
+  --io-uring VALUE
+  --prune-runtime-verification
+  --disable-symbols LIST
+  --module-symbols LIST
+  --enable-symbols LIST
   --all-optimizations
   --optimization-profile PROFILE
   --validation-mode MODE
@@ -134,6 +201,39 @@ Notes:
   VAR=VALUE and --foo=value accept true/false, yes/no, on/off, enable/disable, and 1/0.
   --all-optimizations is flag-only and does not accept a value.
   --dry-run shows only the config symbols that would change without modifying the real file.
+  --check validates inputs and prerequisites without running make or probing modules.
+  --audit-kconfig reports textual warnings and exits without applying tuning or running make.
+  Audit mode accepts Kconfig-only snapshots and an optional .config; needs Python 3.11+.
+  --strict rejects unmet config requests and changed protected symbols after olddefconfig.
+  --sched-cache accepts: none, on, off (default: none).
+  --kernel-compression accepts: keep, gzip, bzip2, lzma, xz, lzo, lz4, zstd.
+  --initrd-compression also accepts auto (detected requirements) and none (uncompressed support).
+  --initrd-compression adds decoders without removing existing decoders or changing the producer.
+  --initramfs-generator accepts auto, genkernel, ugrd, none (default: auto).
+  --initramfs-config and --initramfs-image are optional read-only inputs.
+  --initramfs-compression accepts auto, none, best, fastest, gzip, bzip2, lzma, xz, lzo, lz4, zstd.
+  It describes a producer CLI override; no generator/configuration/image is modified.
+  Compression inspection needs Python 3.11+ and lib/initramfs_check.py beside this script.
+  --uclamp and --autogroup accept keep, on, off (default: keep).
+  --module-force-load, --module-force-unload, --nfs-udp and --obsolete-crypto accept keep, on, off.
+  These controls default to keep. --nfs-udp=off enables NFS_DISABLE_UDP_SUPPORT.
+  --firmware-compression accepts: keep, on, off (default: keep).
+  --preemption accepts: keep, none, voluntary, full, lazy, rt (default: keep).
+  --preempt-dynamic accepts: keep, on, off (default: keep).
+  --tick-mode accepts: keep, periodic, idle, full (default: keep).
+  --thp accepts: keep, off, always, madvise, never (default: keep).
+  --lru-gen accepts: keep, on, off (default: keep).
+  --zswap accepts: keep, on, off (default: keep).
+  --zswap-compressor accepts: keep, lzo, lz4, lz4hc, zstd, deflate, 842 (default: keep).
+  --zram accepts: keep, off, module, builtin (default: keep).
+  --zram-compressor accepts: keep, lzo-rle, lzo, lz4, lz4hc, zstd, deflate, 842 (default: keep).
+  --numa-balancing accepts: keep, on, off (default: keep).
+  --kmalloc-partition accepts: keep, off, random, typed (default: keep).
+  --tcp-congestion accepts: keep, cubic, bbr, reno (default: keep).
+  --io-uring accepts: keep, on, off (default: keep).
+  Symbol lists are comma-separated, case-sensitive Kconfig names (optional CONFIG_ prefix).
+  --disable-symbols, --module-symbols and --enable-symbols apply last; module requires MODULES=y.
+  Explicit tuning controls override profile defaults. keep leaves the profile/baseline unchanged.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
   --validation-mode accepts: warn or strict.
@@ -161,6 +261,7 @@ EOF
 apply_all_optimizations() {
     ALL_OPTIMIZATIONS=true
     OPTIMIZATION_PROFILE=server
+    KERNEL_COMPRESSION=zstd
     PRUNE_OBSERVABILITY=true
     PRUNE_LEGACY=true
     PRUNE_DEBUG_TRACE=true
@@ -182,7 +283,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-unused-modules | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        audit-kconfig | prune-runtime-verification | check | strict | dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-unused-modules | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -193,7 +294,7 @@ is_boolean_option() {
 
 is_boolean_tunable() {
     case "$1" in
-        DRY_RUN | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        AUDIT_KCONFIG | PRUNE_RUNTIME_VERIFICATION | CHECK | STRICT | DRY_RUN | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             return 0
             ;;
         *)
@@ -251,7 +352,7 @@ set_tunable() {
             echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
             exit 1
             ;;
-        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE)
+        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -287,8 +388,46 @@ set_option() {
 }
 
 # flag-only: set by --all-optimizations, never from the environment
+if [[ -v ALL_OPTIMIZATIONS ]]; then
+    echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
+    exit 1
+fi
 ALL_OPTIMIZATIONS=false
 init_tunable DRY_RUN false
+init_tunable CHECK false
+init_tunable AUDIT_KCONFIG false
+init_tunable STRICT false
+init_tunable SCHED_CACHE none
+init_tunable DISABLE_SYMBOLS none
+init_tunable MODULE_SYMBOLS none
+init_tunable ENABLE_SYMBOLS none
+init_tunable PREEMPTION keep
+init_tunable PREEMPT_DYNAMIC keep
+init_tunable TICK_MODE keep
+init_tunable THP keep
+init_tunable LRU_GEN keep
+init_tunable ZSWAP keep
+init_tunable ZSWAP_COMPRESSOR keep
+init_tunable ZRAM keep
+init_tunable ZRAM_COMPRESSOR keep
+init_tunable NUMA_BALANCING keep
+init_tunable KMALLOC_PARTITION keep
+init_tunable TCP_CONGESTION keep
+init_tunable IO_URING keep
+init_tunable PRUNE_RUNTIME_VERIFICATION false
+init_tunable KERNEL_COMPRESSION keep
+init_tunable INITRD_COMPRESSION keep
+init_tunable INITRAMFS_GENERATOR auto
+init_tunable INITRAMFS_CONFIG ""
+init_tunable INITRAMFS_IMAGE ""
+init_tunable INITRAMFS_COMPRESSION auto
+init_tunable UCLAMP keep
+init_tunable AUTOGROUP keep
+init_tunable MODULE_FORCE_LOAD keep
+init_tunable MODULE_FORCE_UNLOAD keep
+init_tunable NFS_UDP keep
+init_tunable OBSOLETE_CRYPTO keep
+init_tunable FIRMWARE_COMPRESSION keep
 init_tunable OPTIMIZATION_PROFILE none
 init_tunable VALIDATION_MODE warn
 init_tunable PREEMPT_MODE auto
@@ -389,63 +528,98 @@ if ((${#positionals[@]} > 2)); then
     exit 1
 fi
 
-if [[ -z "$KSRCDIR" ]]; then
-    KSRCDIR="${positionals[0]:-$(detect_default_ksrcdir)}"
-fi
-
-if [[ ! -d "$KSRCDIR" ]]; then
-    echo "Kernel source directory does not exist: $KSRCDIR" >&2
-    exit 1
-fi
-
-KSRCDIR="$(cd "$KSRCDIR" && pwd -P)"
-
-if [[ -z "$CONFIG_FILE" ]]; then
-    CONFIG_FILE="${positionals[1]:-$KSRCDIR/.config}"
-fi
-
-if [[ "$CONFIG_FILE" != /* ]]; then
-    CONFIG_FILE="$KSRCDIR/$CONFIG_FILE"
-fi
-
-cd "$KSRCDIR"
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "Does not exist: $CONFIG_FILE" >&2
-    exit 1
-fi
-
-ORIGINAL_CONFIG_FILE="$(realpath "$CONFIG_FILE")"
-
-if [[ ! -x scripts/config ]]; then
-    echo "scripts/config is missing or not executable; trying to generate it..."
-    make -s scripts >/dev/null
-fi
-
-if [[ ! -x scripts/config ]]; then
-    echo "Could not prepare scripts/config" >&2
-    exit 1
-fi
-
-KERNEL_VERSION="$(make -s kernelversion 2>/dev/null || true)"
-if [[ -n "$KERNEL_VERSION" ]]; then
-    echo "Kernel version: $KERNEL_VERSION"
-else
-    KERNEL_VERSION="unknown"
-    echo "Kernel version: unknown (continuing with symbol-based compatibility checks)"
-fi
-
-WORK_CONFIG_FILE="$ORIGINAL_CONFIG_FILE"
+WORK_DIR=""
+ORIGINAL_CONFIG_FILE=""
 BACKUP=""
-DRY_RUN_TEMP=""
+MODULE_PROBE_ACTIVE=false
+declare -a MODULE_PROBE_BASELINE=()
+
+die() {
+    echo "Error: $*" >&2
+    exit 1
+}
 
 cleanup() {
-    if [[ -n "$DRY_RUN_TEMP" && -f "$DRY_RUN_TEMP" ]]; then
-        rm -f "$DRY_RUN_TEMP"
+    local status=$?
+    if is_enabled "$MODULE_PROBE_ACTIVE"; then
+        if ! restore_loaded_modules_to_initial_state MODULE_PROBE_BASELINE; then
+            echo "Error: could not restore the original module set during cleanup" >&2
+            status=1
+        fi
     fi
+    if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
+        rm -rf -- "$WORK_DIR"
+    fi
+    exit "$status"
 }
 
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+prepare_paths() {
+    local command_name required
+    for command_name in make realpath mktemp cp mv cmp chmod awk sed grep find sort xargs; do
+        command -v "$command_name" >/dev/null 2>&1 || die "Required tool not found: $command_name"
+    done
+    KSRCDIR="${KSRCDIR:-${positionals[0]:-$(detect_default_ksrcdir)}}"
+    # Unlike the kernel .config argument, producer/image paths belong to the
+    # caller's directory, not the kernel source tree we are about to enter.
+    for required in INITRAMFS_CONFIG INITRAMFS_IMAGE; do
+        if [[ -n "${!required}" ]]; then
+            printf -v "$required" '%s' "$(realpath -m -- "${!required}")"
+        fi
+    done
+    KSRCDIR="$(realpath -e -- "$KSRCDIR")" || die "Invalid kernel source directory: $KSRCDIR"
+    [[ -d "$KSRCDIR" ]] || die "Not a directory: $KSRCDIR"
+    cd -- "$KSRCDIR"
+    # Relative config paths are relative to the selected kernel tree.
+    CONFIG_FILE="${CONFIG_FILE:-${positionals[1]:-.config}}"
+    for required in Kconfig Makefile scripts/config scripts/Kconfig.include kernel/Kconfig.preempt; do
+        [[ -r "$KSRCDIR/$required" ]] || die "Incomplete kernel tree: missing $required in $KSRCDIR"
+    done
+    [[ -x "$KSRCDIR/scripts/config" ]] || die "scripts/config must be executable (it is supplied with kernel sources)"
+    [[ -f "$CONFIG_FILE" && -r "$CONFIG_FILE" ]] || die "Config is not a readable regular file: $CONFIG_FILE"
+    ORIGINAL_CONFIG_FILE="$(realpath -e -- "$CONFIG_FILE")"
+    CONFIG_FILE="$ORIGINAL_CONFIG_FILE"
+    if ! is_enabled "$DRY_RUN"; then
+        [[ -w "$ORIGINAL_CONFIG_FILE" && -w "${ORIGINAL_CONFIG_FILE%/*}" ]] \
+            || die "Config and its parent directory must be writable: $ORIGINAL_CONFIG_FILE"
+    fi
+}
+
+prepare_transaction() {
+    local temp_parent="${ORIGINAL_CONFIG_FILE%/*}"
+    if is_enabled "$DRY_RUN"; then
+        temp_parent="${TMPDIR:-/tmp}"
+    fi
+    WORK_DIR="$(mktemp -d -- "$temp_parent/.kernel-config.XXXXXX")"
+    cp -p -- "$ORIGINAL_CONFIG_FILE" "$WORK_DIR/original.config"
+    cp -p -- "$ORIGINAL_CONFIG_FILE" "$WORK_DIR/config"
+    CONFIG_FILE="$WORK_DIR/config"
+    # A read-only baseline is still usable for dry-run.
+    chmod u+w -- "$CONFIG_FILE"
+    echo "Working on temporary config: $CONFIG_FILE"
+}
+
+commit_transaction() {
+    cmp -s -- "$ORIGINAL_CONFIG_FILE" "$WORK_DIR/original.config" \
+        || die "Original config changed during execution; refusing to overwrite it"
+    if cmp -s -- "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"; then
+        echo "No changes."
+        return
+    fi
+    local timestamp
+    printf -v timestamp '%(%Y%m%d-%H%M%S)T' -1
+    BACKUP="$(mktemp -- "${ORIGINAL_CONFIG_FILE}.bak.${timestamp}.XXXXXX")"
+    cp -p -- "$ORIGINAL_CONFIG_FILE" "$BACKUP"
+    # olddefconfig may create a replacement file; restore original metadata.
+    cp --attributes-only --preserve=mode,ownership -- "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
+    mv -f -- "$CONFIG_FILE" "$ORIGINAL_CONFIG_FILE"
+    echo "Backup: $BACKUP"
+    echo "Done. Review changes with:"
+    printf '  diff -u %q %q\n' "$BACKUP" "$ORIGINAL_CONFIG_FILE"
+}
 
 show_config_changes() {
     local before_file="$1"
@@ -455,13 +629,13 @@ show_config_changes() {
     changes="$(
         awk '
             function capture_config_line(line, source, sym, value) {
-                if (line ~ /^CONFIG_[A-Z0-9_]+=.*$/) {
+                if (line ~ /^CONFIG_[A-Za-z0-9_]+=.*$/) {
                     sym = line
                     sub(/^CONFIG_/, "", sym)
                     value = sym
                     sub(/^[^=]*=/, "", value)
                     sub(/=.*/, "", sym)
-                } else if (line ~ /^# CONFIG_[A-Z0-9_]+ is not set$/) {
+                } else if (line ~ /^# CONFIG_[A-Za-z0-9_]+ is not set$/) {
                     sym = line
                     sub(/^# CONFIG_/, "", sym)
                     sub(/ is not set$/, "", sym)
@@ -513,60 +687,44 @@ show_config_changes() {
     printf '%s\n' "$changes"
 }
 
-if is_enabled "$DRY_RUN"; then
-    DRY_RUN_TEMP="$(mktemp "${TMPDIR:-/tmp}/kernel-config.dry-run.XXXXXX")"
-    cp -a "$ORIGINAL_CONFIG_FILE" "$DRY_RUN_TEMP"
-    WORK_CONFIG_FILE="$DRY_RUN_TEMP"
-    echo "Dry-run: using temporary config copy $WORK_CONFIG_FILE"
-else
-    printf -v _backup_ts '%(%Y%m%d-%H%M%S)T' -1
-    BACKUP="${ORIGINAL_CONFIG_FILE}.bak.${_backup_ts}"
-    cp -a "$ORIGINAL_CONFIG_FILE" "$BACKUP"
-    echo "Backup: $BACKUP"
-fi
-
-CONFIG_FILE="$WORK_CONFIG_FILE"
-
 cfg() {
-    scripts/config --file "$CONFIG_FILE" "$@"
-}
-
-declare -A _REQUESTED_CONFIG_VALUES=()
-declare -a _CONFIG_REQUEST_ISSUES=()
-
-record_config_expectation() {
-    local sym="$1"
-    local value="$2"
-
-    _REQUESTED_CONFIG_VALUES["$sym"]="$value"
+    "$KSRCDIR/scripts/config" --keep-case --file "$CONFIG_FILE" "$@" \
+        || die "scripts/config failed: $*"
 }
 
 record_config_request_issue() {
-    _CONFIG_REQUEST_ISSUES+=("$1")
+    _UNSUPPORTED_REQUESTS+=("$1")
 }
 
 declare -A _SYMBOL_VALUE_CACHE=()
 declare -i _SYMBOL_CACHE_LOADED=0
+declare -A _DEFINED_SYMBOLS=() _REQUESTED_VALUES=() _PROTECTED_ORIGINAL_VALUES=()
+declare -A _KCONFIG_TYPES=() _KCONFIG_PROMPTS=() _EXPLICIT_SYMBOL_VALUES=()
+declare -A _KCONFIG_SELECTORS=()
+declare -a _UNSUPPORTED_REQUESTS=()
 
 _load_symbol_cache() {
     _SYMBOL_VALUE_CACHE=()
-    local sym value
-    while IFS=$'\t' read -r sym value; do
-        _SYMBOL_VALUE_CACHE["$sym"]="$value"
-    done < <(awk '
-        /^CONFIG_[A-Z0-9_]+=/ {
+    local sym value entries
+    [[ -f "$CONFIG_FILE" && -r "$CONFIG_FILE" ]] || die "Cannot read config: $CONFIG_FILE"
+    entries="$(awk '
+        /^CONFIG_[A-Za-z0-9_]+=/ {
             line = $0
             sub(/^CONFIG_/, "", line)
             idx = index(line, "=")
             print substr(line, 1, idx - 1) "\t" substr(line, idx + 1)
         }
-        /^# CONFIG_[A-Z0-9_]+ is not set$/ {
+        /^# CONFIG_[A-Za-z0-9_]+ is not set$/ {
             sym = $0
             sub(/^# CONFIG_/, "", sym)
             sub(/ is not set$/, "", sym)
             print sym "\tn"
         }
-    ' "$CONFIG_FILE")
+    ' "$CONFIG_FILE")" || die "Could not parse config: $CONFIG_FILE"
+    while IFS=$'\t' read -r sym value; do
+        [[ -z "$sym" ]] && continue
+        _SYMBOL_VALUE_CACHE["$sym"]="$value"
+    done <<<"$entries"
     _SYMBOL_CACHE_LOADED=1
 }
 
@@ -585,71 +743,191 @@ load_baseline_module_symbols() {
     _BASELINE_MODULE_SYMBOLS=()
     while IFS= read -r sym; do
         _BASELINE_MODULE_SYMBOLS["$sym"]=1
-    done < <(sed -n 's/^CONFIG_\([A-Z0-9_]\+\)=m$/\1/p' "$CONFIG_FILE")
+    done < <(sed -n 's/^CONFIG_\([A-Za-z0-9_]\+\)=m$/\1/p' "$CONFIG_FILE")
 }
 
 is_baseline_module_symbol() {
     [[ -v _BASELINE_MODULE_SYMBOLS[$1] ]]
 }
 
-validate_requested_config() {
-    local mode="$1"
-    local sym expected actual issue
-    local mismatch_count=0
-    local checked_count=0
-    local -a requested_syms=()
-
-    invalidate_symbol_cache
-    _load_symbol_cache
-
-    if ((${#_REQUESTED_CONFIG_VALUES[@]} > 0)); then
-        mapfile -t requested_syms < <(printf '%s\n' "${!_REQUESTED_CONFIG_VALUES[@]}" | sort)
-    fi
-
-    for issue in "${_CONFIG_REQUEST_ISSUES[@]}"; do
-        echo "Validation warning: $issue" >&2
-        ((mismatch_count += 1))
-    done
-
-    for sym in "${requested_syms[@]}"; do
-        expected="${_REQUESTED_CONFIG_VALUES[$sym]}"
-        actual="${_SYMBOL_VALUE_CACHE[$sym]:-missing}"
-        ((checked_count += 1))
-
-        # A symbol that became invisible after olddefconfig (its dependency was
-        # disabled) is not written to .config at all; that satisfies a request for "n".
-        if [[ "$expected" == "n" && "$actual" == "missing" ]]; then
-            continue
-        fi
-
-        if [[ "$actual" != "$expected" ]]; then
-            echo "Validation warning: CONFIG_${sym} requested=$expected effective=$actual" >&2
-            ((mismatch_count += 1))
-        fi
-    done
-
-    if ((mismatch_count == 0)); then
-        echo "==> Validation passed: $checked_count requested CONFIG values are effective"
-        return 0
-    fi
-
-    echo "==> Validation found $mismatch_count overridden or unavailable requested CONFIG values" >&2
-    if [[ "$mode" == "strict" ]]; then
-        echo "    (VALIDATION_MODE=strict: refusing to report success)" >&2
-        return 1
-    fi
-
-    echo "    (VALIDATION_MODE=warn: continuing with Kconfig's effective values)" >&2
-    return 0
-}
-
-have_symbol() {
+config_has_symbol() {
     ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
     [[ -v _SYMBOL_VALUE_CACHE[$1] ]]
 }
 
+have_symbol() {
+    [[ -v _DEFINED_SYMBOLS[$1] ]]
+}
+
+load_defined_symbols() {
+    local symbols sym
+    # Keep failures visible instead of hiding them in a process substitution.
+    # shellcheck disable=SC2016
+    symbols="$(find_kconfig_files | xargs -0 -r awk '
+        /^[[:space:]]*(menuconfig|config)[[:space:]]+[A-Za-z0-9_]+/ { print $2 }
+    ' | sort -u)" || die "Could not read Kconfig definitions"
+    while IFS= read -r sym; do
+        [[ -n "$sym" ]] && _DEFINED_SYMBOLS["$sym"]=1
+    done <<<"$symbols"
+}
+
+load_kconfig_metadata() {
+    local srcarch="${ARCH:-$(uname -m)}" entries sym kind guard
+    case "$srcarch" in
+        x86_64 | i?86) srcarch=x86 ;;
+        aarch64) srcarch=arm64 ;;
+        ppc*) srcarch=powerpc ;;
+        riscv*) srcarch=riscv ;;
+        s390x) srcarch=s390 ;;
+    esac
+    # This is conservative metadata, not a replacement for Kconfig evaluation.
+    # Other architectures must not turn a target's hidden symbol into a prompt.
+    # shellcheck disable=SC2016
+    entries="$(find_kconfig_files | xargs -0 -r awk -v root="$KSRCDIR/arch/" -v arch="$srcarch/" '
+        function emit( i) {
+            if (sym == "" || kind == "") return
+            print sym "\t" kind "\t-"
+            for (i = 1; i <= count; i++) print sym "\t" kind "\t" guards[i]
+        }
+        function reset() { sym = ""; kind = ""; count = 0; delete guards }
+        # Read a complete quoted Kconfig string, not an inner pair of quotes.
+        # Expose the decoded text and the untouched tail for prompt guards.
+        function quoted_property(line, quote, i, ch, escaped) {
+            kconfig_text = ""; kconfig_tail = ""
+            sub(/^[[:space:]]*[a-z_]+[[:space:]]*/, "", line)
+            quote = substr(line, 1, 1)
+            if (quote != "\"" && quote != sprintf("%c", 39)) return 0
+            for (i = 2; i <= length(line); i++) {
+                ch = substr(line, i, 1)
+                if (escaped) { kconfig_text = kconfig_text ch; escaped = 0 }
+                else if (ch == "\\") escaped = 1
+                else if (ch == quote) { kconfig_tail = substr(line, i + 1); return 1 }
+                else kconfig_text = kconfig_text ch
+            }
+            return 0
+        }
+        function prompt( text, tail) {
+            if (quoted_property(text)) {
+                tail = kconfig_tail
+                sub(/^[[:space:]]*/, "", tail)
+                sub(/[[:space:]]*#.*/, "", tail)
+                sub(/[[:space:]]*$/, "", tail)
+                if (tail == "") guards[++count] = "y"
+                else if (tail ~ /^if[[:space:]]+/) {
+                    sub(/^if[[:space:]]+/, "", tail)
+                    guards[++count] = tail
+                }
+            }
+        }
+        FNR == 1 {
+            emit(); reset(); in_help = 0
+            skip = index(FILENAME, root) == 1 && index(FILENAME, root arch) != 1
+        }
+        skip { next }
+        /^[[:space:]]*(help|---help---)[[:space:]]*$/ { in_help = 1; help_indent = -1; next }
+        in_help {
+            if (/^[[:space:]]*$/) next
+            indent = match($0, /^[[:space:]]+/) ? RLENGTH : 0
+            if (help_indent < 0) { help_indent = indent; next }
+            if (indent >= help_indent) next
+            in_help = 0
+        }
+        /^[[:space:]]*(choice|endchoice|menu|endmenu|if|endif|source|rsource|osource|orsource|comment)([[:space:]]|$)/ {
+            emit(); reset(); next
+        }
+        /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Za-z0-9_]+/ {
+            emit(); reset(); sym = $2; next
+        }
+        /^[[:space:]]*(bool|tristate|def_bool|def_tristate|int|hex|string)([[:space:]]|$)/ {
+            kind = $1
+            if (kind !~ /^def_/) prompt($0)
+            sub(/^def_/, "", kind); next
+        }
+        /^[[:space:]]*select[[:space:]]+[A-Za-z0-9_]+/ {
+            if (sym != "") print $2 "\tselect\t" sym
+            next
+        }
+        /^[[:space:]]*prompt[[:space:]]/ { prompt($0) }
+        END { emit() }
+    ')" || die "Could not read Kconfig types/prompts"
+    while IFS=$'\t' read -r sym kind guard; do
+        [[ -n "$sym" ]] || continue
+        if [[ "$kind" == select ]]; then
+            _KCONFIG_SELECTORS["$sym"]+="$guard"$'\n'
+            continue
+        fi
+        _KCONFIG_TYPES["$sym"]="$kind"
+        [[ "$guard" == - ]] || _KCONFIG_PROMPTS["$sym"]+="$guard"$'\n'
+    done <<<"$entries"
+}
+
+preserve_selected_prune_targets() {
+    local -n targets="$1"
+    local sym selector changed=1
+    local -A planned=()
+    local -a filtered=()
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    for sym in "${targets[@]}"; do
+        is_protected_config_symbol "$sym" || planned["$sym"]=1
+    done
+    # Keep the closure of dependencies selected by retained enabled features.
+    # Conditional selects are conservatively treated as potentially active.
+    while ((changed)); do
+        changed=0
+        for sym in "${!planned[@]}"; do
+            while IFS= read -r selector; do
+                [[ -n "$selector" ]] || continue
+                if [[ "${_SYMBOL_VALUE_CACHE[$selector]:-n}" != n && ! -v planned[$selector] ]]; then
+                    echo "Retaining CONFIG_$sym: selected by enabled CONFIG_$selector"
+                    unset 'planned[$sym]'
+                    changed=1
+                    break
+                fi
+            done <<<"${_KCONFIG_SELECTORS[$sym]:-}"
+        done
+    done
+    for sym in "${targets[@]}"; do
+        [[ -v planned[$sym] ]] && filtered+=("$sym")
+    done
+    targets=("${filtered[@]}")
+}
+
+is_prunable_toggle() {
+    local sym="$1" guard
+    case "${_KCONFIG_TYPES[$sym]:-}" in bool | tristate) ;; *) return 1 ;; esac
+    case "$sym" in ARCH_* | HAVE_*) return 1 ;; esac
+    while IFS= read -r guard; do
+        [[ -n "$guard" ]] || continue
+        case "$guard" in
+            y) return 0 ;;
+            '!y' | n) continue ;;
+        esac
+        if [[ "$guard" =~ ^[A-Za-z0-9_]+$ ]] && is_symbol_enabled_now "$guard"; then
+            return 0
+        fi
+        if [[ "$guard" =~ ^![A-Za-z0-9_]+$ ]] && ! is_symbol_enabled_now "${guard:1}"; then
+            return 0
+        fi
+        # Complex/continued prompt guards are left to explicit user controls.
+    done <<<"${_KCONFIG_PROMPTS[$sym]:-}"
+    return 1
+}
+
+symbol_value() {
+    if config_has_symbol "$1"; then
+        printf '%s\n' "${_SYMBOL_VALUE_CACHE[$1]}"
+    fi
+}
+
+is_symbol_enabled_now() {
+    normalize_config_symbol_name "$1"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    [[ -v _SYMBOL_VALUE_CACHE[$REPLY] ]] && [[ "${_SYMBOL_VALUE_CACHE[$REPLY]}" == y ]]
+}
+
 find_kconfig_files() {
-    find -L "$KSRCDIR" -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0 2>/dev/null
+    find -L "$KSRCDIR" -path "$KSRCDIR/scripts/kconfig/tests" -prune -o \
+        -type f \( -name 'Kconfig' -o -name 'Kconfig.*' \) -print0
 }
 
 find_kbuild_files() {
@@ -661,6 +939,18 @@ declare -i MODULE_SYMBOL_MAP_READY=0
 
 capture_loaded_modules() {
     lsmod | awk 'NR > 1 { print $1 }'
+}
+
+read_loaded_modules() {
+    local -n destination="$1"
+    local output
+    output="$(capture_loaded_modules)" || return 1
+    destination=()
+    if [[ -n "$output" ]]; then
+        # Output is assigned through the caller's nameref.
+        # shellcheck disable=SC2034
+        mapfile -t destination <<<"$output"
+    fi
 }
 
 normalize_kernel_module_name() {
@@ -710,6 +1000,8 @@ build_module_symbol_candidate_map() {
     ((MODULE_SYMBOL_MAP_READY)) && return
 
     MODULE_SYMBOL_TO_MODULES=()
+    # Kbuild expressions in the awk program must remain literal.
+    # shellcheck disable=SC2016
     while IFS=$'\t' read -r sym module; do
         [[ -n "$sym" && -n "$module" ]] || continue
         if [[ -v MODULE_SYMBOL_TO_MODULES[$sym] ]]; then
@@ -733,13 +1025,13 @@ build_module_symbol_candidate_map() {
                     sub(/[[:space:]]*#.*/, "", line)
                 }
 
-                line ~ /^[[:space:]]*obj-\$\(CONFIG_[A-Z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/ {
+                line ~ /^[[:space:]]*obj-\$\(CONFIG_[A-Za-z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/ {
                     sym = line
                     sub(/^[[:space:]]*obj-\$\(CONFIG_/, "", sym)
                     sub(/\).*/, "", sym)
 
                     rest = line
-                    sub(/^[[:space:]]*obj-\$\(CONFIG_[A-Z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/, "", rest)
+                    sub(/^[[:space:]]*obj-\$\(CONFIG_[A-Za-z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/, "", rest)
 
                     count = split(rest, items, /[[:space:]]+/)
                     for (i = 1; i <= count; i++) {
@@ -778,7 +1070,7 @@ restore_loaded_modules_to_initial_state() {
         extra_modules=()
         missing_modules=()
 
-        mapfile -t current_modules < <(capture_loaded_modules)
+        read_loaded_modules current_modules || return 1
         for current_module in "${current_modules[@]}"; do
             normalized="${current_module//-/_}"
             current_modules_map["$normalized"]=1
@@ -817,7 +1109,7 @@ restore_loaded_modules_to_initial_state() {
     extra_modules=()
     missing_modules=()
 
-    mapfile -t current_modules < <(capture_loaded_modules)
+    read_loaded_modules current_modules || return 1
     for current_module in "${current_modules[@]}"; do
         normalized="${current_module//-/_}"
         current_modules_map["$normalized"]=1
@@ -844,7 +1136,11 @@ probe_unloaded_module_candidate() {
 
     if ! modprobe "$module_name" >/dev/null 2>&1; then
         echo "      (probe failed: could not load)"
-        return 0
+        if restore_loaded_modules_to_initial_state "$initial_modules_var_name"; then
+            return 0
+        fi
+        echo "      (probe failed: could not restore original module set)" >&2
+        return 2
     fi
 
     if ! is_module_loaded_now "$module_name"; then
@@ -879,6 +1175,11 @@ probe_and_prune_unused_module_symbols() {
     echo
     echo "==> Probing currently unloaded module configs"
 
+    if is_enabled "$DRY_RUN"; then
+        echo "    (dry-run: active module probing is skipped)"
+        return
+    fi
+
     if ((EUID != 0)); then
         echo "    (requires root to load/unload modules safely; skipping)"
         return
@@ -890,7 +1191,7 @@ probe_and_prune_unused_module_symbols() {
     fi
 
     running_kernel_release="$(running_kernel_release)"
-    target_kernel_release="$(make -s kernelrelease 2>/dev/null || true)"
+    target_kernel_release="$(make -s KCONFIG_CONFIG="$CONFIG_FILE" kernelrelease 2>/dev/null || true)"
     if [[ -z "$target_kernel_release" ]]; then
         echo "    (could not resolve target kernelrelease; skipping)"
         return
@@ -902,7 +1203,11 @@ probe_and_prune_unused_module_symbols() {
     fi
 
     build_module_symbol_candidate_map
-    mapfile -t initially_loaded_modules < <(capture_loaded_modules)
+    read_loaded_modules initially_loaded_modules || die "Could not read the loaded module set; skipping probes"
+    # Referenced by name through the cleanup function's nameref.
+    # shellcheck disable=SC2034
+    MODULE_PROBE_BASELINE=("${initially_loaded_modules[@]}")
+    MODULE_PROBE_ACTIVE=true
     for module_name in "${initially_loaded_modules[@]}"; do
         initially_loaded_map["${module_name//-/_}"]=1
     done
@@ -927,9 +1232,11 @@ probe_and_prune_unused_module_symbols() {
             continue
         fi
 
-        set +e  # restored automatically via local -
-        probe_unloaded_module_candidate "$module_name" initially_loaded_modules
-        probe_status="$?"
+        if probe_unloaded_module_candidate "$module_name" initially_loaded_modules; then
+            probe_status=0
+        else
+            probe_status=$?
+        fi
 
         case "$probe_status" in
             0)
@@ -940,12 +1247,12 @@ probe_and_prune_unused_module_symbols() {
                 echo "    (keeping CONFIG_${symbol}; module ${module_name} is currently unused but loadable)"
                 ;;
             *)
-                echo "    (module probe could not restore the original module set; stopping further module probes)" >&2
-                break
+                die "Module probe could not restore the original module set; config was not committed"
                 ;;
         esac
     done
 
+    MODULE_PROBE_ACTIVE=false
     return 0
 }
 
@@ -959,6 +1266,14 @@ discover_kconfig_symbols_by_pattern() {
                 IGNORECASE = 1
             }
 
+            FNR == 1 {
+                sym = ""; is_toggle = 0; is_menuconfig = 0
+                in_help = 0; in_continuation = 0
+                menu_depth = 0; if_depth = 0
+                last_menuconfig_sym = ""; menuconfig_pattern_match = 0
+                delete menu_matches; delete if_matches
+            }
+
             /\\[[:space:]]*$/ {
                 in_continuation = 1
                 next
@@ -967,6 +1282,23 @@ discover_kconfig_symbols_by_pattern() {
             in_continuation {
                 in_continuation = /\\[[:space:]]*$/
                 next
+            }
+
+            # Read a complete quoted Kconfig string, not an inner pair of quotes.
+            # Expose the decoded text and the untouched tail for prompt guards.
+            function quoted_property(line, quote, i, ch, escaped) {
+                kconfig_text = ""; kconfig_tail = ""
+                sub(/^[[:space:]]*[a-z_]+[[:space:]]*/, "", line)
+                quote = substr(line, 1, 1)
+                if (quote != "\"" && quote != sprintf("%c", 39)) return 0
+                for (i = 2; i <= length(line); i++) {
+                    ch = substr(line, i, 1)
+                    if (escaped) { kconfig_text = kconfig_text ch; escaped = 0 }
+                    else if (ch == "\\") escaped = 1
+                    else if (ch == quote) { kconfig_tail = substr(line, i + 1); return 1 }
+                    else kconfig_text = kconfig_text ch
+                }
+                return 0
             }
 
             function menu_context_matches(depth) {
@@ -991,6 +1323,8 @@ discover_kconfig_symbols_by_pattern() {
                 }
             }
 
+            function clear_symbol() { sym = ""; is_toggle = 0; is_menuconfig = 0 }
+
             /^[[:space:]]*(help|---help---)([[:space:]]*)$/ {
                 in_help = 1
                 help_indent = -1
@@ -1012,13 +1346,15 @@ discover_kconfig_symbols_by_pattern() {
                 in_help = 0
             }
 
-            /^[[:space:]]*menu[[:space:]]*"[^"]+"/ {
+            /^[[:space:]]*menu[[:space:]]/ {
+                clear_symbol()
                 menu_depth++
-                menu_matches[menu_depth] = ($0 ~ pattern)
+                menu_matches[menu_depth] = (quoted_property($0) && kconfig_text ~ pattern)
                 next
             }
 
             /^[[:space:]]*endmenu([[:space:]]|$)/ {
+                clear_symbol()
                 if (menu_depth > 0) {
                     delete menu_matches[menu_depth]
                     menu_depth--
@@ -1033,6 +1369,7 @@ discover_kconfig_symbols_by_pattern() {
                 IGNORECASE = save_ic
                 if (!is_kconfig_kw) next
 
+                clear_symbol()
                 if_depth++
                 if_matches[if_depth] = 0
                 if (menuconfig_pattern_match && last_menuconfig_sym != "") {
@@ -1052,6 +1389,7 @@ discover_kconfig_symbols_by_pattern() {
                 IGNORECASE = save_ic
                 if (!is_kconfig_kw) next
 
+                clear_symbol()
                 if (if_depth > 0) {
                     delete if_matches[if_depth]
                     if_depth--
@@ -1059,7 +1397,11 @@ discover_kconfig_symbols_by_pattern() {
                 next
             }
 
-            /^[[:space:]]*menuconfig[[:space:]]+[A-Z0-9_]+/ {
+            /^[[:space:]]*(choice|endchoice|source|rsource|osource|orsource|comment)([[:space:]]|$)/ {
+                clear_symbol(); next
+            }
+
+            /^[[:space:]]*menuconfig[[:space:]]+[A-Za-z0-9_]+/ {
                 sym = $2
                 is_toggle = 0
                 is_menuconfig = 1
@@ -1068,19 +1410,19 @@ discover_kconfig_symbols_by_pattern() {
                 next
             }
 
-            /^[[:space:]]*config[[:space:]]+[A-Z0-9_]+/ {
+            /^[[:space:]]*config[[:space:]]+[A-Za-z0-9_]+/ {
                 sym = $2
                 is_toggle = 0
                 is_menuconfig = 0
                 next
             }
 
-            # Only symbols with a prompt are user-settable; promptless bools are
-            # recomputed by olddefconfig and would only produce validation noise.
-            /^[[:space:]]*(bool|tristate)([[:space:]]|$)/ {
+            /^[[:space:]]*(bool|tristate|def_bool|def_tristate)([[:space:]]|$)/ {
                 is_toggle = 1
-                if (match($0, /"[^"]+"/)) {
-                    text = substr($0, RSTART, RLENGTH)
+                # def_* takes a default expression, never an inline prompt.
+                if ($1 ~ /^def_/) next
+                if (quoted_property($0)) {
+                    text = kconfig_text
                     maybe_emit(text)
                     if (is_menuconfig && text ~ pattern) {
                         menuconfig_pattern_match = 1
@@ -1089,9 +1431,10 @@ discover_kconfig_symbols_by_pattern() {
                 next
             }
 
-            /^[[:space:]]*prompt[[:space:]]*"[^"]+"/ {
-                maybe_emit($0)
-                if (is_menuconfig && $0 ~ pattern) {
+            /^[[:space:]]*prompt[[:space:]]/ {
+                if (!quoted_property($0)) next
+                maybe_emit(kconfig_text)
+                if (is_menuconfig && kconfig_text ~ pattern) {
                     menuconfig_pattern_match = 1
                 }
             }
@@ -1100,10 +1443,9 @@ discover_kconfig_symbols_by_pattern() {
 }
 
 discover_legacy_kconfig_symbols() {
-    # DRM_FBDEV_EMULATION ("legacy fbdev support") is what gives DRM drivers a
-    # framebuffer console; without it the machine boots with a blank screen.
+    # AF_ALG remains an application ABI even when its prompts say deprecated.
     discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))" \
-        | awk '$0 != "DRM_FBDEV_EMULATION"'
+        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION"'
 }
 
 discover_debug_trace_kconfig_symbols() {
@@ -1186,7 +1528,6 @@ append_unique_item() {
 normalize_config_symbol_name() {
     REPLY="${1//[[:space:]]/}"
     REPLY="${REPLY#CONFIG_}"
-    REPLY="${REPLY@U}"
 }
 
 declare -A _PROTECTED_CONFIG_SYMBOL_MAP=()
@@ -1201,6 +1542,7 @@ load_protected_config_symbols() {
     for raw_sym in "${raw_symbols[@]}"; do
         normalize_config_symbol_name "$raw_sym"
         if [[ -n "$REPLY" ]]; then
+            [[ "$REPLY" =~ ^[A-Za-z0-9_]+$ ]] || die "Invalid protected symbol: $raw_sym"
             _PROTECTED_CONFIG_SYMBOL_MAP["$REPLY"]=1
         fi
     done
@@ -1214,38 +1556,59 @@ disable_config_symbol() {
     normalize_config_symbol_name "$1"
     local normalized_sym="$REPLY"
 
+    case "${_KCONFIG_TYPES[$normalized_sym]:-}" in
+        bool | tristate) ;;
+        *) echo "Skipping non-toggle symbol: CONFIG_${normalized_sym}"; return 0 ;;
+    esac
+
     if is_protected_config_symbol "$normalized_sym"; then
         echo "Skipping protected symbol: CONFIG_${normalized_sym}"
         return 0
     fi
 
     echo "Disabling: CONFIG_${normalized_sym}"
-    if cfg --disable "$normalized_sym"; then
-        record_config_expectation "$normalized_sym" n
-    fi
+    cfg --disable "$normalized_sym"
+    _SYMBOL_VALUE_CACHE["$normalized_sym"]=n
+    _REQUESTED_VALUES["$normalized_sym"]=n
 }
 
 enable_config_symbol() {
     normalize_config_symbol_name "$1"
     local normalized_sym="$REPLY"
 
+    case "${_KCONFIG_TYPES[$normalized_sym]:-}" in
+        bool | tristate) ;;
+        *) echo "Skipping non-toggle symbol: CONFIG_${normalized_sym}"; return 0 ;;
+    esac
+
     if is_protected_config_symbol "$normalized_sym"; then
         echo "Skipping protected symbol: CONFIG_${normalized_sym}"
         return 0
     fi
 
-    if is_baseline_module_symbol "$normalized_sym"; then
+    if [[ "${2:-preserve}" == preserve ]] && is_baseline_module_symbol "$normalized_sym"; then
         echo "Enabling: CONFIG_${normalized_sym} (kept as module)"
-        if cfg --module "$normalized_sym"; then
-            record_config_expectation "$normalized_sym" m
-        fi
+        module_config_symbol "$normalized_sym"
         return 0
     fi
 
     echo "Enabling: CONFIG_${normalized_sym}"
-    if cfg --enable "$normalized_sym"; then
-        record_config_expectation "$normalized_sym" y
+    cfg --enable "$normalized_sym"
+    _SYMBOL_VALUE_CACHE["$normalized_sym"]=y
+    _REQUESTED_VALUES["$normalized_sym"]=y
+}
+
+module_config_symbol() {
+    normalize_config_symbol_name "$1"
+    local normalized_sym="$REPLY"
+    if is_protected_config_symbol "$normalized_sym"; then
+        echo "Skipping protected symbol: CONFIG_${normalized_sym}"
+        return 0
     fi
+    echo "Modularizing: CONFIG_${normalized_sym}"
+    cfg --module "$normalized_sym"
+    _SYMBOL_VALUE_CACHE["$normalized_sym"]=m
+    _REQUESTED_VALUES["$normalized_sym"]=m
 }
 
 set_val_config_symbol() {
@@ -1259,9 +1622,9 @@ set_val_config_symbol() {
     fi
 
     echo "Setting: CONFIG_${normalized_sym}=$value"
-    if cfg --set-val "$normalized_sym" "$value"; then
-        record_config_expectation "$normalized_sym" "$value"
-    fi
+    cfg --set-val "$normalized_sym" "$value"
+    _SYMBOL_VALUE_CACHE["$normalized_sym"]="$value"
+    _REQUESTED_VALUES["$normalized_sym"]="$value"
 }
 
 resolve_cpu_vendor_filter() {
@@ -1849,7 +2212,7 @@ probe_xfs_deprecated_features() {
 
 resolve_host_type() {
     local mode
-    # HOST_TYPE is initialized dynamically through init_tunable.
+    # Assigned by init_tunable through printf -v.
     # shellcheck disable=SC2153
     mode="${HOST_TYPE@L}"
 
@@ -1857,7 +2220,7 @@ resolve_host_type() {
         "" | none)
             printf '%s\n' "none"
             ;;
-        baremetal)
+        baremetal | native)
             printf '%s\n' "baremetal"
             ;;
         qemu | kvm)
@@ -2085,7 +2448,7 @@ discover_vendor_kconfig_symbols() {
                 return positive_match(part, pattern)
             }
 
-            /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Z0-9_]+/ {
+            /^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Za-z0-9_]+/ {
                 emit()
                 sym = $2
                 is_toggle = 0
@@ -2129,52 +2492,523 @@ disable_if_present() {
 }
 
 optimize_compression() {
-    disable_if_present \
-        CONFIG_KERNEL_GZIP \
-        CONFIG_KERNEL_BZIP2 \
-        CONFIG_KERNEL_LZMA \
-        CONFIG_KERNEL_XZ \
-        CONFIG_KERNEL_LZO \
-        CONFIG_KERNEL_LZ4
+    enable_if_present ZSWAP ZSWAP_DEFAULT_ON
+    select_if_present ZSWAP_COMPRESSOR_DEFAULT_LZO \
+        ZSWAP_COMPRESSOR_DEFAULT_DEFLATE ZSWAP_COMPRESSOR_DEFAULT_842 \
+        ZSWAP_COMPRESSOR_DEFAULT_LZ4 ZSWAP_COMPRESSOR_DEFAULT_LZ4HC \
+        ZSWAP_COMPRESSOR_DEFAULT_ZSTD
+}
 
-    enable_if_present \
-        CONFIG_KERNEL_ZSTD
+request_explicit_symbol() {
+    local sym="$1" value="$2"
+    if ! have_symbol "$sym"; then
+        _UNSUPPORTED_REQUESTS+=("CONFIG_$sym is not defined in this kernel tree")
+        return
+    fi
+    case "${_KCONFIG_TYPES[$sym]:-}" in
+        bool | tristate) ;;
+        *) _UNSUPPORTED_REQUESTS+=("CONFIG_$sym is not a bool/tristate symbol"); return ;;
+    esac
+    if [[ "$value" == m && "${_KCONFIG_TYPES[$sym]}" != tristate ]]; then
+        _UNSUPPORTED_REQUESTS+=("CONFIG_$sym cannot be built as a module")
+        return
+    fi
+    if is_protected_config_symbol "$sym"; then
+        # Preserve the symbol, but retain the explicit request for final validation.
+        _REQUESTED_VALUES["$sym"]="$value"
+        return
+    fi
+    case "$value" in
+        y) enable_config_symbol "$sym" builtin ;;
+        m) module_config_symbol "$sym" ;;
+        n) disable_config_symbol "$sym" ;;
+        *) die "Unsupported symbol request: $sym=$value" ;;
+    esac
+}
 
-    disable_if_present \
-        CONFIG_RD_GZIP \
-        CONFIG_RD_BZIP2 \
-        CONFIG_RD_LZMA \
-        CONFIG_RD_XZ \
-        CONFIG_RD_LZO \
-        CONFIG_RD_LZ4
+require_control_symbols() {
+    local sym missing=0
+    for sym in "$@"; do
+        if ! have_symbol "$sym"; then
+            _UNSUPPORTED_REQUESTS+=("CONFIG_$sym is not defined in this kernel tree")
+            missing=1
+        fi
+    done
+    ((missing == 0))
+}
 
-    enable_if_present \
-        CONFIG_RD_ZSTD
+forget_control_requests() {
+    # A later explicit parent override supersedes a profile's child requests.
+    # Protected values are tracked separately and must still be preserved.
+    local prefix="$1" sym
+    for sym in "${!_REQUESTED_VALUES[@]}"; do
+        if [[ "$sym" == "$prefix"* ]]; then
+            unset '_REQUESTED_VALUES[$sym]'
+        fi
+    done
+}
 
-    # zswap defaults to zstd here; the server/desktop profiles run later and
-    # keep their own compressor choice (zstd / lz4). CRYPTO_LZ4 is left alone
-    # because the desktop profile selects it through ZSWAP_COMPRESSOR_DEFAULT_LZ4.
-    enable_parents_if_present CONFIG_ZSWAP
-    enable_if_present CONFIG_ZSWAP_DEFAULT_ON
+request_choice() {
+    local selected="$1" sym desired
+    shift
+    require_control_symbols "$selected" || return 0
+    for sym in "$selected" "$@"; do
+        desired=n
+        [[ "$sym" == "$selected" ]] && desired=y
+        if is_protected_config_symbol "$sym" && [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" != "$desired" ]]; then
+            _UNSUPPORTED_REQUESTS+=("choice CONFIG_$selected conflicts with protected CONFIG_$sym")
+            return 0
+        fi
+    done
+    for sym in "$@"; do
+        if [[ "$sym" != "$selected" ]] && have_symbol "$sym"; then
+            request_explicit_symbol "$sym" n
+        fi
+    done
+    request_explicit_symbol "$selected" y
+}
 
-    select_if_present CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD \
-        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_DEFLATE \
-        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZO \
-        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_842 \
-        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4 \
-        CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4HC
+configure_preemption() {
+    local mode="$1" selected
+    case "$mode" in
+        keep) return ;;
+        none) selected=PREEMPT_NONE ;;
+        voluntary) selected=PREEMPT_VOLUNTARY ;;
+        full | rt) selected=PREEMPT ;;
+        lazy) selected=PREEMPT_LAZY ;;
+    esac
+    require_control_symbols "$selected" || return 0
+    if [[ "$mode" == rt ]]; then
+        require_control_symbols PREEMPT_RT || return 0
+        request_explicit_symbol PREEMPT_RT y
+    elif have_symbol PREEMPT_RT; then
+        request_explicit_symbol PREEMPT_RT n
+    fi
+    # RT and DYNAMIC are outside the model choice. RT uses the full model.
+    request_choice "$selected" PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_LAZY
+}
 
-    disable_if_present \
-        CONFIG_XZ_DEC \
-        CONFIG_CRYPTO_842 \
-        CONFIG_CRYPTO_LZ4HC
+configure_tick_mode() {
+    local mode="$1" selected
+    case "$mode" in
+        keep) return ;;
+        periodic) selected=HZ_PERIODIC ;;
+        idle) selected=NO_HZ_IDLE ;;
+        full)
+            selected=NO_HZ_FULL
+            # Full dynticks selects its own accounting; supersede profile defaults.
+            forget_control_requests TICK_CPU_ACCOUNTING
+            forget_control_requests VIRT_CPU_ACCOUNTING
+            ;;
+    esac
+    request_choice "$selected" HZ_PERIODIC NO_HZ_IDLE NO_HZ_FULL
+}
 
-    disable_if_present \
-        CONFIG_FW_LOADER_COMPRESS \
-        CONFIG_FW_LOADER_COMPRESS_ZSTD
+configure_profile_scheduler() {
+    local profile="$1" model="" tick=idle
+    if [[ "$profile" != desktop ]] && is_symbol_enabled_now SMP \
+        && is_symbol_enabled_now HAVE_CONTEXT_TRACKING_USER \
+        && is_symbol_enabled_now HAVE_VIRT_CPU_ACCOUNTING_GEN; then
+        tick=full
+    fi
+    if have_symbol NO_HZ_IDLE; then
+        configure_tick_mode "$tick"
+    fi
+    case "$profile" in
+        server)
+            if config_has_symbol PREEMPT_NONE; then
+                model=none
+            elif is_symbol_enabled_now ARCH_HAS_PREEMPT_LAZY && have_symbol PREEMPT_LAZY; then
+                model=lazy
+            elif config_has_symbol PREEMPT_VOLUNTARY; then
+                model=voluntary
+            elif have_symbol PREEMPT; then
+                model=full
+            fi
+            disable_if_present PREEMPT_DYNAMIC
+            ;;
+        desktop)
+            if have_symbol PREEMPT && ! is_symbol_enabled_now ARCH_NO_PREEMPT; then
+                model=full
+            elif config_has_symbol PREEMPT_NONE; then
+                model=none
+            fi
+            if config_has_symbol PREEMPT_DYNAMIC || is_symbol_enabled_now HAVE_PREEMPT_DYNAMIC; then
+                enable_if_present PREEMPT_DYNAMIC
+            fi
+            ;;
+        realtime)
+            if have_symbol PREEMPT_RT && is_symbol_enabled_now EXPERT \
+                && is_symbol_enabled_now ARCH_SUPPORTS_RT && ! is_symbol_enabled_now COMPILE_TEST; then
+                model=rt
+            elif have_symbol PREEMPT && ! is_symbol_enabled_now ARCH_NO_PREEMPT; then
+                echo "    (PREEMPT_RT prerequisites are not enabled; using full preemption)"
+                model=full
+            elif config_has_symbol PREEMPT_NONE; then
+                echo "    (preemption is unavailable on this target; keeping non-preemptible model)"
+                model=none
+            fi
+            disable_if_present PREEMPT_DYNAMIC
+            ;;
+    esac
+    if [[ -n "$model" ]]; then
+        configure_preemption "$model"
+    fi
+}
 
-    disable_if_present \
-        CONFIG_FW_LOADER_COMPRESS_XZ
+configure_thp_control() {
+    [[ "$THP" != keep ]] || return 0
+    require_control_symbols TRANSPARENT_HUGEPAGE || return 0
+    forget_control_requests TRANSPARENT_HUGEPAGE
+    if [[ "$THP" == off ]]; then
+        request_explicit_symbol TRANSPARENT_HUGEPAGE n
+    else
+        require_control_symbols "TRANSPARENT_HUGEPAGE_${THP@U}" || return 0
+        request_explicit_symbol TRANSPARENT_HUGEPAGE y
+        request_choice "TRANSPARENT_HUGEPAGE_${THP@U}" \
+            TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
+    fi
+}
+
+configure_zswap_control() {
+    [[ "$ZSWAP" != keep || "$ZSWAP_COMPRESSOR" != keep ]] || return 0
+    require_control_symbols ZSWAP || return 0
+    if [[ "$ZSWAP" == off ]]; then
+        forget_control_requests ZSWAP
+        request_explicit_symbol ZSWAP n
+        return
+    fi
+    request_explicit_symbol SWAP y
+    request_explicit_symbol ZSWAP y
+    if [[ "$ZSWAP" == on ]]; then
+        request_explicit_symbol ZSWAP_DEFAULT_ON y
+    fi
+    if [[ "$ZSWAP_COMPRESSOR" != keep ]]; then
+        request_choice "ZSWAP_COMPRESSOR_DEFAULT_${ZSWAP_COMPRESSOR@U}" \
+            ZSWAP_COMPRESSOR_DEFAULT_LZO ZSWAP_COMPRESSOR_DEFAULT_LZ4 \
+            ZSWAP_COMPRESSOR_DEFAULT_LZ4HC ZSWAP_COMPRESSOR_DEFAULT_ZSTD \
+            ZSWAP_COMPRESSOR_DEFAULT_DEFLATE ZSWAP_COMPRESSOR_DEFAULT_842
+    fi
+}
+
+configure_zram_control() {
+    [[ "$ZRAM" != keep || "$ZRAM_COMPRESSOR" != keep ]] || return 0
+    require_control_symbols ZRAM || return 0
+    local mode="$ZRAM" suffix backend
+    if [[ "$mode" == keep ]]; then
+        if [[ "$(symbol_value ZRAM)" == m ]]; then
+            mode=module
+        else
+            mode=builtin
+        fi
+    fi
+    if [[ "$mode" == module ]] && ! is_symbol_enabled_now MODULES; then
+        _UNSUPPORTED_REQUESTS+=("ZRAM=module requires CONFIG_MODULES=y; module support was not changed")
+        return
+    fi
+    case "$mode" in
+        off) request_explicit_symbol ZRAM n; return ;;
+        module) request_explicit_symbol ZRAM m ;;
+        builtin) request_explicit_symbol ZRAM y ;;
+    esac
+    if [[ "$ZRAM_COMPRESSOR" != keep ]]; then
+        suffix="${ZRAM_COMPRESSOR@U}"
+        backend="$suffix"
+        if [[ "$ZRAM_COMPRESSOR" == lzo-rle ]]; then
+            suffix=LZORLE
+            backend=LZO
+        fi
+        require_control_symbols "ZRAM_BACKEND_$backend" "ZRAM_DEF_COMP_$suffix" || return 0
+        request_explicit_symbol "ZRAM_BACKEND_$backend" y
+        request_choice "ZRAM_DEF_COMP_$suffix" ZRAM_DEF_COMP_LZORLE ZRAM_DEF_COMP_LZO \
+            ZRAM_DEF_COMP_LZ4 ZRAM_DEF_COMP_LZ4HC ZRAM_DEF_COMP_ZSTD ZRAM_DEF_COMP_DEFLATE ZRAM_DEF_COMP_842
+    fi
+}
+
+configure_numa_balancing_control() {
+    [[ "$NUMA_BALANCING" != keep ]] || return 0
+    require_control_symbols NUMA_BALANCING || return 0
+    forget_control_requests NUMA_BALANCING
+    if [[ "$NUMA_BALANCING" == off ]]; then
+        request_explicit_symbol NUMA_BALANCING n
+    else
+        request_explicit_symbol NUMA y
+        if have_symbol NUMA_MIGRATION; then
+            request_explicit_symbol NUMA_MIGRATION y
+        else
+            request_explicit_symbol MIGRATION y
+        fi
+        request_explicit_symbol NUMA_BALANCING y
+        request_explicit_symbol NUMA_BALANCING_DEFAULT_ENABLED y
+    fi
+}
+
+configure_profile_numa_balancing() {
+    [[ "$NUMA_SUPPORT_EFFECTIVE" != off && "$NUMA_BALANCING" != off ]] || return 0
+    [[ "$NUMA_BALANCING_MODE_EFFECTIVE" != off ]] || return 0
+    if [[ "$NUMA_SUPPORT_EFFECTIVE" == on ]] || is_symbol_enabled_now NUMA; then
+        # Reuse version-aware dependencies without changing the explicit control
+        # or enabling NUMA on a non-NUMA baseline.
+        NUMA_BALANCING=on configure_numa_balancing_control
+    fi
+}
+
+configure_kmalloc_partition_control() {
+    [[ "$KMALLOC_PARTITION" != keep ]] || return 0
+    if have_symbol KMALLOC_PARTITION_CACHES; then
+        # RANDOM_KMALLOC_CACHES is transitional in 7.2; do not request its value.
+        if [[ "$KMALLOC_PARTITION" == off ]]; then
+            request_explicit_symbol KMALLOC_PARTITION_CACHES n
+        else
+            require_control_symbols "KMALLOC_PARTITION_${KMALLOC_PARTITION@U}" || return 0
+            request_explicit_symbol KMALLOC_PARTITION_CACHES y
+            request_choice "KMALLOC_PARTITION_${KMALLOC_PARTITION@U}" \
+                KMALLOC_PARTITION_RANDOM KMALLOC_PARTITION_TYPED
+        fi
+    elif [[ "$KMALLOC_PARTITION" == typed ]]; then
+        _UNSUPPORTED_REQUESTS+=("typed kmalloc partitioning is not supported by this kernel")
+    elif [[ "$KMALLOC_PARTITION" == random ]]; then
+        request_explicit_symbol RANDOM_KMALLOC_CACHES y
+    else
+        request_explicit_symbol RANDOM_KMALLOC_CACHES n
+    fi
+}
+
+configure_tcp_congestion_control() {
+    [[ "$TCP_CONGESTION" != keep ]] || return 0
+    require_control_symbols "DEFAULT_${TCP_CONGESTION@U}" || return 0
+    request_explicit_symbol NET y
+    request_explicit_symbol INET y
+    request_explicit_symbol TCP_CONG_ADVANCED y
+    if [[ "$TCP_CONGESTION" != reno ]]; then
+        request_explicit_symbol "TCP_CONG_${TCP_CONGESTION@U}" y
+    fi
+    if [[ "$TCP_CONGESTION" == bbr ]]; then
+        request_explicit_symbol NET_SCHED y
+        request_explicit_symbol NET_SCH_FQ y
+    fi
+    request_choice "DEFAULT_${TCP_CONGESTION@U}" DEFAULT_BIC DEFAULT_CUBIC DEFAULT_HTCP \
+        DEFAULT_HYBLA DEFAULT_VEGAS DEFAULT_VENO DEFAULT_WESTWOOD DEFAULT_DCTCP DEFAULT_CDG DEFAULT_BBR DEFAULT_RENO
+}
+
+configure_extended_controls() {
+    configure_risk_controls
+    case "$UCLAMP" in
+        on)
+            request_explicit_symbol CPU_FREQ_GOV_SCHEDUTIL y
+            request_explicit_symbol UCLAMP_TASK y
+            ;;
+        off) forget_control_requests UCLAMP_TASK; request_explicit_symbol UCLAMP_TASK n ;;
+    esac
+    case "$AUTOGROUP" in
+        on) request_explicit_symbol SCHED_AUTOGROUP y ;;
+        off) request_explicit_symbol SCHED_AUTOGROUP n ;;
+    esac
+    _load_symbol_cache
+    configure_preemption "$PREEMPTION"
+    if [[ "$PREEMPTION" == rt ]]; then
+        # These profile defaults cannot survive PREEMPT_RT's dependencies.
+        forget_control_requests TRANSPARENT_HUGEPAGE
+        forget_control_requests NUMA_BALANCING
+        disable_if_present TRANSPARENT_HUGEPAGE NUMA_BALANCING
+    fi
+    case "$PREEMPT_DYNAMIC" in
+        on) request_explicit_symbol PREEMPT_DYNAMIC y ;;
+        off) request_explicit_symbol PREEMPT_DYNAMIC n ;;
+    esac
+    configure_tick_mode "$TICK_MODE"
+    configure_thp_control
+    case "$LRU_GEN" in
+        on)
+            request_explicit_symbol LRU_GEN y
+            request_explicit_symbol LRU_GEN_ENABLED y
+            ;;
+        off)
+            request_explicit_symbol LRU_GEN_ENABLED n
+            request_explicit_symbol LRU_GEN n
+            ;;
+    esac
+    configure_zswap_control
+    configure_zram_control
+    configure_numa_balancing_control
+    configure_kmalloc_partition_control
+    configure_tcp_congestion_control
+    case "$IO_URING" in
+        on) request_explicit_symbol IO_URING y ;;
+        off)
+            if is_symbol_enabled_now EXPERT; then
+                request_explicit_symbol IO_URING n
+            else
+                _UNSUPPORTED_REQUESTS+=("IO_URING=off requires CONFIG_EXPERT=y; EXPERT was not changed")
+            fi
+            ;;
+    esac
+}
+
+configure_risk_controls() {
+    local setting sym mode
+    _load_symbol_cache
+    for setting in MODULE_FORCE_LOAD MODULE_FORCE_UNLOAD OBSOLETE_CRYPTO; do
+        mode="${!setting}"
+        [[ "$mode" != keep ]] || continue
+        sym="$setting"
+        [[ "$setting" != OBSOLETE_CRYPTO ]] || sym=CRYPTO_USER_API_ENABLE_OBSOLETE
+        if [[ "$mode" == on ]]; then
+            if [[ "$setting" == MODULE_FORCE_* ]] && ! is_symbol_enabled_now MODULES; then
+                _UNSUPPORTED_REQUESTS+=("$setting=on requires CONFIG_MODULES=y; module support was not changed")
+                continue
+            fi
+            if [[ "$setting" == MODULE_FORCE_UNLOAD ]] && ! is_symbol_enabled_now MODULE_UNLOAD; then
+                _UNSUPPORTED_REQUESTS+=("MODULE_FORCE_UNLOAD=on requires CONFIG_MODULE_UNLOAD=y")
+                continue
+            fi
+            request_explicit_symbol "$sym" y
+        else
+            request_explicit_symbol "$sym" n
+        fi
+    done
+    if [[ "$NFS_UDP" != keep ]]; then
+        _load_symbol_cache
+        if [[ "${_SYMBOL_VALUE_CACHE[NFS_FS]:-n}" == n ]]; then
+            _UNSUPPORTED_REQUESTS+=("NFS_UDP=$NFS_UDP requires enabled CONFIG_NFS_FS; NFS was not enabled implicitly")
+        elif [[ "$NFS_UDP" == off ]]; then
+            request_explicit_symbol NFS_DISABLE_UDP_SUPPORT y
+        else
+            request_explicit_symbol NFS_DISABLE_UDP_SUPPORT n
+        fi
+    fi
+}
+
+prune_deprecated_aliases() {
+    local alias replacement desired current
+    local -a alias_targets=()
+    # These aliases only select/imply replacement drivers in the audited trees.
+    # Keep the replacement at least as available as the former alias. Kconfig
+    # and strict validation still decide whether its dependencies are satisfied.
+    while read -r alias replacement; do
+        is_prunable_toggle "$alias" || continue
+        _load_symbol_cache
+        desired="${_SYMBOL_VALUE_CACHE[$alias]:-n}"
+        [[ "$desired" == y || "$desired" == m ]] || continue
+        alias_targets=("$alias")
+        preserve_selected_prune_targets alias_targets
+        ((${#alias_targets[@]})) || continue
+        if ! have_symbol "$replacement"; then
+            echo "Retaining CONFIG_$alias: replacement CONFIG_$replacement is unavailable"
+            continue
+        fi
+        current="${_SYMBOL_VALUE_CACHE[$replacement]:-n}"
+        [[ "$current" != y ]] || desired=y
+        if is_protected_config_symbol "$replacement" && [[ "$current" != "$desired" ]]; then
+            echo "Retaining CONFIG_$alias: replacement CONFIG_$replacement is protected at $current"
+            continue
+        fi
+        echo "Migrating CONFIG_$alias to CONFIG_$replacement=$desired"
+        request_explicit_symbol "$replacement" "$desired"
+        disable_config_symbol "$alias"
+    done <<'EOF'
+HID_THINGM HID_LED
+AK09911 AK8975
+USB_EHCI_TEGRA USB_CHIPIDEA_TEGRA
+USB_OHCI_HCD_OMAP3 USB_OHCI_HCD_PLATFORM
+SND_SOC_INTEL_GLK_DA7219_MAX98357A_MACH SND_SOC_INTEL_SOF_DA7219_MACH
+SND_SOC_INTEL_GLK_RT5682_MAX98357A_MACH SND_SOC_INTEL_SOF_RT5682_MACH
+SND_SOC_INTEL_CML_LP_DA7219_MAX98357A_MACH SND_SOC_INTEL_SOF_DA7219_MACH
+SND_SOC_INTEL_SOF_CML_RT1011_RT5682_MACH SND_SOC_INTEL_SOF_RT5682_MACH
+EOF
+}
+
+configure_symbol_overrides() {
+    local sym value
+    # Apply built-ins first so an explicit MODULES=y can precede module requests.
+    for value in y m n; do
+        for sym in "${!_EXPLICIT_SYMBOL_VALUES[@]}"; do
+            [[ "${_EXPLICIT_SYMBOL_VALUES[$sym]}" == "$value" ]] || continue
+            if [[ "$value" == m ]] && ! is_symbol_enabled_now MODULES; then
+                _UNSUPPORTED_REQUESTS+=("CONFIG_$sym=m requires CONFIG_MODULES=y")
+                continue
+            fi
+            request_explicit_symbol "$sym" "$value"
+        done
+    done
+}
+
+_INITRAMFS_EVIDENCE=""
+declare -a _INITRAMFS_REQUIRED_SYMBOLS=()
+
+prepare_initramfs_check() {
+    if [[ "$INITRAMFS_GENERATOR" == none && -z "$INITRAMFS_IMAGE" ]]; then
+        [[ -z "$INITRAMFS_CONFIG" && "$INITRAMFS_COMPRESSION" == auto ]] \
+            || die "Producer config/compression requires an initramfs generator"
+        if [[ "$INITRD_COMPRESSION" == auto ]]; then
+            die "INITRD_COMPRESSION=auto requires a generator or an initramfs image"
+        fi
+        return
+    fi
+    command -v python3 >/dev/null || die "Initramfs inspection requires Python 3.11+ (or use --initramfs-generator=none)"
+    python3 -B -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
+        || die "Initramfs inspection requires Python 3.11 or later"
+    [[ -r "$SCRIPT_DIR/lib/initramfs_check.py" ]] || die "Missing helper: $SCRIPT_DIR/lib/initramfs_check.py"
+    _INITRAMFS_EVIDENCE="$(python3 -B "$SCRIPT_DIR/lib/initramfs_check.py" discover \
+        --generator "$INITRAMFS_GENERATOR" --producer-config "$INITRAMFS_CONFIG" \
+        --image "$INITRAMFS_IMAGE" --compression "$INITRAMFS_COMPRESSION")" \
+        || die "Could not inspect initramfs compression; original config was not modified"
+    if [[ "$INITRD_COMPRESSION" == auto ]]; then
+        local requirements
+        if requirements="$(python3 -B "$SCRIPT_DIR/lib/initramfs_check.py" requirements <<<"$_INITRAMFS_EVIDENCE")"; then
+            mapfile -t _INITRAMFS_REQUIRED_SYMBOLS <<<"$requirements"
+        else
+            _UNSUPPORTED_REQUESTS+=("Cannot infer initramfs decoder requirements")
+        fi
+    fi
+}
+
+verify_initramfs_result() {
+    if [[ -z "$_INITRAMFS_EVIDENCE" ]]; then
+        echo "Initramfs compression: not checked (--initramfs-generator=none)"
+        return
+    fi
+    if ! python3 -B "$SCRIPT_DIR/lib/initramfs_check.py" validate --kernel-config "$CONFIG_FILE" <<<"$_INITRAMFS_EVIDENCE"; then
+        if is_enabled "$STRICT"; then
+            die "Strict initramfs validation failed; original config was not modified"
+        fi
+        echo "Warning: initramfs compatibility is not established; use --strict to reject this result." >&2
+    fi
+}
+
+configure_explicit_controls() {
+    local sym selected
+    if [[ "$SCHED_CACHE" != none ]]; then
+        if [[ "$SCHED_CACHE" == on ]]; then
+            request_explicit_symbol SCHED_CACHE y
+        else
+            request_explicit_symbol SCHED_CACHE n
+        fi
+    fi
+    if [[ "$KERNEL_COMPRESSION" != keep ]]; then
+        selected="KERNEL_${KERNEL_COMPRESSION@U}"
+        request_choice "$selected" KERNEL_GZIP KERNEL_BZIP2 KERNEL_LZMA KERNEL_XZ KERNEL_LZO KERNEL_LZ4 KERNEL_ZSTD
+    fi
+    if [[ "$INITRD_COMPRESSION" == auto ]]; then
+        for sym in "${_INITRAMFS_REQUIRED_SYMBOLS[@]}"; do
+            request_explicit_symbol "$sym" y
+        done
+    elif [[ "$INITRD_COMPRESSION" != keep ]]; then
+        request_explicit_symbol BLK_DEV_INITRD y
+        if [[ "$INITRD_COMPRESSION" != none ]]; then
+            request_explicit_symbol "RD_${INITRD_COMPRESSION@U}" y
+        fi
+    fi
+    case "$FIRMWARE_COMPRESSION" in
+        on)
+            request_explicit_symbol FW_LOADER_COMPRESS y
+            request_explicit_symbol FW_LOADER_COMPRESS_XZ y
+            request_explicit_symbol FW_LOADER_COMPRESS_ZSTD y
+            ;;
+        off)
+            request_explicit_symbol FW_LOADER_COMPRESS n
+            ;;
+    esac
 }
 
 prepare_sorted_unique_symbols() {
@@ -2225,7 +3059,10 @@ disable_discovered_and_fixed_symbols() {
 
     syms+=("$@")
     for sym in "${syms[@]}"; do
+        is_prunable_toggle "$sym" || continue
         if is_inverse_disable_symbol "$sym"; then
+            # Do not enable an inverse choice whose parent is absent/disabled.
+            config_has_symbol "$sym" || continue
             enable_inverse_syms+=("$sym")
         else
             disable_syms+=("$sym")
@@ -2233,6 +3070,7 @@ disable_discovered_and_fixed_symbols() {
     done
 
     if ((${#disable_syms[@]} > 0)); then
+        preserve_selected_prune_targets disable_syms
         disable_if_present "${disable_syms[@]}"
     fi
 
@@ -2253,10 +3091,9 @@ enable_if_present() {
     done
 }
 
-# Symbols that depend on a disabled parent are not written to .config, so
-# have_symbol cannot see them until Kconfig re-evaluates the file.
+# Refresh effective values after enabling parents; symbol discovery uses Kconfig.
 refresh_config_visibility() {
-    env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
+    make KCONFIG_CONFIG="$CONFIG_FILE" olddefconfig >/dev/null
     invalidate_symbol_cache
 }
 
@@ -2271,7 +3108,7 @@ enable_parents_if_present() {
     ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
     for sym in "${unique_syms[@]}"; do
         if have_symbol "$sym" && ! is_protected_config_symbol "$sym" \
-            && [[ "${_SYMBOL_VALUE_CACHE[$sym]}" != "y" ]]; then
+            && [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" != "y" ]]; then
             needs_refresh=true
         fi
     done
@@ -2291,7 +3128,7 @@ enable_if_unset() {
     prepare_sorted_unique_symbols unique_syms "$@"
     ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
     for sym in "${unique_syms[@]}"; do
-        if have_symbol "$sym" && [[ "${_SYMBOL_VALUE_CACHE[$sym]}" == "n" ]]; then
+        if have_symbol "$sym" && [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" == "n" ]]; then
             enable_config_symbol "$sym"
         fi
     done
@@ -2360,19 +3197,15 @@ configure_hz_profile() {
 select_if_present() {
     local selected="$1"
     shift
-
+    normalize_config_symbol_name "$selected"
+    selected="$REPLY"
     if have_symbol "$selected"; then
-        disable_if_present "$@"
-        normalize_config_symbol_name "$selected"
-        local normalized_selected="$REPLY"
-        if is_protected_config_symbol "$normalized_selected"; then
-            echo "Skipping protected symbol: CONFIG_${normalized_selected}"
-        else
-            echo "Selecting: CONFIG_${normalized_selected}"
-            if cfg --enable "$normalized_selected"; then
-                record_config_expectation "$normalized_selected" y
-            fi
+        if is_protected_config_symbol "$selected"; then
+            echo "Skipping protected choice: CONFIG_${selected}"
+            return
         fi
+        disable_if_present "$@"
+        enable_config_symbol "$selected"
     fi
 }
 
@@ -2409,9 +3242,6 @@ configure_explicit_timer_hz() {
 configure_explicit_preempt_mode() {
     local mode="$1"
     local selected=""
-    local sym
-    local -a all_syms=(PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_LAZY PREEMPT_RT PREEMPT_DYNAMIC)
-    local -a other_syms=()
 
     case "$mode" in
         none) selected="PREEMPT_NONE" ;;
@@ -2429,13 +3259,12 @@ configure_explicit_preempt_mode() {
         return
     fi
 
-    for sym in "${all_syms[@]}"; do
-        [[ "$sym" == "$selected" ]] || other_syms+=("$sym")
-    done
-    select_if_present "$selected" "${other_syms[@]}"
+    configure_preemption "$mode"
 
     if [[ "$mode" == "full" || "$mode" == "lazy" ]]; then
         enable_if_present PREEMPT_DYNAMIC
+    else
+        disable_if_present PREEMPT_DYNAMIC
     fi
 }
 
@@ -2614,9 +3443,6 @@ configure_optimization_profile() {
     echo
     echo "==> Applying optimization profile: $profile"
 
-    local numa_mode
-    numa_mode="$(resolve_numa_support_for_profile)"
-
     local wants_observability=true
     if is_enabled "$PRUNE_OBSERVABILITY" || is_enabled "$PRUNE_DEBUG_TRACE"; then
         wants_observability=false
@@ -2641,6 +3467,7 @@ configure_optimization_profile() {
         CC_OPTIMIZE_FOR_SIZE \
         SLUB_TINY
 
+    configure_profile_scheduler "$profile"
     case "$profile" in
         server)
             echo "    (prioritizes throughput and low background overhead)"
@@ -2651,7 +3478,6 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
-                HZ_PERIODIC \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
 
@@ -2686,8 +3512,8 @@ configure_optimization_profile() {
                 FAIR_GROUP_SCHED \
                 KSM \
                 MEMCG \
-                NO_HZ_IDLE \
                 RCU_NOCB_CPU \
+                RCU_NOCB_CPU_DEFAULT_ALL \
                 TRANSPARENT_HUGEPAGE \
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
@@ -2716,26 +3542,13 @@ configure_optimization_profile() {
                 disable_if_present PSI_DEFAULT_DISABLED
             fi
 
-            # NUMA-aware balancing: only if the host actually has NUMA.
-            if [[ "$NUMA_BALANCING_MODE_EFFECTIVE" == "auto" && "$numa_mode" == "on" ]]; then
-                enable_numa_balancing_support false
-            fi
+            # NUMA-aware balancing: only if the host actually has NUMA
+            configure_profile_numa_balancing
 
             if [[ "$TIMER_HZ_EFFECTIVE" == "auto" ]]; then
                 configure_hz_profile server
             fi
 
-            if [[ "$PREEMPT_MODE_EFFECTIVE" == "auto" ]]; then
-                if have_symbol PREEMPT_NONE; then
-                    select_if_present PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
-                elif have_symbol PREEMPT_VOLUNTARY; then
-                    select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
-                elif have_symbol PREEMPT_LAZY; then
-                    # 7.0+ architectures with ARCH_HAS_PREEMPT_LAZY (x86) only
-                    # offer PREEMPT and PREEMPT_LAZY; lazy is the throughput one.
-                    select_if_present PREEMPT_LAZY PREEMPT PREEMPT_RT
-                fi
-            fi
             ;;
         desktop)
             echo "    (prioritizes interactivity and responsive scheduling)"
@@ -2746,7 +3559,6 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
-                HZ_PERIODIC \
                 PREEMPT_RT
 
             enable_parents_if_present \
@@ -2770,7 +3582,6 @@ configure_optimization_profile() {
                 HIGH_RES_TIMERS \
                 KSM \
                 MEMCG \
-                NO_HZ_IDLE \
                 SCHED_AUTOGROUP \
                 TRANSPARENT_HUGEPAGE \
                 UCLAMP_TASK \
@@ -2778,14 +3589,9 @@ configure_optimization_profile() {
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
 
-            if have_symbol TRANSPARENT_HUGEPAGE_MADVISE || have_symbol TRANSPARENT_HUGEPAGE_ALWAYS; then
-                if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
-                    select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
-                        TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
-                else
-                    select_if_present TRANSPARENT_HUGEPAGE_ALWAYS \
-                        TRANSPARENT_HUGEPAGE_MADVISE TRANSPARENT_HUGEPAGE_NEVER
-                fi
+            if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
+                select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
+                    TRANSPARENT_HUGEPAGE_ALWAYS TRANSPARENT_HUGEPAGE_NEVER
             fi
 
             configure_throughput_memory_defaults desktop
@@ -2795,38 +3601,27 @@ configure_optimization_profile() {
                 disable_if_present PSI_DEFAULT_DISABLED
             fi
 
-            if [[ "$NUMA_BALANCING_MODE_EFFECTIVE" == "auto" && "$numa_mode" == "on" ]]; then
-                enable_numa_balancing_support false
-            fi
+            configure_profile_numa_balancing
 
             if [[ "$TIMER_HZ_EFFECTIVE" == "auto" ]]; then
                 configure_hz_profile desktop
             fi
 
-            if [[ "$PREEMPT_MODE_EFFECTIVE" == "auto" ]]; then
-                if have_symbol PREEMPT; then
-                    select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
-                elif have_symbol PREEMPT_LAZY; then
-                    select_if_present PREEMPT_LAZY PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC PREEMPT_RT
-                elif have_symbol PREEMPT_VOLUNTARY; then
-                    select_if_present PREEMPT_VOLUNTARY PREEMPT_NONE PREEMPT PREEMPT_DYNAMIC PREEMPT_RT PREEMPT_LAZY
-                fi
-
-                enable_if_present PREEMPT_DYNAMIC
-            fi
             ;;
         realtime)
             echo "    (prioritizes low latency and deterministic wakeups)"
 
+            # The compression preset's child requests cannot survive ZSWAP=n.
+            forget_control_requests ZSWAP
             disable_if_present \
                 CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
                 CPU_FREQ_DEFAULT_GOV_ONDEMAND \
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
-                HZ_PERIODIC \
                 KSM \
                 PSI \
+                PSI_DEFAULT_DISABLED \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT \
                 ZSWAP
@@ -2839,8 +3634,6 @@ configure_optimization_profile() {
                 CPU_FREQ_GOV_PERFORMANCE \
                 FAIR_GROUP_SCHED \
                 HIGH_RES_TIMERS \
-                NO_HZ_IDLE \
-                PSI_DEFAULT_DISABLED \
                 RCU_BOOST \
                 RCU_NOCB_CPU \
                 RCU_NOCB_CPU_CB_BOOST
@@ -2853,15 +3646,6 @@ configure_optimization_profile() {
                 configure_hz_profile realtime
             fi
 
-            if [[ "$PREEMPT_MODE_EFFECTIVE" == "auto" ]]; then
-                if have_symbol PREEMPT_RT; then
-                    select_if_present PREEMPT_RT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_DYNAMIC
-                elif have_symbol PREEMPT; then
-                    select_if_present PREEMPT PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT_DYNAMIC PREEMPT_RT
-                elif have_symbol PREEMPT_DYNAMIC; then
-                    select_if_present PREEMPT_DYNAMIC PREEMPT_NONE PREEMPT_VOLUNTARY PREEMPT PREEMPT_RT
-                fi
-            fi
             ;;
     esac
 }
@@ -3515,7 +4299,7 @@ configure_application_profiles() {
                 done
                 ;;
             nfs-server)
-                for sym in NFSD NFSD_V3_ACL NFSD_V4 NFSD_PNFS NFSD_BLOCKLAYOUT NFSD_SCSILAYOUT NFSD_FLEXFILELAYOUT SUNRPC SUNRPC_GSS LOCKD LOCKD_V4 GRACE_PERIOD EXPORTFS FSNOTIFY; do
+                for sym in NFSD NFSD_V3_ACL NFSD_V4 NFSD_PNFS NFSD_BLOCKLAYOUT NFSD_SCSILAYOUT SUNRPC SUNRPC_GSS LOCKD LOCKD_V4 GRACE_PERIOD EXPORTFS FSNOTIFY; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
@@ -3596,7 +4380,186 @@ configure_application_profiles() {
     fi
 }
 
+validate_enum() {
+    local setting="$1" choices="$2" raw allowed
+    local -a values=()
+    raw="${!setting}"
+    raw="${raw@L}"
+    IFS='|' read -r -a values <<<"$choices"
+    for allowed in "${values[@]}"; do
+        if [[ "$raw" == "$allowed" ]]; then
+            printf -v "$setting" '%s' "$raw"
+            return
+        fi
+    done
+    die "Invalid $setting: $raw (use ${choices//|/, })"
+}
+
+validate_tunables() {
+    local setting value sym raw
+    local -a symbols=()
+    VALIDATION_MODE_EFFECTIVE="$(resolve_validation_mode)"
+    PREEMPT_MODE_EFFECTIVE="$(resolve_preempt_mode)"
+    TIMER_HZ_EFFECTIVE="$(resolve_timer_hz)"
+    SCHED_CACHE_MODE_EFFECTIVE="$(resolve_auto_on_off_mode SCHED_CACHE_MODE)"
+    MGLRU_MODE_EFFECTIVE="$(resolve_auto_on_off_mode MGLRU_MODE)"
+    NUMA_BALANCING_MODE_EFFECTIVE="$(resolve_auto_on_off_mode NUMA_BALANCING_MODE)"
+    NATIVE_CPU_EFFECTIVE="$(resolve_native_cpu_mode)"
+    if [[ "$VALIDATION_MODE_EFFECTIVE" == strict ]]; then
+        STRICT=true
+    fi
+    for setting in DISABLE_SYMBOLS MODULE_SYMBOLS ENABLE_SYMBOLS; do
+        case "$setting" in
+            DISABLE_SYMBOLS) value=n ;;
+            MODULE_SYMBOLS) value=m ;;
+            ENABLE_SYMBOLS) value=y ;;
+        esac
+        raw="${!setting}"
+        [[ "$raw" == none || -z "$raw" ]] && continue
+        IFS=',' read -r -a symbols <<<"$raw"
+        for sym in "${symbols[@]}"; do
+            normalize_config_symbol_name "$sym"
+            sym="$REPLY"
+            [[ "$sym" =~ ^[A-Za-z0-9_]+$ ]] || die "Invalid symbol in $setting: $sym"
+            if [[ -v _EXPLICIT_SYMBOL_VALUES[$sym] && "${_EXPLICIT_SYMBOL_VALUES[$sym]}" != "$value" ]]; then
+                die "Conflicting explicit values for CONFIG_$sym"
+            fi
+            _EXPLICIT_SYMBOL_VALUES["$sym"]="$value"
+        done
+    done
+    OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
+    CPU_VENDOR_EFFECTIVE="$(resolve_cpu_vendor_filter)"
+    VIDEO_SUPPORT_EFFECTIVE="$(resolve_video_support)"
+    UEFI_SUPPORT_EFFECTIVE="$(resolve_uefi_support)"
+    INITRD_SUPPORT_EFFECTIVE="$(resolve_initrd_support)"
+    TPM_RESOLVED="$(resolve_tpm_support)"
+    DMA_ENGINE_SUPPORT_EFFECTIVE="$(resolve_dma_engine_support)"
+    IOMMU_SUPPORT_EFFECTIVE="$(resolve_iommu_support)"
+    NUMA_SUPPORT_EFFECTIVE="$(resolve_numa_support)"
+    NR_CPUS_EFFECTIVE="$(resolve_nr_cpus)"
+    HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
+    APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
+    validate_enum PREEMPTION 'keep|none|voluntary|full|lazy|rt'
+    validate_enum PREEMPT_DYNAMIC 'keep|on|off'
+    validate_enum TICK_MODE 'keep|periodic|idle|full'
+    validate_enum THP 'keep|off|always|madvise|never'
+    validate_enum LRU_GEN 'keep|on|off'
+    validate_enum ZSWAP 'keep|on|off'
+    validate_enum ZSWAP_COMPRESSOR 'keep|lzo|lz4|lz4hc|zstd|deflate|842'
+    validate_enum ZRAM 'keep|off|module|builtin'
+    validate_enum ZRAM_COMPRESSOR 'keep|lzo-rle|lzo|lz4|lz4hc|zstd|deflate|842'
+    validate_enum NUMA_BALANCING 'keep|on|off'
+    validate_enum KMALLOC_PARTITION 'keep|off|random|typed'
+    validate_enum TCP_CONGESTION 'keep|cubic|bbr|reno'
+    validate_enum IO_URING 'keep|on|off'
+    validate_enum UCLAMP 'keep|on|off'
+    validate_enum AUTOGROUP 'keep|on|off'
+    validate_enum MODULE_FORCE_LOAD 'keep|on|off'
+    validate_enum MODULE_FORCE_UNLOAD 'keep|on|off'
+    validate_enum NFS_UDP 'keep|on|off'
+    validate_enum OBSOLETE_CRYPTO 'keep|on|off'
+    validate_enum INITRAMFS_GENERATOR 'auto|none|genkernel|ugrd'
+    validate_enum INITRAMFS_COMPRESSION 'auto|none|best|fastest|gzip|bzip2|lzma|xz|lzo|lz4|zstd'
+    validate_enum INITRD_COMPRESSION 'keep|auto|none|gzip|bzip2|lzma|xz|lzo|lz4|zstd'
+    if [[ "$ZSWAP" == off && "$ZSWAP_COMPRESSOR" != keep ]]; then
+        die "ZSWAP=off conflicts with ZSWAP_COMPRESSOR=$ZSWAP_COMPRESSOR"
+    fi
+    if [[ "$ZRAM" == off && "$ZRAM_COMPRESSOR" != keep ]]; then
+        die "ZRAM=off conflicts with ZRAM_COMPRESSOR=$ZRAM_COMPRESSOR"
+    fi
+    if [[ "$NUMA_BALANCING" == on && "$NUMA_SUPPORT_EFFECTIVE" == off ]]; then
+        die "NUMA_BALANCING=on conflicts with NUMA_SUPPORT=off"
+    fi
+    if [[ "$PREEMPTION" == rt ]]; then
+        if [[ "$THP" != keep && "$THP" != off ]]; then
+            die "PREEMPTION=rt conflicts with THP=$THP"
+        fi
+        if [[ "$NUMA_BALANCING" == on ]]; then
+            die "PREEMPTION=rt conflicts with NUMA_BALANCING=on"
+        fi
+    fi
+    SCHED_CACHE="${SCHED_CACHE@L}"
+    case "$SCHED_CACHE" in
+        none | on | off) ;;
+        *) die "Invalid SCHED_CACHE: $SCHED_CACHE (use none, on, off)" ;;
+    esac
+    validate_enum KERNEL_COMPRESSION 'keep|gzip|bzip2|lzma|xz|lzo|lz4|zstd'
+    FIRMWARE_COMPRESSION="${FIRMWARE_COMPRESSION@L}"
+    case "$FIRMWARE_COMPRESSION" in
+        keep | on | off) ;;
+        *) die "Invalid FIRMWARE_COMPRESSION: $FIRMWARE_COMPRESSION (use keep, on, off)" ;;
+    esac
+    if [[ "$INITRD_COMPRESSION" != keep && "$INITRD_SUPPORT_EFFECTIVE" == off ]]; then
+        die "INITRD_COMPRESSION conflicts with INITRD_SUPPORT=off"
+    fi
+}
+
+capture_protected_values() {
+    local sym
+    _load_symbol_cache
+    for sym in "${!_PROTECTED_CONFIG_SYMBOL_MAP[@]}"; do
+        _PROTECTED_ORIGINAL_VALUES["$sym"]="${_SYMBOL_VALUE_CACHE[$sym]:-__absent__}"
+    done
+}
+
+verify_config_result() {
+    local sym actual expected issue
+    local failures=0
+    _load_symbol_cache
+    for issue in "${_UNSUPPORTED_REQUESTS[@]}"; do
+        echo "Unmet request: $issue" >&2
+        failures=$((failures + 1))
+    done
+    for sym in "${!_REQUESTED_VALUES[@]}"; do
+        expected="${_REQUESTED_VALUES[$sym]}"
+        actual="${_SYMBOL_VALUE_CACHE[$sym]:-n}"
+        if [[ "$expected" != "$actual" ]]; then
+            echo "Unmet request: CONFIG_$sym requested=$expected final=$actual (check Kconfig dependencies/choices)" >&2
+            failures=$((failures + 1))
+        fi
+    done
+    for sym in "${!_PROTECTED_ORIGINAL_VALUES[@]}"; do
+        expected="${_PROTECTED_ORIGINAL_VALUES[$sym]}"
+        actual="${_SYMBOL_VALUE_CACHE[$sym]:-__absent__}"
+        if [[ "$expected" != "$actual" ]]; then
+            echo "Protected symbol changed: CONFIG_$sym before=$expected final=$actual" >&2
+            failures=$((failures + 1))
+        fi
+    done
+    if ((failures > 0)); then
+        if is_enabled "$STRICT"; then
+            die "Strict validation failed ($failures issues); original config was not modified"
+        fi
+        echo "Validation: $failures unmet requests/protected changes; use --strict to reject them." >&2
+    else
+        echo "==> Validation passed: ${#_REQUESTED_VALUES[@]} requested CONFIG values are effective"
+    fi
+}
+
+if is_enabled "$AUDIT_KCONFIG"; then
+    command -v python3 >/dev/null || die "Kconfig audit requires Python 3.11+"
+    audit_tree="${KSRCDIR:-${positionals[0]:-$(detect_default_ksrcdir)}}"
+    audit_args=(--kernel-srcdir "$audit_tree" --arch "${ARCH:-$(uname -m)}")
+    if [[ -n "${CONFIG_FILE:-${positionals[1]:-}}" ]]; then
+        audit_args+=(--config-file "${CONFIG_FILE:-${positionals[1]}}")
+    fi
+    python3 -B "$SCRIPT_DIR/lib/kconfig_audit.py" "${audit_args[@]}"
+    exit 0
+fi
+
+prepare_paths
+validate_tunables
 load_protected_config_symbols
+prepare_initramfs_check
+if is_enabled "$CHECK"; then
+    verify_initramfs_result
+    echo "Check passed: inputs and kernel tree prerequisites are valid. No files were modified."
+    exit 0
+fi
+load_defined_symbols
+load_kconfig_metadata
+capture_protected_values
+prepare_transaction
 load_baseline_module_symbols
 
 if is_enabled "$ALL_OPTIMIZATIONS"; then
@@ -3653,16 +4616,23 @@ fi
 
 if is_enabled "$PRUNE_DANGEROUS"; then
     echo
-    echo "==> Disabling options explicitly marked dangerous/unsafe"
+    echo "==> Disabling dangerous/unsafe options and reviewed non-production features"
 
     disable_discovered_and_fixed_symbols \
         discover_dangerous_kconfig_symbols \
         ADFS_FS_RW \
+        CXL_MEM_RAW_COMMANDS \
         DRM_FBDEV_LEAK_PHYS_SMEM \
         FB_VIA_DIRECT_PROCFS \
         MEMSTICK_UNSAFE_RESUME \
         MICROCODE_LATE_LOADING \
+        MODULE_FORCE_LOAD \
+        MODULE_FORCE_UNLOAD \
+        MMC_TEST \
+        IOMMUFD_TEST \
+        I2C_AT91_SLAVE_EXPERIMENTAL \
         MTD_TESTS \
+        NFSD_FLEXFILELAYOUT \
         SPI_INTEL_PLATFORM \
         UFS_FS_WRITE \
         USB4_DEBUGFS_MARGINING \
@@ -3676,12 +4646,19 @@ if is_enabled "$PRUNE_SELFTEST"; then
     disable_discovered_and_fixed_symbols \
         discover_selftest_kconfig_symbols \
         CORESIGHT \
+        CRYPTO_BENCHMARK \
+        HVC_UDBG \
+        IOMMUFD_TEST \
+        MMC_TEST \
+        NFSD_FLEXFILELAYOUT \
+        KDB \
         KGDB \
         KGDB_KDB \
         KGDB_TESTS \
         KUNIT \
         KUNIT_ALL_TESTS \
         KUNIT_TEST \
+        IO_URING_MOCK_FILE \
         LKDTM \
         RUNTIME_TESTING_MENU \
         TEST_KSTRTOX \
@@ -3729,14 +4706,28 @@ if is_enabled "$PRUNE_LEGACY"; then
         discover_legacy_kconfig_symbols \
         BLK_DEV_FD \
         COMPAT_BRK \
+        FAST_SYSCALL_XTENSA \
+        FAST_SYSCALL_SPILL_REGISTERS \
+        GPIO_SYSFS \
+        GPIO_CDEV_V1 \
         LEGACY_PTYS \
         NF_CT_PROTO_UDPLITE \
         NO_HZ \
         PARPORT \
         PROVE_RCU \
+        S390_HYPFS_FS \
+        SGETMASK_SYSCALL \
+        SND_HDA_CTL_DEV_ID \
+        SYSFS_DEPRECATED \
+        SYSFS_DEPRECATED_V2 \
         SYSFS_SYSCALL \
         UID16 \
         USELIB
+
+    prune_deprecated_aliases
+    if is_symbol_enabled_now SGETMASK_SYSCALL && ! is_symbol_enabled_now EXPERT; then
+        echo "Retaining CONFIG_SGETMASK_SYSCALL: its prompt requires CONFIG_EXPERT=y; EXPERT was not changed"
+    fi
 fi
 
 # extra: debug info choice — only when actively pruning debug/coverage symbols
@@ -3773,6 +4764,7 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
         BOOTPARAM_HUNG_TASK_PANIC \
         BOOTPARAM_SOFTLOCKUP_PANIC \
         CONTEXT_TRACKING_USER_FORCE \
+        DAMON_DEBUG_SANITY \
         DEBUG_ATOMIC_SLEEP \
         DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
         DEBUG_INFO_REDUCED \
@@ -3820,8 +4812,15 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
         SLUB_DEBUG \
         SLUB_DEBUG_ON \
         SLUB_STATS \
+        ZRAM_MEMORY_TRACKING \
         SOFTLOCKUP_DETECTOR \
         ZSMALLOC_STAT
+fi
+
+if is_enabled "$PRUNE_RUNTIME_VERIFICATION" || is_enabled "$PRUNE_OBSERVABILITY" || is_enabled "$PRUNE_DEBUG_TRACE"; then
+    echo
+    echo "==> Disabling Runtime Verification and its dependent monitors"
+    disable_if_present RV
 fi
 
 if is_enabled "$PRUNE_HARDENING"; then
@@ -3848,15 +4847,6 @@ fi
 
 invalidate_symbol_cache
 
-VALIDATION_MODE_EFFECTIVE="$(resolve_validation_mode)"
-PREEMPT_MODE_EFFECTIVE="$(resolve_preempt_mode)"
-TIMER_HZ_EFFECTIVE="$(resolve_timer_hz)"
-SCHED_CACHE_MODE_EFFECTIVE="$(resolve_auto_on_off_mode SCHED_CACHE_MODE)"
-MGLRU_MODE_EFFECTIVE="$(resolve_auto_on_off_mode MGLRU_MODE)"
-NUMA_BALANCING_MODE_EFFECTIVE="$(resolve_auto_on_off_mode NUMA_BALANCING_MODE)"
-NATIVE_CPU_EFFECTIVE="$(resolve_native_cpu_mode)"
-
-OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
 configure_optimization_profile "$OPTIMIZATION_PROFILE_EFFECTIVE"
 
 if [[ "$PREEMPT_MODE_EFFECTIVE" != "auto" ]]; then
@@ -3945,12 +4935,10 @@ fi
 
 configure_xfs_feature_support
 
-UEFI_SUPPORT_EFFECTIVE="$(resolve_uefi_support)"
 if [[ "$UEFI_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_uefi_support_profile "$UEFI_SUPPORT_EFFECTIVE"
 fi
 
-INITRD_SUPPORT_EFFECTIVE="$(resolve_initrd_support)"
 if [[ "$INITRD_SUPPORT_EFFECTIVE" != "none" ]]; then
     if [[ "$INITRD_SUPPORT_EFFECTIVE" == "unknown" ]]; then
         echo
@@ -3960,7 +4948,6 @@ if [[ "$INITRD_SUPPORT_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
-TPM_RESOLVED="$(resolve_tpm_support)"
 if [[ "$TPM_RESOLVED" != "none" ]]; then
     TPM_MODE="$TPM_RESOLVED"
 
@@ -3982,12 +4969,10 @@ if [[ "$TPM_RESOLVED" != "none" ]]; then
     fi
 fi
 
-DMA_ENGINE_SUPPORT_EFFECTIVE="$(resolve_dma_engine_support)"
 if [[ "$DMA_ENGINE_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_dma_engine_support_profile "$DMA_ENGINE_SUPPORT_EFFECTIVE"
 fi
 
-IOMMU_SUPPORT_EFFECTIVE="$(resolve_iommu_support)"
 if [[ "$IOMMU_SUPPORT_EFFECTIVE" != "none" ]]; then
     if ! is_x86_config; then
         echo
@@ -3998,12 +4983,10 @@ if [[ "$IOMMU_SUPPORT_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
-NUMA_SUPPORT_EFFECTIVE="$(resolve_numa_support)"
 if [[ "$NUMA_SUPPORT_EFFECTIVE" != "none" ]]; then
     configure_numa_support_profile "$NUMA_SUPPORT_EFFECTIVE"
 fi
 
-NR_CPUS_EFFECTIVE="$(resolve_nr_cpus)"
 if [[ "$NR_CPUS_EFFECTIVE" != "none" ]]; then
     if [[ "$NR_CPUS_EFFECTIVE" == "unknown" ]]; then
         echo
@@ -4013,7 +4996,6 @@ if [[ "$NR_CPUS_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
-HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
 if [[ "$HOST_TYPE_EFFECTIVE" != "none" ]]; then
     configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 fi
@@ -4120,11 +5102,14 @@ fi
 
 invalidate_symbol_cache
 
-APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
 if [[ "$APPLICATIONS_RESOLVED" != "none" ]]; then
     mapfile -t APPLICATIONS_EFFECTIVE <<<"$APPLICATIONS_RESOLVED"
     configure_application_profiles "${APPLICATIONS_EFFECTIVE[@]}"
 fi
+
+configure_explicit_controls
+configure_extended_controls
+configure_symbol_overrides
 
 if is_enabled "$PRUNE_UNUSED_MODULES"; then
     probe_and_prune_unused_module_symbols
@@ -4133,40 +5118,19 @@ fi
 echo
 echo "==> Running olddefconfig to normalize dependencies"
 echo "    (note: Kconfig 'select' statements may re-enable symbols that were disabled above)"
-env KCONFIG_CONFIG="$CONFIG_FILE" make olddefconfig >/dev/null
+make KCONFIG_CONFIG="$CONFIG_FILE" olddefconfig >/dev/null
+verify_config_result
+verify_initramfs_result
 
-echo
-VALIDATION_FAILED=false
-if ! validate_requested_config "$VALIDATION_MODE_EFFECTIVE"; then
-    VALIDATION_FAILED=true
-fi
+echo "Scheduler capabilities for the next build: UCLAMP_TASK=${_SYMBOL_VALUE_CACHE[UCLAMP_TASK]:-n}, SCHED_AUTOGROUP=${_SYMBOL_VALUE_CACHE[SCHED_AUTOGROUP]:-n}"
+echo "These capabilities do not establish a measured performance improvement."
 
 echo
 if is_enabled "$DRY_RUN"; then
     echo "==> Dry-run changes for $ORIGINAL_CONFIG_FILE"
     show_config_changes "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
     echo
-    if is_enabled "$VALIDATION_FAILED"; then
-        echo "Dry-run complete with strict validation failures. No files were modified." >&2
-    else
-        echo "Dry-run complete. No files were modified."
-    fi
+    echo "Dry-run complete. Original config was not modified; active module probes were skipped."
 else
-    if is_enabled "$VALIDATION_FAILED"; then
-        echo "Configuration was written, but strict validation failed." >&2
-        echo "Restore or review the backup before building: $BACKUP" >&2
-    else
-        echo "Done."
-        echo
-        echo "Review changes with:"
-        echo "  diff -u \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\" | less"
-        echo
-        echo "If you have scripts/diffconfig:"
-        echo "  scripts/diffconfig \"$BACKUP\" \"$ORIGINAL_CONFIG_FILE\""
-        echo
-    fi
-fi
-
-if is_enabled "$VALIDATION_FAILED"; then
-    exit 1
+    commit_transaction
 fi
