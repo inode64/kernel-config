@@ -1,2 +1,5 @@
 .idea
 linux-*/
+__pycache__/
+/reports/
+/kernel-config.sh.old
