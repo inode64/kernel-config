@@ -223,6 +223,8 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
 The performance-control names above remain supported. If both control families are supplied, explicit `--preemption`, `--sched-cache`, `--lru-gen`, and `--numa-balancing` settings override their corresponding `--preempt-mode`, `--sched-cache-mode`, `--mglru-mode`, and `--numa-balancing-mode` settings. Default `keep`/`none` values do not override them.
 
+Overridden settings are skipped before applying their dependencies. RT and NUMA conflict checks also cover the legacy option names, including in `--check` mode.
+
 - `PRUNE_OBSERVABILITY`
   Disables tracing, perf, debugfs, runtime verification, and related observability features.
 
@@ -338,6 +340,8 @@ All controls in this table default to `keep`: they add no request of their own, 
 An explicit unsupported request is reported; `--strict` prevents saving it. Kconfig remains responsible for architecture and compiler capabilities. The script does not force capability symbols such as `CC_HAS_ALLOC_TOKEN`; `typed` partitioning requires compiler support. On 7.2 it uses `KMALLOC_PARTITION_CACHES` and its mode choice rather than the transitional `RANDOM_KMALLOC_CACHES` symbol. NUMA balancing uses `NUMA_MIGRATION` where available and `MIGRATION` on older trees.
 
 RT preemption requires its existing architecture/`EXPERT` prerequisites and disables incompatible THP and NUMA balancing requests. Explicit RT plus enabled THP or NUMA balancing is rejected before editing. Dynamic preemption is a separate setting; an unsupported combination is diagnosed after `olddefconfig`. Full tickless operation still needs the appropriate boot configuration.
+
+RT or `--thp=off` also supersedes profile requests for the persistent huge zero folio. Selecting `--tick-mode=idle` or `periodic` allows Kconfig to remove profile RCU offload settings when `RCU_EXPERT` is disabled. Explicit symbol overrides still apply last and remain subject to strict validation.
 
 `--zram=module` requires existing module support. Specifying only a zram compressor preserves an existing module; otherwise it requests built-in zram. Specifying a compressor together with `--zram=off` or `--zswap=off` is rejected. `--numa-balancing=on` also conflicts with NUMA support resolved to `off`.
 

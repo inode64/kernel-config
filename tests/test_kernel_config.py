@@ -973,6 +973,60 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--prune-legacy"))
         self.assert_symbol("DRM_FBDEV_EMULATION", "y")
 
+    def test_modern_preemption_skips_unavailable_legacy_request(self):
+        self.add_symbols("PREEMPT")
+        self.assert_success(self.run_script("--strict", "--preempt-mode=rt", "--preemption=full"))
+        self.assert_symbol("PREEMPT", "y")
+
+    def test_modern_numa_override_skips_legacy_dependency_requests(self):
+        self.add_symbols("NUMA_BALANCING", "NUMA_BALANCING_DEFAULT_ENABLED", "NUMA_MIGRATION")
+        result = self.run_script("--strict", "--numa-balancing-mode=on", "--numa-balancing=off",
+                                 env={"DROP_SYMBOLS": "NUMA_MIGRATION NUMA_BALANCING_DEFAULT_ENABLED"})
+        self.assert_success(result)
+        self.assert_symbol("NUMA_BALANCING", "n")
+
+    def test_legacy_rt_and_numa_conflicts_are_checked_before_make(self):
+        cases = [("--preempt-mode=rt", "--thp=madvise"),
+                 ("--preempt-mode=rt", "--numa-balancing=on"),
+                 ("--preempt-mode=rt", "--numa-balancing-mode=on"),
+                 ("--numa-support=off", "--numa-balancing-mode=on")]
+        for args in cases:
+            with self.subTest(args=args):
+                result = self.run_script("--check", *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("conflicts", result.stderr)
+                self.assertFalse((self.root / "make.log").exists())
+                self.assert_untouched()
+
+    def test_profile_thp_dependents_are_superseded_by_off_or_rt(self):
+        self.add_symbols("PREEMPT", "PREEMPT_RT", "TRANSPARENT_HUGEPAGE",
+                         "TRANSPARENT_HUGEPAGE_MADVISE", "PERSISTENT_HUGE_ZERO_FOLIO")
+        for option in ("--thp=off", "--preemption=rt", "--preempt-mode=rt"):
+            with self.subTest(option=option):
+                self.config.write_text(self.baseline)
+                result = self.run_script("--strict", "--optimization-profile=server", option,
+                                         env={"DROP_SYMBOLS": "PERSISTENT_HUGE_ZERO_FOLIO TRANSPARENT_HUGEPAGE_MADVISE"})
+                self.assert_success(result)
+                self.assert_symbol("TRANSPARENT_HUGEPAGE", "n")
+
+    def test_tick_override_supersedes_profile_rcu_offload_requests(self):
+        self.add_symbols("NO_HZ_FULL", "NO_HZ_IDLE", "HZ_PERIODIC", "RCU_NOCB_CPU",
+                         "RCU_NOCB_CPU_DEFAULT_ALL", "RCU_NOCB_CPU_CB_BOOST")
+        self.set_baseline_symbols(HAVE_CONTEXT_TRACKING_USER="y", HAVE_VIRT_CPU_ACCOUNTING_GEN="y",
+                                  RCU_EXPERT="n")
+        dropped = {"DROP_SYMBOLS": "RCU_NOCB_CPU RCU_NOCB_CPU_DEFAULT_ALL RCU_NOCB_CPU_CB_BOOST"}
+        for mode in ("idle", "periodic"):
+            with self.subTest(mode=mode):
+                self.config.write_text(self.baseline)
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                                    f"--tick-mode={mode}", env=dropped))
+        self.config.write_text(self.baseline)
+        result = self.run_script("--strict", "--optimization-profile=server", "--tick-mode=idle",
+                                 "--enable-symbols=RCU_NOCB_CPU", env=dropped)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONFIG_RCU_NOCB_CPU requested=y final=n", result.stderr)
+        self.assertEqual(self.config.read_text(), self.baseline)
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):

@@ -2602,6 +2602,11 @@ configure_tick_mode() {
             ;;
     esac
     request_choice "$selected" HZ_PERIODIC NO_HZ_IDLE NO_HZ_FULL
+    if [[ "$mode" != full ]] && ! is_symbol_enabled_now RCU_EXPERT; then
+        # Without full dynticks or expert RCU settings, Kconfig removes offload
+        # support. A later explicit symbol override still gets validated.
+        forget_control_requests RCU_NOCB_CPU
+    fi
 }
 
 configure_profile_scheduler() {
@@ -2661,6 +2666,7 @@ configure_thp_control() {
     require_control_symbols TRANSPARENT_HUGEPAGE || return 0
     forget_control_requests TRANSPARENT_HUGEPAGE
     if [[ "$THP" == off ]]; then
+        forget_control_requests PERSISTENT_HUGE_ZERO_FOLIO
         request_explicit_symbol TRANSPARENT_HUGEPAGE n
     else
         require_control_symbols "TRANSPARENT_HUGEPAGE_${THP@U}" || return 0
@@ -2745,7 +2751,9 @@ configure_numa_balancing_control() {
 
 configure_profile_numa_balancing() {
     [[ "$NUMA_SUPPORT_EFFECTIVE" != off && "$NUMA_BALANCING" != off ]] || return 0
-    [[ "$NUMA_BALANCING_MODE_EFFECTIVE" != off ]] || return 0
+    if [[ "$NUMA_BALANCING" == keep && "$NUMA_BALANCING_MODE_EFFECTIVE" == off ]]; then
+        return 0
+    fi
     if [[ "$NUMA_SUPPORT_EFFECTIVE" == on ]] || is_symbol_enabled_now NUMA; then
         # Reuse version-aware dependencies without changing the explicit control
         # or enabling NUMA on a non-NUMA baseline.
@@ -2806,9 +2814,10 @@ configure_extended_controls() {
     esac
     _load_symbol_cache
     configure_preemption "$PREEMPTION"
-    if [[ "$PREEMPTION" == rt ]]; then
+    if [[ "$PREEMPTION_EFFECTIVE" == rt ]]; then
         # These profile defaults cannot survive PREEMPT_RT's dependencies.
         forget_control_requests TRANSPARENT_HUGEPAGE
+        forget_control_requests PERSISTENT_HUGE_ZERO_FOLIO
         forget_control_requests NUMA_BALANCING
         disable_if_present TRANSPARENT_HUGEPAGE NUMA_BALANCING
     fi
@@ -4396,7 +4405,7 @@ validate_enum() {
 }
 
 validate_tunables() {
-    local setting value sym raw
+    local setting value sym raw effective_numa_balancing
     local -a symbols=()
     VALIDATION_MODE_EFFECTIVE="$(resolve_validation_mode)"
     PREEMPT_MODE_EFFECTIVE="$(resolve_preempt_mode)"
@@ -4467,15 +4476,25 @@ validate_tunables() {
     if [[ "$ZRAM" == off && "$ZRAM_COMPRESSOR" != keep ]]; then
         die "ZRAM=off conflicts with ZRAM_COMPRESSOR=$ZRAM_COMPRESSOR"
     fi
-    if [[ "$NUMA_BALANCING" == on && "$NUMA_SUPPORT_EFFECTIVE" == off ]]; then
-        die "NUMA_BALANCING=on conflicts with NUMA_SUPPORT=off"
+    # Resolve cross-family precedence before checking conflicts or applying
+    # legacy controls. An overridden control must not leave requests behind.
+    PREEMPTION_EFFECTIVE="$PREEMPTION"
+    if [[ "$PREEMPTION" == keep && "$PREEMPT_MODE_EFFECTIVE" != auto ]]; then
+        PREEMPTION_EFFECTIVE="$PREEMPT_MODE_EFFECTIVE"
     fi
-    if [[ "$PREEMPTION" == rt ]]; then
+    effective_numa_balancing="$NUMA_BALANCING"
+    if [[ "$effective_numa_balancing" == keep ]]; then
+        effective_numa_balancing="$NUMA_BALANCING_MODE_EFFECTIVE"
+    fi
+    if [[ "$effective_numa_balancing" == on && "$NUMA_SUPPORT_EFFECTIVE" == off ]]; then
+        die "NUMA balancing=on conflicts with NUMA_SUPPORT=off"
+    fi
+    if [[ "$PREEMPTION_EFFECTIVE" == rt ]]; then
         if [[ "$THP" != keep && "$THP" != off ]]; then
             die "PREEMPTION=rt conflicts with THP=$THP"
         fi
-        if [[ "$NUMA_BALANCING" == on ]]; then
-            die "PREEMPTION=rt conflicts with NUMA_BALANCING=on"
+        if [[ "$effective_numa_balancing" == on ]]; then
+            die "PREEMPTION=rt conflicts with NUMA balancing=on"
         fi
     fi
     SCHED_CACHE="${SCHED_CACHE@L}"
@@ -4849,7 +4868,7 @@ invalidate_symbol_cache
 
 configure_optimization_profile "$OPTIMIZATION_PROFILE_EFFECTIVE"
 
-if [[ "$PREEMPT_MODE_EFFECTIVE" != "auto" ]]; then
+if [[ "$PREEMPTION" == keep && "$PREEMPT_MODE_EFFECTIVE" != auto ]]; then
     configure_explicit_preempt_mode "$PREEMPT_MODE_EFFECTIVE"
 fi
 
@@ -4857,9 +4876,15 @@ if [[ "$TIMER_HZ_EFFECTIVE" != "auto" ]]; then
     configure_explicit_timer_hz "$TIMER_HZ_EFFECTIVE"
 fi
 
-configure_sched_cache_mode "$SCHED_CACHE_MODE_EFFECTIVE" "$OPTIMIZATION_PROFILE_EFFECTIVE"
-configure_mglru_mode "$MGLRU_MODE_EFFECTIVE" "$OPTIMIZATION_PROFILE_EFFECTIVE"
-configure_explicit_numa_balancing_mode "$NUMA_BALANCING_MODE_EFFECTIVE"
+if [[ "$SCHED_CACHE" == none ]]; then
+    configure_sched_cache_mode "$SCHED_CACHE_MODE_EFFECTIVE" "$OPTIMIZATION_PROFILE_EFFECTIVE"
+fi
+if [[ "$LRU_GEN" == keep ]]; then
+    configure_mglru_mode "$MGLRU_MODE_EFFECTIVE" "$OPTIMIZATION_PROFILE_EFFECTIVE"
+fi
+if [[ "$NUMA_BALANCING" == keep ]]; then
+    configure_explicit_numa_balancing_mode "$NUMA_BALANCING_MODE_EFFECTIVE"
+fi
 
 CPU_VENDOR_EFFECTIVE="$(resolve_cpu_vendor_filter)"
 if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then

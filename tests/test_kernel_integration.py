@@ -217,6 +217,31 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--prune-legacy"))
         self.assert_values(SGETMASK_SYSCALL="n", GPIO_CDEV_V1="n", GPIO_CDEV="y", SND_HDA_CTL_DEV_ID="n")
 
+    def test_real_server_tick_overrides_without_rcu_expert(self):
+        for mode, symbol in (("idle", "NO_HZ_IDLE"), ("periodic", "HZ_PERIODIC")):
+            with self.subTest(mode=mode):
+                self.config.write_bytes(self.original)
+                self.prepare_baseline(RCU_EXPERT="n")
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                                    f"--tick-mode={mode}"))
+                self.assert_values(**{symbol: "y", "NO_HZ_FULL": "n", "RCU_NOCB_CPU": "n"})
+
+    def test_real_profile_thp_off_and_both_rt_controls(self):
+        for option in ("--thp=off", "--preemption=rt", "--preempt-mode=rt"):
+            with self.subTest(option=option):
+                self.config.write_bytes(self.original)
+                self.prepare_baseline(EXPERT="y")
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server", option))
+                self.assert_values(TRANSPARENT_HUGEPAGE="n", PERSISTENT_HUGE_ZERO_FOLIO="n")
+                if option != "--thp=off":
+                    self.assert_values(PREEMPT_RT="y", NUMA_BALANCING="n")
+
+    def test_real_modern_numa_override_skips_legacy_requests(self):
+        self.prepare_baseline(NUMA="n", NUMA_MIGRATION="n", NUMA_BALANCING="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop",
+                                            "--numa-balancing-mode=on", "--numa-balancing=off"))
+        self.assert_values(NUMA="n", NUMA_MIGRATION="n", NUMA_BALANCING="n")
+
 
 if __name__ == "__main__":
     unittest.main()
