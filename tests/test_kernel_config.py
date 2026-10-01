@@ -763,6 +763,44 @@ config HID_LED
         self.assertIn("CONFIG_CGROUPS=y", self.config.read_text())
         self.assertIn("CONFIG_CGROUP_PIDS=y", self.config.read_text())
 
+    def test_desktop_apps_preserve_modular_drivers_and_explicit_overrides(self):
+        self.add_symbols("DRM", "DRM_AMDGPU", "HSA_AMD", "HSA_AMD_SVM",
+                         "FUSE_FS", "SND_USB_AUDIO", "USB_VIDEO_CLASS", "HIDRAW",
+                         "INOTIFY_USER", "USER_NS", "SECCOMP", "TUN", "WIREGUARD")
+        drivers = dict.fromkeys(("DRM_AMDGPU", "FUSE_FS", "SND_USB_AUDIO", "USB_VIDEO_CLASS"), "m")
+        self.set_baseline_symbols(**drivers, WIREGUARD="n", HIDRAW="n")
+        args = ("--strict", "--video-support=amd",
+                "--applications=desktop,multimedia,rocm,nebula,warp")
+        self.assert_success(self.run_script(*args))
+        for symbol in drivers:
+            self.assert_symbol(symbol, "m")
+        for symbol in ("HSA_AMD", "HSA_AMD_SVM", "HIDRAW", "INOTIFY_USER", "USER_NS", "SECCOMP", "TUN"):
+            self.assert_symbol(symbol, "y")
+        self.assert_symbol("WIREGUARD", "n")
+        self.assert_success(self.run_script(*args, "--disable-symbols=HIDRAW"))
+        self.assert_symbol("HIDRAW", "n")
+
+    def test_new_application_profiles_respect_protection_and_none(self):
+        self.add_symbols("HIDRAW", "TUN")
+        self.set_baseline_symbols(HIDRAW="n", TUN="n")
+        self.assert_success(self.run_script("--strict", "--applications=multimedia,nebula",
+                                            "--protected-config-symbols=HIDRAW,TUN"))
+        self.assert_symbol("HIDRAW", "n")
+        self.assert_symbol("TUN", "n")
+        for profiles in ("none,desktop", "rocm,none"):
+            self.assertNotEqual(self.run_script(f"--applications={profiles}").returncode, 0)
+
+    def test_firewalld_nat_does_not_force_legacy_tables_on_new_kernels(self):
+        self.add_symbols("IP_NF_NAT", "IP6_NF_NAT", "NF_TABLES", "NFT_NAT")
+        self.assert_success(self.run_script("--strict", "--applications=firewalld"))
+        self.assert_symbol("IP_NF_NAT", "y")
+        self.add_symbols("NETFILTER_XTABLES_LEGACY")
+        self.set_baseline_symbols(IP_NF_NAT="n", IP6_NF_NAT="n", NETFILTER_XTABLES_LEGACY="n")
+        self.assert_success(self.run_script("--strict", "--applications=firewalld"))
+        for symbol in ("IP_NF_NAT", "IP6_NF_NAT", "NETFILTER_XTABLES_LEGACY"):
+            self.assert_symbol(symbol, "n")
+        self.assert_symbol("NFT_NAT", "y")
+
     def test_unsupported_control_does_not_invent_symbol(self):
         kconfig = self.tree / "Kconfig"
         kconfig.write_text(kconfig.read_text().replace(

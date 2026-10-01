@@ -65,7 +65,13 @@ class SnapshotTests(unittest.TestCase):
         for snapshot in SNAPSHOTS:
             with self.subTest(version=snapshot.name):
                 legacy = self.discover(snapshot, "legacy")
-                self.assertTrue({"NETFILTER_XT_TARGET_NOTRACK", "NETFILTER_XT_MATCH_DCCP"} <= legacy)
+                self.assertIn("NETFILTER_XT_TARGET_NOTRACK", legacy)
+                # The 6.12 snapshot still supports DCCP without a deprecation
+                # annotation; only the newer reference prompts mark it legacy.
+                if snapshot.name.startswith("linux-6.12."):
+                    self.assertNotIn("NETFILTER_XT_MATCH_DCCP", legacy)
+                else:
+                    self.assertIn("NETFILTER_XT_MATCH_DCCP", legacy)
                 self.assertFalse({"NETFILTER_XT_TARGET_NFQUEUE", "NETFILTER_NETLINK_LOG", "TCM_USER2",
                                   "DRM_AMD_DC", "SND_SOC_SOF_BAYTRAIL", "CRYPTO_USER_API_HASH",
                                   "CRYPTO_USER_API_ENABLE_OBSOLETE", "COMPAT_VDSO"} & legacy)

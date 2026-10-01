@@ -101,6 +101,35 @@ class KernelIntegrationTests(unittest.TestCase):
                            NO_HZ_IDLE="y", NO_HZ_FULL="n", TRANSPARENT_HUGEPAGE="n",
                            NUMA_BALANCING="n", IO_URING="n")
 
+    def test_real_desktop_applications_keep_gpu_and_hotplug_modules(self):
+        self.prepare_baseline(DRM="y", DRM_AMDGPU="m", FUSE_FS="m",
+                              SND_USB_AUDIO="m", USB_VIDEO_CLASS="m")
+        args = ("--strict", "--video-support=amd",
+                "--applications=desktop,multimedia,rocm,nebula,warp")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(DRM_AMDGPU="m", FUSE_FS="m", SND_USB_AUDIO="m",
+                           USB_VIDEO_CLASS="m", HSA_AMD="y", HSA_AMD_SVM="y",
+                           HIDRAW="y", INOTIFY_USER="y", SECCOMP_FILTER="y", TUN="y")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_real_desktop_applications_restore_disabled_parents(self):
+        self.prepare_baseline(DRM="n", SOUND="n", MEDIA_SUPPORT="n", USB="n",
+                              HID="n", FUSE_FS="n", TUN="n")
+        self.assert_success(self.run_script("--strict", "--applications=desktop,multimedia,rocm,nebula"))
+        self.assert_values(DRM_AMDGPU="y", HSA_AMD="y", HSA_AMD_SVM="y", FUSE_FS="y",
+                           SND_USB_AUDIO="y", USB_VIDEO_CLASS="y", HIDRAW="y",
+                           SECCOMP_FILTER="y", TUN="y")
+
+    def test_real_amd_host_with_qemu_and_nftables(self):
+        self.prepare_baseline(KVM="m", KVM_AMD="m", NF_TABLES="m", NFT_NAT="m",
+                              VHOST_NET="m", VHOST_VSOCK="n", VHOST_SCSI="n", VHOST_VDPA="n")
+        self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=amd",
+                                            "--host-type=baremetal", "--applications=qemu,firewalld"))
+        self.assert_values(KVM_AMD="m", VHOST_NET="m", VHOST_VSOCK="y", VHOST="y",
+                           VHOST_IOTLB="y", NF_TABLES="m", NFT_NAT="m")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():

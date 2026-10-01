@@ -81,7 +81,7 @@ SCRIPT_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
-#   APPLICATIONS=none         -> comma-separated app profiles: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
+#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
 #
 # Recommended:
@@ -2108,7 +2108,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup)
+            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -2117,7 +2117,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup" >&2
+                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup" >&2
                 exit 1
                 ;;
         esac
@@ -2388,7 +2388,9 @@ discover_vendor_kconfig_symbols() {
     case "$vendor" in
         intel)
             include_re='CPU_SUP_INTEL|KVM_INTEL|INTEL_TDX|X86_INTEL_|INTEL_IDLE|INTEL_IFS|X86_SGX'
-            exclude_re='CPU_SUP_AMD|CPU_SUP_HYGON|KVM_AMD|AMD_MEM_ENCRYPT|SEV|X86_AMD_|AMD_HFI'
+            # OFF is the default of a choice that also exists on AMD hosts.
+            # Disabling every choice member just makes Kconfig restore OFF.
+            exclude_re='CPU_SUP_AMD|CPU_SUP_HYGON|KVM_AMD|AMD_MEM_ENCRYPT|SEV|X86_AMD_|AMD_HFI|X86_INTEL_TSX_MODE_OFF'
             ;;
         amd)
             include_re='CPU_SUP_AMD|CPU_SUP_HYGON|KVM_AMD|AMD_MEM_ENCRYPT|SEV|X86_AMD_|AMD_HFI'
@@ -3876,6 +3878,7 @@ configure_video_support_profile() {
     esac
 
     if ((${#enable_syms[@]} > 0)); then
+        enable_parents_if_present DRM
         enable_if_present "${enable_syms[@]}"
     fi
 
@@ -4267,12 +4270,45 @@ configure_application_profiles() {
     local profile sym
     local qemu_cpu_vendor=""
     local -a enable_syms=()
+    local -a available_syms=()
 
     echo
     echo "==> Enabling application profiles: $*"
 
     for profile in "$@"; do
         case "$profile" in
+            desktop)
+                # GNOME/Wayland, browser sandboxes, IDE file watchers and portals.
+                # Scheduling policy remains in OPTIMIZATION_PROFILE=desktop.
+                for sym in NET UNIX INET NAMESPACES USER_NS PID_NS IPC_NS UTS_NS NET_NS SECCOMP SECCOMP_FILTER CGROUPS MEMCG CGROUP_PIDS CGROUP_SCHED FAIR_GROUP_SCHED CFS_BANDWIDTH FUTEX EPOLL EVENTFD SIGNALFD TIMERFD INOTIFY_USER FANOTIFY UNIX98_PTYS INPUT INPUT_EVDEV INPUT_UINPUT HID HIDRAW USB_SUPPORT USB USB_HID DRM SYNC_FILE; do
+                    append_unique_item "$sym" enable_syms
+                done
+                append_unique_item FUSE_FS available_syms
+                ;;
+            multimedia)
+                # PipeWire/OBS/Resolve: ALSA, USB audio/cameras and userspace HID
+                # controllers. GPU compute is opt-in via rocm, not vendor-implied.
+                for sym in SOUND SND SND_PCM SND_TIMER SND_HRTIMER HIGH_RES_TIMERS USB_SUPPORT USB SND_USB MEDIA_SUPPORT MEDIA_CAMERA_SUPPORT MEDIA_USB_SUPPORT VIDEO_DEV INPUT HID HIDRAW USB_HID; do
+                    append_unique_item "$sym" enable_syms
+                done
+                for sym in SND_USB_AUDIO USB_VIDEO_CLASS; do
+                    append_unique_item "$sym" available_syms
+                done
+                ;;
+            rocm)
+                # KFD is part of amdgpu, so it will not appear separately in lsmod.
+                # DEVICE_PRIVATE supplies HMM/SVM; Kconfig selects HMM_MIRROR.
+                for sym in PCI DRM HSA_AMD DRM_AMDGPU_USERPTR MEMORY_HOTPLUG MEMORY_HOTREMOVE ZONE_DEVICE DEVICE_PRIVATE HSA_AMD_SVM; do
+                    append_unique_item "$sym" enable_syms
+                done
+                append_unique_item DRM_AMDGPU available_syms
+                ;;
+            nebula | warp)
+                # Userspace tunnels need TUN, not the in-kernel WireGuard driver.
+                for sym in NET INET TUN; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
             samba)
                 for sym in CIFS CIFS_XATTR CIFS_UPCALL CIFS_DFS_UPCALL DNS_RESOLVER KEYS KEY_DH_OPERATIONS CRYPTO_MD4 CRYPTO_MD5 CRYPTO_HMAC CRYPTO_SHA256 CRYPTO_SHA512 CRYPTO_AES CRYPTO_CMAC CRYPTO_DES; do
                     append_unique_item "$sym" enable_syms
@@ -4286,9 +4322,16 @@ configure_application_profiles() {
                 done
                 ;;
             firewalld)
-                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NF_CONNTRACK NF_NAT NF_TABLES NF_TABLES_INET NF_TABLES_IPV4 NF_TABLES_IPV6 NF_TABLES_ARP NF_TABLES_BRIDGE NF_CONNTRACK_BRIDGE BRIDGE_NETFILTER IP_SET NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NFT_REJECT NFT_REJECT_INET NFT_FIB NFT_FIB_INET NFT_FIB_IPV4 NFT_FIB_IPV6 IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT; do
+                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NF_CONNTRACK NF_NAT NF_TABLES NF_TABLES_INET NF_TABLES_IPV4 NF_TABLES_IPV6 NF_TABLES_ARP NF_TABLES_BRIDGE NF_CONNTRACK_BRIDGE BRIDGE_NETFILTER IP_SET NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NFT_REJECT NFT_REJECT_INET NFT_FIB NFT_FIB_INET NFT_FIB_IPV4 NFT_FIB_IPV6 IP_NF_IPTABLES IP6_NF_IPTABLES; do
                     append_unique_item "$sym" enable_syms
                 done
+                # Since 6.17 these require explicitly opting into legacy tables.
+                # The nftables backend does not need that stack. Preserve any
+                # existing legacy configuration, and cover older kernels below.
+                if ! have_symbol NETFILTER_XTABLES_LEGACY; then
+                    append_unique_item IP_NF_NAT enable_syms
+                    append_unique_item IP6_NF_NAT enable_syms
+                fi
                 ;;
             openvswitch)
                 for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX NET_UDP_TUNNEL; do
@@ -4342,7 +4385,9 @@ configure_application_profiles() {
 
                 # VSOCKETS is the parent of VHOST_VSOCK; HOST_TYPE=baremetal disables it
                 # together with the guest transports.
-                for sym in KVM KVM_X86 KVM_VFIO VFIO TUN VHOST VHOST_NET VSOCKETS VHOST_VSOCK VHOST_IOTLB; do
+                # VHOST/VHOST_IOTLB are hidden tristates selected by the drivers;
+                # pinning their old =m conflicts with a newly built-in consumer.
+                for sym in KVM KVM_X86 KVM_VFIO VFIO TUN VHOST_MENU VHOST_NET VSOCKETS VHOST_VSOCK; do
                     append_unique_item "$sym" enable_syms
                 done
 
@@ -4385,6 +4430,12 @@ configure_application_profiles() {
 
     if ((${#enable_syms[@]} > 0)); then
         enable_parents_if_present "${enable_syms[@]}"
+        if ((${#available_syms[@]} > 0)); then
+            # Keep already modular hotplug/GPU drivers modular. Refresh after
+            # making their parents available, then reapply child capabilities.
+            enable_if_unset "${available_syms[@]}"
+            refresh_config_visibility
+        fi
         enable_if_present "${enable_syms[@]}"
     fi
 }

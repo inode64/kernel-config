@@ -395,13 +395,97 @@ These options change kernel build configuration and defaults. They do not create
   Enables kernel features commonly required by selected applications.
 
   Supported profiles:
-  `samba`, `firehol`, `firewalld`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`
+  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`
+
+  - `desktop`: GNOME/Wayland interfaces, browser namespaces/seccomp, IDE file
+    notifications, FUSE portals, input/HID and DRM synchronization. This enables
+    capabilities; scheduling policy is selected separately with
+    `--optimization-profile=desktop`.
+  - `multimedia`: ALSA/high-resolution timers, USB audio, UVC cameras and HID raw
+    access for userspace controllers (PipeWire, OBS and Resolve workflows).
+    Existing modular audio/camera drivers remain modular. GPU drivers, codecs,
+    device permissions and userspace libraries are separate requirements.
+  - `rocm`: AMDGPU/KFD and HMM shared virtual memory support, including device
+    memory prerequisites. Existing `DRM_AMDGPU=m` is preserved. This does not
+    certify a GPU/userspace combination or install ROCm. KFD belongs to amdgpu;
+    an absent standalone KFD entry in `lsmod` does not indicate missing support.
+  - `nebula`, `warp`: userspace VPN support through TUN. Neither implicitly
+    enables the kernel WireGuard implementation. See the
+    [Nebula TUN configuration](https://nebula.defined.net/docs/config/tun/).
+
+  `firewalld` enables the nftables backend without requesting legacy-only NAT
+  tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy
+  settings are retained; `firehol` explicitly requests the legacy backend.
+  `qemu` enables host drivers and lets Kconfig select internal VHOST dependencies
+  at the required built-in/module level.
 
   Example:
 
 ```bash
 APPLICATIONS="docker,firewalld,wireguard" ./kernel-config.sh /usr/src/linux
 ```
+
+### Reusable desktop example
+
+`profiles/desktop.sh` combines the desktop scheduling profile with the
+`desktop,multimedia` application profiles. It defaults to a **strict dry run**,
+accepts the same arguments as `kernel-config.sh`, and lets trailing options
+override its defaults. Hardware selection, CPU count, firmware, boot/storage
+requirements and additional applications are left to the target configuration
+and the caller's explicit options.
+
+```bash
+./profiles/desktop.sh /path/to/linux
+# Add the application profiles needed by the target system:
+./profiles/desktop.sh /path/to/linux --applications=desktop,multimedia,qemu
+# Save to a separate existing copy of the baseline for review:
+cp /path/to/linux/.config /tmp/desktop.config
+./profiles/desktop.sh /path/to/linux /tmp/desktop.config --dry-run=false
+```
+
+Select `rocm` only for an AMD GPU compute workload, and select VPN, filesystem
+or virtualization profiles according to the target's requirements. The example
+does not prescribe a CPU/GPU vendor, motherboard sensor, fixed CPU count or
+list of drivers to discard. Existing environment-variable defaults still apply
+as documented under Usage.
+
+Saving changes a kernel configuration, not the running kernel. Build/install,
+initramfs generation and a reboot are separate steps. Even a dry run can update
+Kconfig build tools in the selected source tree. Performance and bootability
+must be validated on the resulting kernel.
+
+### Hardware as a regression reference
+
+Real desktops provide test cases for the general-purpose tool. Findings from
+one machine should become reproducible tests and improvements to shared
+profiles, rather than universal assumptions about other users' hardware.
+The desktop validation exercised these cases:
+
+- Built-in storage, network and audio drivers are absent from `lsmod`; unloaded
+  USB audio/camera modules can still be needed when peripherals are connected.
+  Neither case justifies removing support automatically.
+- AMDGPU contains KFD support. Preserve modular GPU drivers while enabling
+  compute capabilities, and distinguish userspace ICD/library errors from
+  missing kernel drivers.
+- Application profiles must restore disabled parent subsystems and preserve
+  explicit overrides and protected symbols.
+- Kconfig selects internal VHOST dependencies at the level required by their
+  consumers. Profiles should request the public drivers instead of pinning
+  hidden dependencies to the baseline's module level.
+- The Intel TSX `off` choice can exist on AMD targets. Vendor filtering must
+  not request removal of every member of that choice.
+- Modern nftables support does not require enabling legacy-only NAT tables.
+  Tests cover the distinction from older kernels.
+- Motherboard sensors require a supported device/board match. Missing a sensor
+  module on a reference machine does not justify enabling it for all desktops.
+- A kernel default governor is distinct from the active policy chosen by
+  drivers and userspace power management. Configuration changes alone do not
+  establish a measured performance improvement.
+
+Integration tests use temporary copies of a supplied kernel tree and baseline;
+local observations and generated candidate configs belong under ignored
+`reports/`. Reference artifacts are test evidence, not recommended configs for
+other machines. Keep machine names out of shared examples and report names.
 
 ### Additional pruning toggles
 
