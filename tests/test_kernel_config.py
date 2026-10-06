@@ -801,6 +801,27 @@ config HID_LED
             self.assert_symbol(symbol, "n")
         self.assert_symbol("NFT_NAT", "y")
 
+    def test_firehol_requests_the_xtables_its_rules_use(self):
+        syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
+                "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",
+                "NF_NAT_FTP", "NFT_NAT")
+        self.add_symbols(*syms)
+        self.set_baseline_symbols(**dict.fromkeys(syms, "n"))
+        self.assert_success(self.run_script("--strict", "--prune-legacy", "--applications=firehol"))
+        for symbol in syms:
+            self.assert_symbol(symbol, "y")
+
+    def test_nfs_server_reminds_about_nfsdcld_without_enabling_legacy_tracking(self):
+        self.add_symbols("NFSD", "NFSD_V4", "NFSD_LEGACY_CLIENT_TRACKING")
+        self.set_baseline_symbols(NFSD="y", NFSD_V4="y", NFSD_LEGACY_CLIENT_TRACKING="n")
+        result = self.run_script("--strict", "--applications=nfs-server")
+        self.assert_success(result)
+        self.assertIn("nfsdcld", result.stdout)
+        self.assert_symbol("NFSD_LEGACY_CLIENT_TRACKING", "n")
+        self.assert_success(self.run_script("--strict", "--applications=nfs-server",
+                                            "--enable-symbols=NFSD_LEGACY_CLIENT_TRACKING"))
+        self.assert_symbol("NFSD_LEGACY_CLIENT_TRACKING", "y")
+
     def test_unsupported_control_does_not_invent_symbol(self):
         kconfig = self.tree / "Kconfig"
         kconfig.write_text(kconfig.read_text().replace(

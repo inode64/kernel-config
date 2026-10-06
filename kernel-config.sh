@@ -4320,6 +4320,14 @@ configure_application_profiles() {
                 for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NETFILTER_XTABLES_LEGACY NF_CONNTRACK NF_NAT NF_TABLES IP_SET IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_IPTABLES_LEGACY IP6_NF_IPTABLES_LEGACY IP_NF_FILTER IP6_NF_FILTER IP_NF_MANGLE IP6_NF_MANGLE IP_NF_RAW IP6_NF_RAW IP_NF_NAT IP6_NF_NAT NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
                     append_unique_item "$sym" enable_syms
                 done
+                # Targets and matches that `firehol debug` emits for a plain
+                # version 5/6 configuration (interface/router with physdev,
+                # dnat/snat/redirect, `tcpmss auto`, `tosfix`, mark/connmark,
+                # limit/connlimit/hashlimit/recent, owner/mac/iprange/pkttype,
+                # CT --helper and the FTP helper). Missing symbols are skipped.
+                for sym in NETFILTER_XT_TARGET_CT NETFILTER_XT_TARGET_TCPMSS NETFILTER_XT_TARGET_DSCP NETFILTER_XT_TARGET_NETMAP NETFILTER_XT_TARGET_NFLOG NETFILTER_XT_MARK NETFILTER_XT_CONNMARK NETFILTER_XT_MATCH_MULTIPORT NETFILTER_XT_MATCH_LIMIT NETFILTER_XT_MATCH_STATE NETFILTER_XT_MATCH_OWNER NETFILTER_XT_MATCH_PHYSDEV NETFILTER_XT_MATCH_MAC NETFILTER_XT_MATCH_IPRANGE NETFILTER_XT_MATCH_RECENT NETFILTER_XT_MATCH_HASHLIMIT NETFILTER_XT_MATCH_CONNLIMIT NETFILTER_XT_MATCH_HELPER NETFILTER_XT_MATCH_PKTTYPE NF_CONNTRACK_FTP NF_NAT_FTP IP_NF_TARGET_NETMAP IP_NF_TARGET_REDIRECT IP_NF_TARGET_TTL IP6_NF_TARGET_HL; do
+                    append_unique_item "$sym" enable_syms
+                done
                 ;;
             firewalld)
                 for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NF_CONNTRACK NF_NAT NF_TABLES NF_TABLES_INET NF_TABLES_IPV4 NF_TABLES_IPV6 NF_TABLES_ARP NF_TABLES_BRIDGE NF_CONNTRACK_BRIDGE BRIDGE_NETFILTER IP_SET NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NFT_REJECT NFT_REJECT_INET NFT_FIB NFT_FIB_INET NFT_FIB_IPV4 NFT_FIB_IPV6 IP_NF_IPTABLES IP6_NF_IPTABLES; do
@@ -4354,6 +4362,12 @@ configure_application_profiles() {
                 for sym in NFSD NFSD_V3_ACL NFSD_V4 NFSD_PNFS NFSD_BLOCKLAYOUT NFSD_SCSILAYOUT SUNRPC SUNRPC_GSS LOCKD LOCKD_V4 GRACE_PERIOD EXPORTFS FSNOTIFY; do
                     append_unique_item "$sym" enable_syms
                 done
+                # 6.9+ made the in-kernel NFSv4 client tracking opt-in and
+                # deprecated; without it nfsd logs "Unable to initialize client
+                # recovery tracking" unless the nfsdcld daemon runs before nfsd.
+                if have_symbol NFSD_LEGACY_CLIENT_TRACKING && ! is_symbol_enabled_now NFSD_LEGACY_CLIENT_TRACKING; then
+                    echo "    (NFSv4 client tracking: run nfsdcld from nfs-utils before nfsd, or pass --enable-symbols=NFSD_LEGACY_CLIENT_TRACKING)"
+                fi
                 ;;
             openvpn)
                 for sym in TUN CRYPTO_USER_API CRYPTO_USER_API_AEAD CRYPTO_USER_API_SKCIPHER CRYPTO_USER_API_HASH CRYPTO_AES CRYPTO_GCM CRYPTO_SHA256; do

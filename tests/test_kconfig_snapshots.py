@@ -47,11 +47,11 @@ class SnapshotTests(unittest.TestCase):
                                  "ZSWAP_COMPRESSOR_DEFAULT_ZSTD", "ZRAM_BACKEND_LZO",
                                  "ZRAM_DEF_COMP_LZORLE", "NUMA_BALANCING_DEFAULT_ENABLED",
                                  "TCP_CONG_BBR", "DEFAULT_RENO", "IO_URING", "RV"} <= symbols)
-                if snapshot.name == "linux-7.2.8":
+                if snapshot.name == "linux-7.2.0":
                     self.assertTrue({"KMALLOC_PARTITION_CACHES", "KMALLOC_PARTITION_RANDOM",
                                      "KMALLOC_PARTITION_TYPED", "NUMA_MIGRATION",
                                      "IO_URING_MOCK_FILE"} <= symbols)
-                elif snapshot.name in {"linux-6.18.18", "linux-6.19.8", "linux-7.0-rc4"}:
+                elif snapshot.name in {"linux-6.18.18", "linux-6.19.8", "linux-7.0-rc3"}:
                     self.assertIn("RANDOM_KMALLOC_CACHES", symbols)
                     self.assertNotIn("KMALLOC_PARTITION_CACHES", symbols)
                     self.assertNotIn("NUMA_MIGRATION", symbols)
@@ -77,9 +77,9 @@ class SnapshotTests(unittest.TestCase):
                                   "CRYPTO_USER_API_ENABLE_OBSOLETE", "COMPAT_VDSO"} & legacy)
 
     def test_new_72_controls_are_discovered(self):
-        snapshot = SCRIPT.parent / "linux-7.2.8"
+        snapshot = SCRIPT.parent / "linux-7.2.0"
         if not snapshot.is_dir():
-            self.skipTest("linux-7.2.8 reference snapshot is not installed")
+            self.skipTest("linux-7.2.0 reference snapshot is not installed")
         for category, expected in [
             ("debug_trace", "TRUSTED_KEYS_DEBUG"),
             ("selftest", "AF_RXRPC_KUNIT_TEST"),

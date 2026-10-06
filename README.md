@@ -132,6 +132,8 @@ The genkernel adapter reads its installed compression table and checks executabl
 
 The ugrd adapter supports the verified 2.x XZ/ZSTD/uncompressed interface. It checks defaults and Python compression dependencies in the builder's interpreter (including an unambiguous Gentoo python-exec launcher). Having the `zstd` executable does not substitute for Python `zstandard`. Unknown versions, custom build hooks, or ambiguous interpreters are not certified. Neither adapter runs genkernel/ugrd or changes their configuration.
 
+Known ugrd 2.x behaviour the report cannot predict: the build aborts in `get_virtual_block_info` when sysfs exposes an inactive md device without `md/uuid` (an empty `/dev/md0` left by autodetection). When the root filesystem is on a plain partition, `masks.build_enum = "get_virtual_block_info"` in `/etc/ugrd/config.toml` skips that detection (the key is `masks`; the sample file says `mask`). On Gentoo, `sys-kernel/installkernel` with `USE=systemd` delegates to systemd's `kernel-install`, which fails on old running kernels with "Protocol driver not attached"; `SYSTEMD_KERNEL_INSTALL=0 make install` uses the shell implementation with the same `install.d` hooks.
+
 Image inspection supports uncompressed newc/crc CPIO and gzip, bzip2, XZ, LZMA-alone (usual `0x5d` properties), ZSTD, legacy LZ4, and the kernel's lzop/LZO framing. XZ requires CRC32 or no check; CRC64/SHA256 are rejected. ZSTD/LZ4/LZO inspection checks framing, not payload integrity/checksums. UKI/U-Boot wrappers and unrecognized formats are reported as unknown; modern LZ4 framing is rejected. Inspection is bounded to 128 MiB compressed input, 256 MiB expanded data, and 256 archive members. These checks concern compression compatibility, not a boot/signature certification.
 
 `--strict` rejects incompatible **or unknown** evidence after `olddefconfig`, before committing the configuration. Without strict mode the report warns and other changes may still be saved. `--check --strict` validates the existing configuration without running make; it does not simulate decoder additions requested by `auto`. No generators, images, `/boot` files, or running modules are changed by these checks. Existing decoders are preserved unless explicitly disabled, and final validation catches removal of a required decoder.
@@ -418,6 +420,14 @@ These options change kernel build configuration and defaults. They do not create
   settings are retained; `firehol` explicitly requests the legacy backend.
   `qemu` enables host drivers and lets Kconfig select internal VHOST dependencies
   at the required built-in/module level.
+  `firehol` also requests the targets and matches that `firehol debug` emits for
+  an ordinary configuration (`physdev`, `TCPMSS`, `DSCP`, `NETMAP`, `CT`, mark,
+  limit/recent/hashlimit, the FTP helper).
+  `nfs-server` does not enable the deprecated `NFSD_LEGACY_CLIENT_TRACKING`
+  (6.9+). Without it nfsd logs "Unable to initialize client recovery tracking"
+  unless the `nfsdcld` daemon from nfs-utils runs before nfsd; the profile prints
+  a reminder, and `--enable-symbols=NFSD_LEGACY_CLIENT_TRACKING` is the kernel-side
+  alternative.
 
   Example:
 
@@ -453,6 +463,33 @@ Saving changes a kernel configuration, not the running kernel. Build/install,
 initramfs generation and a reboot are separate steps. Even a dry run can update
 Kconfig build tools in the selected source tree. Performance and bootability
 must be validated on the resulting kernel.
+
+### Reusable KVM server example
+
+`profiles/server-kvm-host.sh` combines the server scheduling profile with
+`--all-optimizations`, the `qemu,docker` application profiles, bare-metal host
+type, the hardware filters in `auto` mode and the pruning that is safe on any
+production server (selftests, sanitizers, coverage, fault injection, dangerous
+options, radios). It also defaults to a **strict dry run** and accepts trailing
+overrides. Run it on the target host so the `auto` detections see the real CPU,
+firmware, NUMA and DMA engines. It protects `MAGIC_SYSRQ` (kept for console
+emergencies) and `RCU_NOCB_CPU_DEFAULT_ALL` (the server profile would offload RCU
+callbacks on every CPU when the baseline has `NO_HZ_FULL`).
+
+```bash
+./profiles/server-kvm-host.sh /usr/src/linux
+# Add the firewall backend, file services and host-specific pruning:
+./profiles/server-kvm-host.sh /usr/src/linux \
+  --applications=qemu,docker,firehol,nfs-server,nfs-client,cryptsetup \
+  --prune-legacy --prune-old-hw --prune-compat32 --initrd-compression=auto
+./profiles/server-kvm-host.sh /usr/src/linux --dry-run=false
+```
+
+`--all-optimizations` switches the kernel image to zstd; with
+`--initrd-compression=auto` (add it on hosts that have genkernel or ugrd) the
+initramfs compatibility report tells whether the installed generator still
+produces something the kernel can unpack. Pass `--kernel-compression=keep` after
+the profile to leave the image format alone.
 
 ### Hardware as a regression reference
 
@@ -762,7 +799,7 @@ Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - Profiles preserve symbols that the baseline builds as modules (`=m`), including drivers that load firmware from the root filesystem (`amdgpu`, `iwlwifi`). Explicit built-in requests such as `--enable-symbols` or `--zram=builtin` take precedence.
-- The `firehol` profile keeps the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable.
+- The `firehol` profile keeps the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable, plus the xtables targets and matches its generated rules use. `NETFILTER_XTABLES_LEGACY` depends on `!PREEMPT_RT`, so the legacy backend is unavailable on RT kernels.
 - When a profile enables a symbol that was off in the baseline (for example `ZSWAP` or `LRU_GEN`), the script runs an intermediate `make olddefconfig` so the symbols that depend on it become visible and can be configured in the same run.
 - `PROTECTED_CONFIG_SYMBOLS` blocks direct script edits. Changes caused by `make olddefconfig` are reported; `--strict` prevents saving them.
 - Symbol availability is checked against Kconfig definitions, including symbols absent from the baseline `.config`. The final Kconfig result remains authoritative for architecture, visibility, and dependencies.
