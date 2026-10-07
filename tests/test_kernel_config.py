@@ -5,8 +5,10 @@ import os
 import lzma
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 from test_initramfs_check import cpio
@@ -52,6 +54,12 @@ for sym in os.environ.get("DROP_SYMBOLS", "").split():
              if not line.startswith("CONFIG_" + sym + "=")
              and line != "# CONFIG_" + sym + " is not set"]
     p.write_text("\n".join(lines) + "\n# CONFIG_" + sym + " is not set\n")
+for sym in os.environ.get("REMOVE_SYMBOLS", "").split():
+    # Like DROP_SYMBOLS, but the symbol vanishes entirely (its prompt disappeared).
+    lines = [line for line in p.read_text().splitlines()
+             if not line.startswith("CONFIG_" + sym + "=")
+             and line != "# CONFIG_" + sym + " is not set"]
+    p.write_text("\n".join(lines) + "\n")
 if os.environ.get("CHANGE_ORIGINAL"):
     Path(os.environ["ORIGINAL_CONFIG"]).write_text("CONFIG_EDITED_EXTERNALLY=y\n")
 if os.environ.get("DELETE_TEMP"):
@@ -103,7 +111,7 @@ class ScriptTests(unittest.TestCase):
         # Isolate tests from any tuning inherited from the developer's shell.
         for name in re.findall(r"^init_tunable ([A-Z_]+) ", SCRIPT.read_text(), re.M):
             self.env.pop(name, None)
-        for name in ("ALL_OPTIMIZATIONS", "KSRCDIR", "CONFIG_FILE", "KBUILD_OUTPUT"):
+        for name in ("ALL_OPTIMIZATIONS", "KSRCDIR", "CONFIG_FILE", "KBUILD_OUTPUT", "KC_HOST_ROOT"):
             self.env.pop(name, None)
         self.env.update(
             PATH=f"{self.root / 'bin'}:{os.environ['PATH']}",
@@ -135,11 +143,50 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(self.config.read_text(), self.baseline)
         self.assertFalse(list(self.tree.glob(".config.bak.*")))
 
-    def add_symbols(self, *symbols):
+    def add_symbols(self, *symbols, kind=None):
         with (self.tree / "Kconfig").open("a") as stream:
             for sym in symbols:
-                kind = "tristate" if sym == "ZRAM" else "bool"
-                stream.write(f'\nconfig {sym}\n\t{kind} "{sym}"\n')
+                sym_kind = kind or ("tristate" if sym == "ZRAM" else "bool")
+                stream.write(f'\nconfig {sym}\n\t{sym_kind} "{sym}"\n')
+
+    def add_kconfig(self, text, path="Kconfig"):
+        target = self.tree / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a") as stream:
+            stream.write("\n" + textwrap.dedent(text))
+
+    def make_host_root(self, *, cpuinfo=None, sys_vendor=None, acpi=(), dmi_entries=(),
+                       pci=(), iommu=(), acpi_tables=(), efi=False, dma=(), nodes=()):
+        """Build a synthetic /sys and /proc for the auto detectors (KC_HOST_ROOT)."""
+        host = self.root / "host"
+        host.mkdir(exist_ok=True)
+        if cpuinfo is not None:
+            (host / "proc").mkdir(exist_ok=True)
+            (host / "proc/cpuinfo").write_text(cpuinfo)
+        if sys_vendor is not None:
+            (host / "sys/class/dmi/id").mkdir(parents=True, exist_ok=True)
+            (host / "sys/class/dmi/id/sys_vendor").write_text(sys_vendor + "\n")
+        for hid in acpi:
+            (host / "sys/bus/acpi/devices" / hid).mkdir(parents=True, exist_ok=True)
+        for entry in dmi_entries:
+            (host / "sys/firmware/dmi/entries" / entry).mkdir(parents=True, exist_ok=True)
+        for bdf, vendor, device, cls in pci:
+            dev = host / "sys/bus/pci/devices" / bdf
+            dev.mkdir(parents=True, exist_ok=True)
+            for name, value in (("vendor", vendor), ("device", device), ("class", cls)):
+                (dev / name).write_text(value + "\n")
+        for unit in iommu:
+            (host / "sys/class/iommu" / unit).mkdir(parents=True, exist_ok=True)
+        for table in acpi_tables:
+            (host / "sys/firmware/acpi/tables").mkdir(parents=True, exist_ok=True)
+            (host / "sys/firmware/acpi/tables" / table).write_bytes(b"")
+        if efi:
+            (host / "sys/firmware/efi").mkdir(parents=True, exist_ok=True)
+        for channel in dma:
+            (host / "sys/class/dma" / channel).mkdir(parents=True, exist_ok=True)
+        for node in nodes:
+            (host / "sys/devices/system/node" / node).mkdir(parents=True, exist_ok=True)
+        return {"KC_HOST_ROOT": str(host)}
 
     def set_baseline_symbols(self, **values):
         lines = self.config.read_text().splitlines()
@@ -1085,6 +1132,246 @@ config HID_LED
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CONFIG_RCU_NOCB_CPU requested=y final=n", result.stderr)
         self.assertEqual(self.config.read_text(), self.baseline)
+
+
+    # --- host-root injection and detector regressions ---
+
+    INTEL_CPUINFO = "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 58\n\n"
+    AMD_CPUINFO = "processor\t: 0\nvendor_id\t: AuthenticAMD\ncpu family\t: 25\nmodel\t\t: 33\n\n"
+
+    def test_host_root_redirects_auto_detectors(self):
+        self.add_symbols("EFI", "EFI_STUB", "EFI_PARTITION", "DMADEVICES", "NUMA")
+        self.set_baseline_symbols(EFI="n", DMADEVICES="y", NUMA="n")
+        env = self.make_host_root(efi=True, nodes=("node0", "node1"))
+        result = self.run_script("--uefi-support=auto", "--dma-engine-support=auto",
+                                 "--numa-support=auto", env=env)
+        self.assert_success(result)
+        self.assert_symbol("EFI", "y")
+        self.assert_symbol("DMADEVICES", "n")
+        self.assert_symbol("NUMA", "y")
+        # A second synthetic host without those devices prunes them again, whatever the real host has.
+        shutil.rmtree(self.root / "host")
+        env = self.make_host_root(dma=("dma0chan0",))
+        self.assert_success(self.run_script("--uefi-support=auto", "--dma-engine-support=auto",
+                                            "--numa-support=auto", env=env))
+        self.assert_symbol("EFI", "n")
+        self.assert_symbol("DMADEVICES", "y")
+        self.assert_symbol("NUMA", "n")
+
+    def test_iommu_auto_follows_host_iommu_evidence(self):
+        self.add_symbols("X86", "IOMMU_SUPPORT", "IOMMUFD", "IOMMU_DMA", "INTEL_IOMMU", "AMD_IOMMU")
+        self.set_baseline_symbols(X86="y", IOMMU_SUPPORT="y", INTEL_IOMMU="y", AMD_IOMMU="n")
+        # A Celeron without VT-d: no /sys/class/iommu entries and no ACPI DMAR table.
+        env = self.make_host_root(cpuinfo=self.INTEL_CPUINFO)
+        result = self.run_script("--strict", "--iommu-support=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("Applying IOMMU support profile: off", result.stdout)
+        self.assert_symbol("IOMMU_SUPPORT", "n")
+        self.assert_symbol("INTEL_IOMMU", "n")
+        # Firmware advertises VT-d even though the running kernel has no IOMMU driver.
+        self.set_baseline_symbols(IOMMU_SUPPORT="n", INTEL_IOMMU="n")
+        env = self.make_host_root(cpuinfo=self.INTEL_CPUINFO, acpi_tables=("DMAR",))
+        self.assert_success(self.run_script("--strict", "--iommu-support=auto", env=env))
+        self.assert_symbol("IOMMU_SUPPORT", "y")
+        self.assert_symbol("INTEL_IOMMU", "y")
+        self.assert_symbol("AMD_IOMMU", "n")
+        # An active AMD IOMMU unit.
+        shutil.rmtree(self.root / "host")
+        self.set_baseline_symbols(IOMMU_SUPPORT="n", INTEL_IOMMU="n")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO, iommu=("ivhd0",))
+        self.assert_success(self.run_script("--strict", "--iommu-support=auto", env=env))
+        self.assert_symbol("AMD_IOMMU", "y")
+        self.assert_symbol("INTEL_IOMMU", "n")
+        # Explicit on still wins without any evidence.
+        shutil.rmtree(self.root / "host")
+        self.set_baseline_symbols(IOMMU_SUPPORT="n", INTEL_IOMMU="n", AMD_IOMMU="n")
+        env = self.make_host_root(cpuinfo=self.INTEL_CPUINFO)
+        self.assert_success(self.run_script("--strict", "--iommu-support=on", env=env))
+        self.assert_symbol("INTEL_IOMMU", "y")
+
+    def test_generic_arch_kconfig_symbols_are_toggles(self):
+        self.add_kconfig('''
+            config ARCH_SUPPORTS_SCHED_MC
+            \tbool
+
+            config SCHED_MC
+            \tbool "Multi-Core Cache (MC) scheduler support"
+            \tdepends on ARCH_SUPPORTS_SCHED_MC
+        ''', path="arch/Kconfig")
+        self.add_kconfig('''
+            config SCHED_MC_PRIO
+            \tbool "CPU core priorities scheduler support"
+            \tdepends on SCHED_MC
+        ''', path="arch/x86/Kconfig")
+        self.add_kconfig('''
+            config ARM64_ONLY
+            \tbool "Only visible on arm64"
+        ''', path="arch/arm64/Kconfig")
+        self.set_baseline_symbols(ARCH_SUPPORTS_SCHED_MC="y", SCHED_MC="n", SCHED_MC_PRIO="n")
+        result = self.run_script("--strict", "--optimization-profile=server", env={"ARCH": "x86"})
+        self.assert_success(result)
+        self.assertNotIn("Skipping non-toggle symbol: CONFIG_SCHED_MC", result.stdout)
+        self.assert_symbol("SCHED_MC", "y")
+        self.assert_symbol("SCHED_MC_PRIO", "y")
+        # Other architectures stay excluded from the metadata.
+        result = self.run_script("--disable-symbols=ARM64_ONLY", env={"ARCH": "x86"})
+        self.assert_success(result)
+        self.assertIn("CONFIG_ARM64_ONLY is not a bool/tristate symbol", result.stderr)
+
+    def test_protected_disabled_symbol_may_lose_its_prompt(self):
+        self.set_baseline_symbols(KASAN="n")
+        result = self.run_script("--strict", "--sched-cache=on", "--protected-config-symbols=KASAN",
+                                 env={"REMOVE_SYMBOLS": "KASAN"})
+        self.assert_success(result)
+        self.assertNotIn("Protected symbol changed", result.stderr)
+        self.assertNotIn("CONFIG_KASAN", self.config.read_text())
+
+    def test_protected_absent_symbol_may_gain_disabled_entry(self):
+        # CGROUP_PIDS is defined in Kconfig but absent from the baseline config.
+        result = self.run_script("--strict", "--sched-cache=on",
+                                 "--protected-config-symbols=CGROUP_PIDS",
+                                 env={"DROP_SYMBOLS": "CGROUP_PIDS"})
+        self.assert_success(result)
+        self.assertNotIn("Protected symbol changed", result.stderr)
+
+    def test_unmet_request_lists_failed_dependencies(self):
+        self.add_symbols("HAS_IOMEM", "EDAC_SUPPORT", "RAS")
+        self.add_kconfig('''
+            config EDAC
+            \ttristate "EDAC (Error Detection And Correction) reporting"
+            \tdepends on HAS_IOMEM && EDAC_SUPPORT && RAS
+        ''')
+        self.set_baseline_symbols(HAS_IOMEM="y", EDAC_SUPPORT="y", RAS="n")
+        result = self.run_script("--strict", "--enable-symbols=EDAC", env={"DROP_SYMBOLS": "EDAC"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONFIG_EDAC requested=y final=n", result.stderr)
+        self.assertIn("depends on HAS_IOMEM && EDAC_SUPPORT && RAS; unmet: RAS=n", result.stderr)
+        self.assertNotIn("HAS_IOMEM=", result.stderr)
+        self.assert_untouched()
+
+    def test_unmet_dependency_hint_handles_alternatives_negation_and_comparisons(self):
+        self.add_symbols("A", "B", "C", "FOO", "BAR")
+        self.add_kconfig('''
+            config ALT
+            \tbool "alternatives"
+            \tdepends on (A || B) && !C
+
+            config CMP
+            \tbool "comparison"
+            \tdepends on FOO=y && BAR
+        ''')
+        self.set_baseline_symbols(A="n", B="n", C="y", FOO="n", BAR="n")
+        result = self.run_script("--enable-symbols=ALT,CMP", env={"DROP_SYMBOLS": "ALT CMP"})
+        self.assert_success(result)
+        self.assertIn("unmet: A=n, B=n, C=y", result.stderr)
+        # The comparison FOO=y is not evaluated; only the bare symbol term is reported.
+        self.assertIn("depends on FOO=y && BAR; unmet: BAR=n)", result.stderr)
+        # A satisfied alternative removes the hint for that line.
+        self.set_baseline_symbols(B="y", C="n")
+        result = self.run_script("--enable-symbols=ALT", env={"DROP_SYMBOLS": "ALT"})
+        self.assert_success(result)
+        self.assertIn("CONFIG_ALT requested=y final=n", result.stderr)
+        self.assertNotIn("unmet:", result.stderr)
+
+    def test_apply_prints_changes_before_backup(self):
+        result = self.run_script("--sched-cache=on")
+        self.assert_success(result)
+        self.assertIn("CONFIG_SCHED_CACHE: n -> y", result.stdout)
+        self.assertLess(result.stdout.index("CONFIG_SCHED_CACHE: n -> y"), result.stdout.index("Backup:"))
+        result = self.run_script("--sched-cache=on")
+        self.assert_success(result)
+        self.assertEqual(result.stdout.count("No changes."), 1)
+
+
+    # --- platform drivers (PLATFORM_DRIVERS=auto) ---
+
+    def test_platform_drivers_ipmi_power_meter_and_hpe_as_modules(self):
+        self.add_symbols("IPMI_HANDLER", "IPMI_DEVICE_INTERFACE", "IPMI_SI", "ACPI_IPMI",
+                         "SENSORS_ACPI_POWER", "HP_ILO", "HP_WATCHDOG", "HWMON", kind="tristate")
+        self.add_symbols("MODULES", "WATCHDOG", "PCI")
+        self.set_baseline_symbols(MODULES="y", PCI="y", HWMON="y")
+        env = self.make_host_root(sys_vendor="HPE", acpi=("IPI0001:00", "ACPI000D:00"),
+                                  pci=[("0000:01:00.2", "0x103c", "0x3306", "0x088000")])
+        result = self.run_script("--dry-run", "--strict", "--platform-drivers=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("IPI0001:00 -> CONFIG_IPMI_SI=m", result.stdout)
+        self.assertIn("ACPI000D:00 -> CONFIG_SENSORS_ACPI_POWER=m", result.stdout)
+        self.assertIn("sys_vendor=HPE (PCI 0000:01:00.2 103c:3306) -> CONFIG_HP_WATCHDOG=m", result.stdout)
+        self.assertIn("CONFIG_ACPI_IPMI: n -> m", result.stdout)
+        self.assertIn("CONFIG_WATCHDOG: n -> y", result.stdout)
+        self.assertIn("Validation passed", result.stdout)
+        self.assert_untouched()
+        result = self.run_script("--platform-drivers=auto", "--protected-config-symbols=IPMI_SI", env=env)
+        self.assert_success(result)
+        self.assertIn("Skipping protected symbol: CONFIG_IPMI_SI", result.stdout)
+        # Parents are enabled first (built in unless the baseline already had them as modules).
+        self.assert_symbol("IPMI_HANDLER", "y")
+        self.assert_symbol("HP_ILO", "m")
+        self.assertNotIn("CONFIG_IPMI_SI=", self.config.read_text())
+
+    def test_platform_drivers_intel_edac_pch_and_missing_symbols(self):
+        self.add_symbols("RAS", "EDAC", "X86_MCE", "X86_MCE_INTEL", "X86", "X86_64", "I2C", "HWMON",
+                         "WATCHDOG", "MODULES")
+        self.add_symbols("I2C_I801", "SENSORS_CORETEMP", "ITCO_WDT", kind="tristate")
+        self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y")
+        env = self.make_host_root(cpuinfo=self.INTEL_CPUINFO,
+                                  pci=[("0000:00:00.0", "0x8086", "0x1918", "0x060000"),
+                                       ("0000:00:1f.3", "0x8086", "0xa123", "0x0c0500"),
+                                       ("0000:00:1f.0", "0x8086", "0xa145", "0x060100")])
+        result = self.run_script("--strict", "--platform-drivers=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("PCI 0000:00:00.0 8086:1918 (host bridge) -> CONFIG_EDAC_IE31200 not available in this tree",
+                      result.stdout)
+        self.assert_symbol("RAS", "y")
+        self.assert_symbol("EDAC", "y")
+        self.assert_symbol("X86_MCE", "y")
+        self.assert_symbol("I2C_I801", "m")
+        self.assert_symbol("SENSORS_CORETEMP", "m")
+        self.assert_symbol("ITCO_WDT", "m")
+        # Two olddefconfig passes: the parent refresh and the final one.
+        calls = (self.root / "make.log").read_text().splitlines()
+        self.assertEqual(len(calls), 2)
+        self.set_baseline_symbols(MODULES="n")
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("I2C_I801", "y")
+        self.assert_symbol("ITCO_WDT", "y")
+
+    def test_platform_drivers_amd_dell_vendor_filter_default_and_invalid_value(self):
+        self.add_symbols("RAS", "EDAC", "X86_MCE", "X86_MCE_AMD", "X86", "HWMON", "MODULES")
+        self.add_symbols("EDAC_AMD64", "EDAC_DECODE_MCE", "SENSORS_K10TEMP", "DCDBAS", "DELL_SMBIOS",
+                         kind="tristate")
+        self.set_baseline_symbols(X86="y", MODULES="y")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO, sys_vendor="Dell Inc.", acpi=("IPI0001:00",))
+        result = self.run_script("--strict", "--platform-drivers=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("cpuinfo family 0x19 (AMD) -> CONFIG_EDAC_AMD64=m", result.stdout)
+        self.assertIn("IPI0001:00 -> CONFIG_IPMI_SI not available in this tree", result.stdout)
+        for sym in ("EDAC_AMD64", "EDAC_DECODE_MCE", "SENSORS_K10TEMP", "DCDBAS", "DELL_SMBIOS"):
+            self.assert_symbol(sym, "m")
+        # The CPU vendor follows an explicit --cpu-vendor-filter, so the phases never contradict.
+        self.set_baseline_symbols(EDAC_AMD64="n", EDAC_DECODE_MCE="n", SENSORS_K10TEMP="n")
+        result = self.run_script("--platform-drivers=auto", "--cpu-vendor-filter=intel", env=env)
+        self.assert_success(result)
+        self.assertNotIn("CONFIG_EDAC_AMD64=m", result.stdout)
+        self.assert_symbol("EDAC_AMD64", "n")
+        # Default none is inert; an invalid value is rejected before anything runs.
+        self.set_baseline_symbols()
+        result = self.run_script("--dry-run", env=env)
+        self.assert_success(result)
+        self.assertNotIn("platform drivers profile", result.stdout)
+        backups = sorted(self.tree.glob(".config.bak.*"))
+        result = self.run_script("--platform-drivers=maybe", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid PLATFORM_DRIVERS", result.stderr)
+        self.assertEqual(self.config.read_text(), self.baseline)
+        self.assertEqual(sorted(self.tree.glob(".config.bak.*")), backups)
+
+    def test_platform_drivers_without_evidence_is_inert(self):
+        env = self.make_host_root(cpuinfo=self.INTEL_CPUINFO)
+        result = self.run_script("--dry-run", "--strict", "--platform-drivers=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("no platform driver evidence found on this host", result.stdout)
+        self.assertIn("No changes.", result.stdout)
 
 
 class ModuleRestorationTests(unittest.TestCase):

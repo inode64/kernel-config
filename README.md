@@ -132,11 +132,27 @@ The genkernel adapter reads its installed compression table and checks executabl
 
 The ugrd adapter supports the verified 2.x XZ/ZSTD/uncompressed interface. It checks defaults and Python compression dependencies in the builder's interpreter (including an unambiguous Gentoo python-exec launcher). Having the `zstd` executable does not substitute for Python `zstandard`. Unknown versions, custom build hooks, or ambiguous interpreters are not certified. Neither adapter runs genkernel/ugrd or changes their configuration.
 
+**Root coverage.** The inspection also reads `/proc/self/mountinfo` and sysfs (never `blkid`, `mdadm` or `lvm`) to learn which layers sit under `/`: md arrays (`md/level`, `md/metadata_version`, `md/uuid`), LVM and LUKS device-mapper targets (`dm/uuid` prefix), partitions and nested `slaves/`. The inspected host is `--host-root` of the discover phase (`HOST_ROOT`, default `/`), so a chroot can be checked. With ugrd, each layer must be listed explicitly in `modules` of the producer configuration: `ugrd.fs.mdraid` for md, `ugrd.fs.lvm` for LVM, `ugrd.crypto.cryptsetup` for LUKS. ugrd 2.x only adds these through its virtual-block autodetection, which is written for device-mapper nodes: a root mounted directly from `/dev/mdN` stops at «No device mapper name found» and never reaches the `linux_raid_member` check, so hafnio (`/dev/md127`, RAID5, metadata 0.90) got an initramfs without `mdadm`. A missing module is **incompatible**. When other md arrays exist, `ugrd.fs.mdraid` copies the host `/etc/mdadm.conf` and runs `mdadm --assemble --scan`; if that file has no `ARRAY` entry for the root array's UUID (and no `[copies.*]` entry replaces `/etc/mdadm.conf`), assembly depends on scanning every member at boot, so the report emits a **warning** (a slow USB member can leave another array half assembled). The final `.config` must provide the layer symbols as `y` or `m`: `BLK_DEV_MD` plus the level symbol (`MD_RAID0`, `MD_RAID1`, `MD_RAID10`, `MD_RAID456`, `MD_LINEAR`) for md, `BLK_DEV_DM` for LVM, `BLK_DEV_DM` and `DM_CRYPT` for LUKS. With genkernel the root device is reported as a note only (its `--mdadm`/`--lvm`/`--luks` options are not inspected). Roots that are not a single block device (btrfs multi-device, zfs, nfs, `rootfs`) and `/dev/root` are reported as notes, not failures. Warnings are shown but never fail validation or `--strict`.
+
+```
+Initramfs compression: incompatible
+  Generator: ugrd 2.2.0 (only installed supported generator (inferred))
+  Producer format: xz
+  Root device: /dev/md127 (md raid5, metadata 0.90)
+    ugrd.fs.mdraid: missing
+    Other md arrays: md1, md2 (mdadm.conf: not covered)
+  ...
+  incompatible: ugrd root coverage: ugrd.fs.mdraid is not listed in modules of /etc/ugrd/config.toml; ...
+  warning: other md arrays present (md1, md2); /etc/mdadm.conf (copied by ugrd.fs.mdraid) has no ARRAY entry for the root array, ...
+```
+
+Stacked layers are joined with ` on `, for example `Root device: /dev/mapper/vg-root (lvm vg-root on crypt cryptroot on md raid1, metadata 1.2)`.
+
 Known ugrd 2.x behaviour the report cannot predict: the build aborts in `get_virtual_block_info` when sysfs exposes an inactive md device without `md/uuid` (an empty `/dev/md0` left by autodetection). When the root filesystem is on a plain partition, `masks.build_enum = "get_virtual_block_info"` in `/etc/ugrd/config.toml` skips that detection (the key is `masks`; the sample file says `mask`). On Gentoo, `sys-kernel/installkernel` with `USE=systemd` delegates to systemd's `kernel-install`, which fails on old running kernels with "Protocol driver not attached"; `SYSTEMD_KERNEL_INSTALL=0 make install` uses the shell implementation with the same `install.d` hooks.
 
 Image inspection supports uncompressed newc/crc CPIO and gzip, bzip2, XZ, LZMA-alone (usual `0x5d` properties), ZSTD, legacy LZ4, and the kernel's lzop/LZO framing. XZ requires CRC32 or no check; CRC64/SHA256 are rejected. ZSTD/LZ4/LZO inspection checks framing, not payload integrity/checksums. UKI/U-Boot wrappers and unrecognized formats are reported as unknown; modern LZ4 framing is rejected. Inspection is bounded to 128 MiB compressed input, 256 MiB expanded data, and 256 archive members. These checks concern compression compatibility, not a boot/signature certification.
 
-`--strict` rejects incompatible **or unknown** evidence after `olddefconfig`, before committing the configuration. Without strict mode the report warns and other changes may still be saved. `--check --strict` validates the existing configuration without running make; it does not simulate decoder additions requested by `auto`. No generators, images, `/boot` files, or running modules are changed by these checks. Existing decoders are preserved unless explicitly disabled, and final validation catches removal of a required decoder.
+`--strict` rejects incompatible **or unknown** evidence after `olddefconfig`, before committing the configuration; **warning** findings (such as the root-coverage `mdadm.conf` notice) are printed but never fail, with or without `--strict`. Without strict mode the report warns and other changes may still be saved. `--check --strict` validates the existing configuration without running make; it does not simulate decoder additions requested by `auto`. No generators, images, `/boot` files, or running modules are changed by these checks. Existing decoders are preserved unless explicitly disabled, and final validation catches removal of a required decoder.
 
 References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/driver-api/early-userspace/buffer-format.html), [kernel XZ restrictions](https://docs.kernel.org/staging/xz.html), [genkernel compression handling](https://github.com/gentoo/genkernel/blob/master/gen_configkernel.sh), [ugrd CPIO writer](https://github.com/desultory/ugrd/blob/main/src/ugrd/fs/cpio.py).
 
@@ -309,7 +325,7 @@ The `nfs-server` application profile no longer enables `NFSD_FLEXFILELAYOUT`, wh
 
 Lists are comma-separated and default to `none`. Names are case-sensitive, with an optional `CONFIG_` prefix. For example, `SND_SOC_AMD_ACP3x` contains a lowercase `x`; it is distinct from `SND_SOC_AMD_ACP3X`. The same case preservation applies to protected symbols, discovery, module mappings, validation, and dry-run output.
 
-These lists apply after profiles and other tuning controls. Conflicting requests for the same symbol are rejected. Protected symbols remain protected, and `--strict` rejects requests that Kconfig cannot retain. Non-toggle options cannot be changed through these lists. The options configure a future kernel build; they do not unload, blacklist, install, or delete modules from the running system.
+These lists apply after profiles and other tuning controls. Conflicting requests for the same symbol are rejected. Protected symbols remain protected, and `--strict` rejects requests that Kconfig cannot retain. When a request does not survive `olddefconfig`, the diagnostic lists the `depends on` terms that evaluate to `n` in the final configuration, for example `Unmet request: CONFIG_EDAC requested=y final=n (check Kconfig dependencies/choices; depends on HAS_IOMEM && EDAC_SUPPORT && RAS; unmet: RAS=n)`; a reverted disable request names its active selectors instead. The hint evaluates symbol terms, `!`, `&&`, `||` and parentheses; comparisons and conditions inherited from `if`/`menu` blocks are not evaluated. Non-toggle options cannot be changed through these lists. The options configure a future kernel build; they do not unload, blacklist, install, or delete modules from the running system.
 
 ```bash
 # Preview an audited removal while retaining the required audio drivers.
@@ -376,13 +392,25 @@ These options change kernel build configuration and defaults. They do not create
   Keeps or prunes `CONFIG_DMADEVICES` based on whether the running host exposes `dmaengine` devices.
 
 - `IOMMU_SUPPORT=none|auto|on|off`
-  Keeps or prunes generic IOMMU support and selects `AMD_IOMMU` or `INTEL_IOMMU` from the resolved CPU vendor.
+  Keeps or prunes generic IOMMU support and selects `AMD_IOMMU` or `INTEL_IOMMU` from the resolved CPU vendor. `auto` keeps IOMMU support only when the host exposes `/sys/class/iommu` entries or an ACPI `DMAR`/`IVRS` table; a CPU or firmware without either (a Celeron without VT-d, for example) prunes it.
 
 - `NUMA_SUPPORT=none|auto|on|off`
   Keeps or prunes `CONFIG_NUMA` based on currently visible NUMA nodes.
 
 - `NR_CPUS=none|auto|<integer>`
   Sets `CONFIG_NR_CPUS` to a fixed value or to the detected host CPU count. If the config defines a valid `NR_CPUS` range, the value is clamped into that range.
+
+- `PLATFORM_DRIVERS=none|auto`
+  `auto` requests the platform drivers for which the running host shows direct evidence in `/sys` and `/proc/cpuinfo`, without running `dmidecode` or `lspci`. Default `none` changes nothing. Each request is printed with its evidence (`IPI0001:00 -> CONFIG_IPMI_SI=m`). Symbols are requested as modules when `CONFIG_MODULES=y` and the symbol is tristate, otherwise built in; an existing built-in is never demoted. Symbols missing from the kernel tree are reported as "not available in this tree" and do not fail `--strict`. Parents (`RAS`, `EDAC`, `X86_MCE`, `HWMON`, `I2C`, `WATCHDOG`, `IPMI_HANDLER`, `PCI`) are enabled first, with an intermediate `olddefconfig` when one was off.
+
+  Evidence table (small and extensible):
+  - ACPI `IPI0001` or SMBIOS type 38: `IPMI_HANDLER`, `IPMI_DEVICE_INTERFACE`, `IPMI_SI`, `ACPI_IPMI`.
+  - ACPI `ACPI000D` (ACPI 4.0 power meter): `SENSORS_ACPI_POWER` plus the IPMI set, because `_PMM` reads an IPMI OperationRegion; without `acpi_ipmi` the kernel logs `No handler for Region [POWR] [IPMI]` on every hwmon read.
+  - `dmi/id/sys_vendor` HP/HPE: `HP_ILO`, `HP_WATCHDOG` (confirmed by PCI `103c:3306`/`103c:3307` when visible). Dell: `DCDBAS`, `DELL_SMBIOS`. Supermicro: nothing beyond IPMI.
+  - Intel host bridge (PCI class `0600`, the device ids handled by `ie31200_edac`): `EDAC_IE31200`; Xeon families by CPU model: `EDAC_SBRIDGE`, `EDAC_SKX`, `EDAC_I10NM`. AMD family 0fh+: `EDAC_AMD64`, `EDAC_DECODE_MCE`. The CPU vendor follows `CPU_VENDOR_FILTER` when set, so the two phases never contradict each other.
+  - Intel SMBus (class `0c05`): `I2C_I801`. Intel LPC/eSPI bridge (class `0601`): `ITCO_WDT` (plus `LPC_ICH` when `EXPERT=y`; hpwdt and iTCO can coexist). CPU sensors: `SENSORS_CORETEMP` or `SENSORS_K10TEMP`.
+
+  EDAC, PCH, hwmon and watchdog detection is x86-only. `PROTECTED_CONFIG_SYMBOLS` and the explicit symbol lists still take precedence.
 
 - `PROTECTED_CONFIG_SYMBOLS=<comma-separated-list>`
   Prevents the script from enabling, disabling, or overwriting the listed symbols. The default protected list already includes `CONFIG_ARCH_PKEY_BITS`.
@@ -564,7 +592,10 @@ Several parameters support `auto`. Current detection logic is intentionally simp
   Checks for devices under `/sys/class/dma`.
 
 - `IOMMU_SUPPORT=auto`
-  Resolves the CPU vendor and selects `AMD_IOMMU` or `INTEL_IOMMU`.
+  Checks `/sys/class/iommu/*`, then the ACPI `DMAR` (Intel VT-d) or `IVRS` (AMD-Vi) table under `/sys/firmware/acpi/tables`; without either it resolves to `off`. The vendor driver is still chosen from the CPU vendor.
+
+- `PLATFORM_DRIVERS=auto`
+  Reads `/sys/bus/acpi/devices`, `/sys/firmware/dmi/entries`, `/sys/class/dmi/id/sys_vendor`, `/sys/bus/pci/devices/*/{vendor,device,class}` and `/proc/cpuinfo`. All of these are world-readable; root is not required.
 
 - `NUMA_SUPPORT=auto`
   Checks `/sys/devices/system/node`.
@@ -576,6 +607,8 @@ Several parameters support `auto`. Current detection logic is intentionally simp
   If XFS is present and mounted, the script inspects mounted filesystems with `xfs_info` and toggles:
   `CONFIG_XFS_SUPPORT_V4`
   `CONFIG_XFS_SUPPORT_ASCII_CI`
+
+`KC_HOST_ROOT=/path` prefixes every `/sys` and `/proc` read used by auto-detection and is passed to the initramfs inspector as its `--host-root` (its `/etc`, `/proc/self/mountinfo` and `/sys/class/block`). It exists for the test suite and for offline analysis of a captured sysfs; it is not a tuning option, and tools such as `findmnt`, `nproc` or `xfs_info` still see the real host.
 
 Important limitation:
 
@@ -741,7 +774,7 @@ The script:
 - skips backups and replacement when the normalized config is already identical
 - prints a suggested `diff` command after saving
 
-In `--dry-run`, it prints a compact `CONFIG_FOO: old -> new` summary instead of a unified diff.
+Both modes print a compact `CONFIG_FOO: old -> new` summary instead of a unified diff; when saving, it appears before the backup path and the suggested `diff` command.
 
 With `VALIDATION_MODE=strict` or `--strict`, a mismatch exits with status 1 before
 creating a backup or replacing the original config, including normal runs.
@@ -802,7 +835,8 @@ Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
 - The `firehol` profile keeps the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable, plus the xtables targets and matches its generated rules use. `NETFILTER_XTABLES_LEGACY` depends on `!PREEMPT_RT`, so the legacy backend is unavailable on RT kernels.
 - When a profile enables a symbol that was off in the baseline (for example `ZSWAP` or `LRU_GEN`), the script runs an intermediate `make olddefconfig` so the symbols that depend on it become visible and can be configured in the same run.
 - `PROTECTED_CONFIG_SYMBOLS` blocks direct script edits. Changes caused by `make olddefconfig` are reported; `--strict` prevents saving them.
-- Symbol availability is checked against Kconfig definitions, including symbols absent from the baseline `.config`. The final Kconfig result remains authoritative for architecture, visibility, and dependencies.
+- Symbol availability is checked against Kconfig definitions, including symbols absent from the baseline `.config`. The final Kconfig result remains authoritative for architecture, visibility, and dependencies. Kconfig metadata covers the common files, the generic `arch/Kconfig` and the `arch/<target>/` tree resolved from `ARCH` or `uname -m`; other architectures are excluded.
+- `PLATFORM_DRIVERS=auto` only sees hardware the running kernel exposes; a board whose BMC is disabled in firmware, or a kernel without ACPI, produces no IPMI evidence.
 - Some symbols are architecture-specific, so results depend on the target kernel tree and baseline config.
 
 ## Validation examples
@@ -841,7 +875,7 @@ KERNEL_TEST_SRCDIR=/path/to/linux python3 -m unittest discover -s tests -v
 
 The integration tests copy configuration/build tooling and generated includes into a temporary tree, link the other source paths, and verify that the supplied source `.config` is unchanged. The 7.2 checks exercise preemption/RT, tick choices, THP, LRU, zswap/zram, NUMA migration, kmalloc partitioning, BBR, io_uring, runtime verification, `SCHED_CACHE`, and initrd decoding. They also check strict rejection, dry-run, idempotence, module/NFS risk controls, the NFS server profile, deprecated aliases, quoted Netfilter prompts and EXPERT-gated pruning. Reference-only Kconfig snapshots do not replace these integration tests.
 
-Compression tests use isolated builder metadata and synthetic CPIO streams, including concatenation, early microcode, CRC64 rejection, truncated streams, absent dependencies, ambiguous generators, strict rollback, and decoder removal after explicit overrides. Ordinary script tests disable host producer detection; real-host inspection is a separate read-only check. Scheduler tests cover UCLAMP/autogroup overrides and the desktop THP policy. These options enable capabilities for a future kernel; performance benefits depend on workload and policies and require measurements after booting that kernel.
+Host detection tests build a synthetic `/sys` and `/proc` under `KC_HOST_ROOT` (UEFI, DMA engines, NUMA nodes, IOMMU units and ACPI tables, ACPI/DMI/PCI platform-driver evidence). Compression tests use isolated builder metadata and synthetic CPIO streams, including concatenation, early microcode, CRC64 rejection, truncated streams, absent dependencies, ambiguous generators, strict rollback, and decoder removal after explicit overrides. Ordinary script tests disable host producer detection; real-host inspection is a separate read-only check. Scheduler tests cover UCLAMP/autogroup overrides and the desktop THP policy. These options enable capabilities for a future kernel; performance benefits depend on workload and policies and require measurements after booting that kernel.
 
 ## License
 

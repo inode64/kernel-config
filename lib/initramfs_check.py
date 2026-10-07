@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only compression inspection. Never source configuration or run a builder.
+"""Read-only compression and root-coverage inspection. Never source configuration or run a builder.
 
 Discovery is serialized once; validation uses the final olddefconfig result.
 Image inspection checks stream framing/decoders, not bootability or signatures.
+Root coverage reads /proc/self/mountinfo and sysfs to learn the md/LVM/LUKS
+layers under / and checks that the generator (ugrd) lists the module that
+assembles each layer and that the kernel provides its symbols.
 """
 
 import argparse
@@ -24,6 +27,16 @@ FORMATS = ("gzip", "bzip2", "lzma", "xz", "lzo", "lz4", "zstd")
 MAX_IMAGE = 128 * 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024
 MAX_MEMBERS = 256
+
+# Root device coverage: generator module that assembles/opens each block layer
+# of the root device, and the kernel symbols the layer needs (y or m is enough,
+# the initramfs loads modules). Levels follow md/level in sysfs.
+ROOT_LAYER_MODULES = {"md": "ugrd.fs.mdraid", "lvm": "ugrd.fs.lvm", "crypt": "ugrd.crypto.cryptsetup"}
+ROOT_LAYER_KCONFIG = {"md": ("BLK_DEV_MD",), "lvm": ("BLK_DEV_DM",), "crypt": ("BLK_DEV_DM", "DM_CRYPT"),
+                      "dm": ("BLK_DEV_DM",)}
+RAID_LEVEL_KCONFIG = {"raid0": "MD_RAID0", "raid1": "MD_RAID1", "raid10": "MD_RAID10", "raid4": "MD_RAID456",
+                      "raid5": "MD_RAID456", "raid6": "MD_RAID456", "linear": "MD_LINEAR"}
+MAX_LAYER_DEPTH = 8
 
 
 class Unknown(ValueError):
@@ -337,7 +350,7 @@ class Inspector:
     def discover(self, generator="auto", config="", image="", compression="auto"):
         result = {"generator": generator, "source": "", "version": "unknown", "compression": None,
                   "required_formats": [], "dynamic_formats": [], "needs_initrd": bool(image),
-                  "issues": [], "notes": [], "images": []}
+                  "issues": [], "notes": [], "images": [], "root": None}
         try:
             selected, source = self.generator(generator)
             result.update(generator=selected, source=source)
@@ -386,6 +399,7 @@ class Inspector:
         if any(key in settings for key in ("imports", "custom_parameters", "module_path")):
             raise Unknown("custom ugrd build hooks/parameters require manual compression verification")
         result["config"] = str(path)
+        self.root_coverage(result, "ugrd", settings)
         value = settings.get("cpio_compression", caps["default"])
         if compression != "auto":
             value = compression
@@ -417,6 +431,7 @@ class Inspector:
             raise Unknown("custom GK_SHARE requires explicit capability verification")
         methods.update({k: v for k, v in settings.items() if k in table_keys})
         result["config"] = str(path)
+        self.root_coverage(result, "genkernel", settings)
         # Version is informational; actual capabilities come from installed tables.
         for version_file in (share / "genkernel.sh", share / "genkernel"):
             if version_file.is_file():
@@ -464,6 +479,161 @@ class Inspector:
         elif value not in supported or value not in available:
             result["issues"].append({"status": "incompatible", "message": f"genkernel compressor unsupported or unavailable: {value}"})
 
+    # Root device coverage. Everything is read through self.path() from
+    # /proc and /sys; no blkid/mdadm/lvm subprocess is run.
+
+    def read_attr(self, path):
+        try:
+            return path.read_text().strip()
+        except OSError:
+            return ""
+
+    def root_source(self, result):
+        """Root mount source from mountinfo, or None (with a note) when it is not a block device."""
+        mountinfo = self.path("/proc/self/mountinfo")
+        if not mountinfo.is_file():
+            result["notes"].append("Root coverage not checked: /proc/self/mountinfo is unavailable")
+            return None
+        source = None
+        for line in mountinfo.read_text().splitlines():
+            fields, separator, tail = line.partition(" - ")
+            fields, tail = fields.split(), tail.split()
+            if separator and len(fields) >= 5 and fields[4] == "/" and len(tail) >= 2:
+                source = tail[1]  # last record wins, like the kernel's view of /
+        if source is None:
+            result["notes"].append("Root coverage not checked: no / mount in /proc/self/mountinfo")
+            return None
+        if not source.startswith("/dev/"):
+            result["notes"].append(f"Root coverage not checked: root source {source} is not a single block device (btrfs multi-device, zfs, nfs, rootfs)")
+            return None
+        return source
+
+    def block_name(self, source):
+        """sysfs block name for a /dev path, or None when it cannot be mapped (e.g. /dev/root)."""
+        relative = source.removeprefix("/dev/")
+        if relative.startswith("mapper/"):
+            wanted = relative.removeprefix("mapper/")
+            for entry in sorted(self.path("/sys/class/block").glob("dm-*/dm/name")):
+                if self.read_attr(entry) == wanted:
+                    return entry.parent.parent.name
+            return None
+        node = self.path(source)
+        if node.is_symlink():  # /dev/md/NAME, /dev/disk/by-*/...
+            return os.path.basename(os.readlink(node)) or None
+        if "/" in relative or relative == "root":
+            # /dev/root cannot be mapped without the device number; documented limitation.
+            return None
+        return relative
+
+    def block_layers(self, name, depth=0, visited=None):
+        """Ordered layers of a block device, top-down, following sysfs slaves/ and partition parents."""
+        visited = set() if visited is None else visited
+        if depth > MAX_LAYER_DEPTH or name in visited:
+            return []
+        visited.add(name)
+        device = self.path("/sys/class/block") / name
+        if not device.is_dir():
+            return []
+        layers = []
+        if (device / "md").is_dir():
+            layers.append({"type": "md", "name": name, "level": self.read_attr(device / "md/level"),
+                           "metadata": self.read_attr(device / "md/metadata_version"),
+                           "uuid": self.read_attr(device / "md/uuid")})
+        elif (device / "dm/uuid").is_file():
+            uuid = self.read_attr(device / "dm/uuid")
+            kind = "lvm" if uuid.startswith("LVM-") else "crypt" if uuid.startswith("CRYPT-") else "dm"
+            layers.append({"type": kind, "name": self.read_attr(device / "dm/name") or name})
+        elif (device / "partition").is_file():
+            parent = device.resolve().parent.name
+            return layers + self.block_layers(parent, depth + 1, visited)
+        slaves = device / "slaves"
+        if slaves.is_dir():
+            for slave in sorted(slaves.iterdir()):
+                layers.extend(self.block_layers(slave.name, depth + 1, visited))
+        return layers
+
+    def other_md_arrays(self, exclude):
+        """Active md arrays (md/level set) that are not part of the root device chain."""
+        names = []
+        for device in sorted(self.path("/sys/class/block").glob("md*")):
+            if device.name not in exclude and (device / "md").is_dir() and self.read_attr(device / "md/level"):
+                names.append(device.name)
+        return names
+
+    def mdadm_conf_lists(self, uuid, settings):
+        """Whether the initramfs mdadm.conf will name the root array (ugrd copies the host file)."""
+        for copy in settings.get("copies", {}).values():
+            if isinstance(copy, dict) and copy.get("destination") == "/etc/mdadm.conf":
+                return True
+        wanted = re.sub(r"[^0-9a-f]", "", uuid.lower())  # sysfs prints %pU (dashes), mdadm uses colons
+        if not wanted:
+            return False
+        conf = self.path("/etc/mdadm.conf")
+        if not conf.is_file():
+            return False
+        for line in conf.read_text().splitlines():
+            if re.match(r"\s*ARRAY\b", line):
+                for match in re.finditer(r"\bUUID=([0-9a-fA-F:-]+)", line):
+                    if re.sub(r"[^0-9a-f]", "", match[1].lower()) == wanted:
+                        return True
+        return False
+
+    def root_coverage(self, result, generator, settings):
+        source = self.root_source(result)
+        if source is None:
+            return
+        name = self.block_name(source)
+        if name is None:
+            result["notes"].append(f"Root coverage not checked: {source} could not be mapped to a sysfs block device")
+            return
+        layers = self.block_layers(name)
+        md_layers = [layer for layer in layers if layer["type"] == "md"]
+        root = {"source": source, "layers": layers, "modules": {}, "mdadm_conf": "n/a",
+                "other_md": self.other_md_arrays({layer["name"] for layer in md_layers}) if md_layers else []}
+        result["root"] = root
+        if generator != "ugrd":
+            if layers:
+                result["notes"].append(f"Root coverage is informational for genkernel: root {source} is {describe_layers(layers)}; "
+                                       "make sure the matching --mdadm/--lvm/--luks options are used")
+            return
+        modules = settings.get("modules", [])
+        modules = [modules] if isinstance(modules, str) else list(modules)
+        config = result.get("config", "/etc/ugrd/config.toml")
+        reasons = {"md": "ugrd 2.x's virtual-block autodetection is written for device-mapper nodes; a root "
+                         "mounted directly from /dev/mdN stops at 'No device mapper name found' and never reaches "
+                         "the linux_raid_member check that would enable the module, so the initramfs ships "
+                         "without mdadm",
+                   "lvm": "ugrd only adds it when autodetection resolves an LVM2_member slave of the root "
+                          "device-mapper node; an explicit module entry does not depend on that detection",
+                   "crypt": "ugrd only adds it when autodetection resolves a crypto_LUKS slave of the root "
+                            "device-mapper node; an explicit module entry does not depend on that detection"}
+        for layer in layers:
+            module = ROOT_LAYER_MODULES.get(layer["type"])
+            if not module:
+                continue
+            root["modules"][module] = module in modules
+            if module not in modules:
+                result["issues"].append({"status": "incompatible", "message": f"ugrd root coverage: {module} is not listed in modules of {config}; {reasons[layer['type']]}"})
+        if md_layers and root["other_md"]:
+            covered = self.mdadm_conf_lists(md_layers[0]["uuid"], settings)
+            root["mdadm_conf"] = "covered" if covered else "not covered"
+            if not covered:
+                result["issues"].append({"status": "warning", "message": f"other md arrays present ({', '.join(root['other_md'])}); /etc/mdadm.conf (copied by ugrd.fs.mdraid) has no ARRAY entry for the root array, so mdadm --assemble --scan depends on scanning every member at boot (a slow USB member can leave another array half assembled)"})
+
+
+def describe_layers(layers):
+    """`lvm vg-root on crypt cryptroot on md raid1`; `plain partition` when there is no layer."""
+    parts = []
+    for layer in layers:
+        if layer["type"] == "md":
+            text = f"md {layer['level'] or 'unknown level'}"
+            if layer.get("metadata"):
+                text += f", metadata {layer['metadata']}"
+            parts.append(text)
+        else:
+            parts.append(f"{layer['type']} {layer['name']}")
+    return " on ".join(parts) or "plain partition"
+
 
 def evaluate(evidence, values):
     issues = list(evidence["issues"])
@@ -475,16 +645,38 @@ def evaluate(evidence, values):
     candidates = [fmt for fmt in evidence["dynamic_formats"] if values.get("RD_" + fmt.upper()) == "y"]
     if evidence["dynamic_formats"] and not candidates:
         issues.append({"status": "incompatible", "message": "genkernel best/fastest has no compressor with a built-in decoder; choose a format explicitly"})
+    root = evidence.get("root") or {}
+    for layer in root.get("layers", []):
+        symbols = list(ROOT_LAYER_KCONFIG.get(layer["type"], ()))
+        if layer["type"] == "md" and layer.get("level") in RAID_LEVEL_KCONFIG:
+            symbols.append(RAID_LEVEL_KCONFIG[layer["level"]])
+        detail = layer.get("level") or layer.get("name") or layer["type"]
+        for symbol in symbols:
+            if values.get(symbol) not in ("y", "m"):
+                issues.append({"status": "incompatible", "message": f"CONFIG_{symbol} must be y or m for the root device ({root['source']} {detail})"})
     status = "compatible" if evidence["needs_initrd"] else "not checked"
-    if issues:
-        status = "incompatible" if any(i["status"] == "incompatible" for i in issues) else "unknown"
+    blocking = [i for i in issues if i["status"] != "warning"]
+    if blocking:
+        status = "incompatible" if any(i["status"] == "incompatible" for i in blocking) else "unknown"
     return {**evidence, "status": status, "issues": issues, "eligible_formats": candidates}
+
+
+def blocking_issues(issues):
+    """Warnings are reported but never fail validation or strict mode."""
+    return [issue for issue in issues if issue["status"] != "warning"]
 
 
 def render(result, values):
     print(f"Initramfs compression: {result['status']}")
     print(f"  Generator: {result['generator']} {result['version']} ({result['source']})")
     print(f"  Producer format: {result['compression'] or 'unknown'}")
+    root = result.get("root")
+    if root:
+        print(f"  Root device: {root['source']} ({describe_layers(root['layers'])})")
+        for module, present in root["modules"].items():
+            print(f"    {module}: {'listed' if present else 'missing'}")
+        if root["other_md"]:
+            print(f"    Other md arrays: {', '.join(root['other_md'])} (mdadm.conf: {root['mdadm_conf']})")
     for image in result["images"]:
         print(f"  Image: {image['path']}")
         for member in image["members"]:
@@ -510,13 +702,15 @@ def main():
     parser.add_argument("--image", default="")
     parser.add_argument("--compression", default="auto", choices=("auto", "none", "best", "fastest", *FORMATS))
     parser.add_argument("--kernel-config")
+    parser.add_argument("--host-root", default="/", help="root of the host whose /etc, /proc and /sys are inspected (discover phase)")
     args = parser.parse_args()
     if args.phase == "discover":
-        print(json.dumps(Inspector().discover(args.generator, args.producer_config, args.image, args.compression)))
+        inspector = Inspector(Path(args.host_root))
+        print(json.dumps(inspector.discover(args.generator, args.producer_config, args.image, args.compression)))
         return 0
     evidence = json.load(sys.stdin)
     if args.phase == "requirements":
-        if evidence["issues"] or not evidence["needs_initrd"]:
+        if blocking_issues(evidence["issues"]) or not evidence["needs_initrd"]:
             print("Cannot infer initramfs requirements; see compatibility report", file=sys.stderr)
             return 1
         print("BLK_DEV_INITRD")
@@ -526,7 +720,7 @@ def main():
     values = kernel_values(args.kernel_config)
     result = evaluate(evidence, values)
     render(result, values)
-    return 1 if result["issues"] else 0
+    return 1 if blocking_issues(result["issues"]) else 0
 
 
 if __name__ == "__main__":

@@ -7,6 +7,10 @@ if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 2))); 
 fi
 
 SCRIPT_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
+# Prefix for host introspection paths (/sys, /proc) used by the auto detectors and the
+# initramfs inspector. Tests inject a synthetic host here; it is not a tunable.
+HOST_ROOT="${KC_HOST_ROOT:-}"
+HOST_ROOT="${HOST_ROOT%/}"
 
 # Usage:
 #   ./kernel-config.sh [OPTIONS] [KERNEL_SRCDIR] [CONFIG_FILE] [VAR=VALUE...]
@@ -77,12 +81,13 @@ SCRIPT_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
 #   INITRD_SUPPORT=none       -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none          -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
 #   DMA_ENGINE_SUPPORT=none   -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
-#   IOMMU_SUPPORT=none        -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor
+#   IOMMU_SUPPORT=none        -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor; auto needs /sys/class/iommu entries or an ACPI DMAR/IVRS table
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
 #   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
 #   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
+#   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
 # Recommended:
 #   ./kernel-config.sh /path/to/kernel
@@ -173,6 +178,7 @@ Options:
   --protected-config-symbols LIST
   --applications LIST
   --host-type TYPE
+  --platform-drivers MODE
   --prune-observability
   --prune-legacy
   --prune-debug-trace
@@ -248,8 +254,9 @@ Notes:
   --initrd-support accepts: none, auto, on, off.
   --tpm-support accepts: none, auto, on, off.
   --dma-engine-support accepts: none, auto, on, off.
-  --iommu-support accepts: none, auto, on, off.
+  --iommu-support accepts: none, auto, on, off. auto keeps IOMMU support only with /sys/class/iommu entries or an ACPI DMAR/IVRS table.
   --numa-support accepts: none, auto, on, off.
+  --platform-drivers accepts: none, auto (default: none). auto requests the platform drivers evidenced by /sys/bus/acpi, /sys/class/dmi, /sys/bus/pci and /proc/cpuinfo on the running host, printing the evidence for each symbol.
   --nr-cpus accepts: none, auto, or a positive integer.
   --protected-config-symbols accepts a comma-separated list such as CONFIG_FOO,CONFIG_BAR.
   --prune-unused-modules requires root, a configured tree matching the running kernelrelease, and only probes direct one-symbol/one-module Kbuild mappings.
@@ -352,7 +359,7 @@ set_tunable() {
             echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
             exit 1
             ;;
-        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
+        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PLATFORM_DRIVERS | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -458,6 +465,7 @@ init_tunable NR_CPUS none
 init_tunable PROTECTED_CONFIG_SYMBOLS CONFIG_ARCH_PKEY_BITS
 init_tunable APPLICATIONS none
 init_tunable HOST_TYPE none
+init_tunable PLATFORM_DRIVERS none
 init_tunable PRUNE_BPF false
 init_tunable PRUNE_COMPAT32 false
 init_tunable PRUNE_UNUSED_NET false
@@ -609,6 +617,9 @@ commit_transaction() {
         echo "No changes."
         return
     fi
+    echo "==> Changes for $ORIGINAL_CONFIG_FILE"
+    show_config_changes "$ORIGINAL_CONFIG_FILE" "$CONFIG_FILE"
+    echo
     local timestamp
     printf -v timestamp '%(%Y%m%d-%H%M%S)T' -1
     BACKUP="$(mktemp -- "${ORIGINAL_CONFIG_FILE}.bak.${timestamp}.XXXXXX")"
@@ -700,7 +711,7 @@ declare -A _SYMBOL_VALUE_CACHE=()
 declare -i _SYMBOL_CACHE_LOADED=0
 declare -A _DEFINED_SYMBOLS=() _REQUESTED_VALUES=() _PROTECTED_ORIGINAL_VALUES=()
 declare -A _KCONFIG_TYPES=() _KCONFIG_PROMPTS=() _EXPLICIT_SYMBOL_VALUES=()
-declare -A _KCONFIG_SELECTORS=()
+declare -A _KCONFIG_SELECTORS=() _KCONFIG_DEPENDS=()
 declare -a _UNSUPPORTED_REQUESTS=()
 
 _load_symbol_cache() {
@@ -781,7 +792,10 @@ load_kconfig_metadata() {
         s390x) srcarch=s390 ;;
     esac
     # This is conservative metadata, not a replacement for Kconfig evaluation.
-    # Other architectures must not turn a target's hidden symbol into a prompt.
+    # Other architectures must not turn a target's hidden symbol into a prompt, so
+    # arch/<other>/ is skipped; the generic arch/Kconfig (SCHED_MC, JUMP_LABEL, SECCOMP...)
+    # and arch/<target>/ are read. "depends on" lines are collected verbatim for the
+    # unmet-request diagnostics; conditions inherited from if/menu blocks are not.
     # shellcheck disable=SC2016
     entries="$(find_kconfig_files | xargs -0 -r awk -v root="$KSRCDIR/arch/" -v arch="$srcarch/" '
         function emit( i) {
@@ -821,7 +835,9 @@ load_kconfig_metadata() {
         }
         FNR == 1 {
             emit(); reset(); in_help = 0
-            skip = index(FILENAME, root) == 1 && index(FILENAME, root arch) != 1
+            rest = (index(FILENAME, root) == 1) ? substr(FILENAME, length(root) + 1) : ""
+            # Skip arch/<other>/...; keep arch/Kconfig, arch/Kconfig.* and arch/<target>/...
+            skip = rest != "" && index(rest, "/") > 0 && index(rest, arch) != 1
         }
         skip { next }
         /^[[:space:]]*(help|---help---)[[:space:]]*$/ { in_help = 1; help_indent = -1; next }
@@ -847,6 +863,16 @@ load_kconfig_metadata() {
             if (sym != "") print $2 "\tselect\t" sym
             next
         }
+        /^[[:space:]]*depends on[[:space:]]+/ {
+            if (sym != "") {
+                expr = $0
+                sub(/^[[:space:]]*depends on[[:space:]]+/, "", expr)
+                sub(/[[:space:]]*#.*$/, "", expr)
+                gsub(/\t/, " ", expr)
+                print sym "\tdepends\t" expr
+            }
+            next
+        }
         /^[[:space:]]*prompt[[:space:]]/ { prompt($0) }
         END { emit() }
     ')" || die "Could not read Kconfig types/prompts"
@@ -854,6 +880,10 @@ load_kconfig_metadata() {
         [[ -n "$sym" ]] || continue
         if [[ "$kind" == select ]]; then
             _KCONFIG_SELECTORS["$sym"]+="$guard"$'\n'
+            continue
+        fi
+        if [[ "$kind" == depends ]]; then
+            _KCONFIG_DEPENDS["$sym"]+="$guard"$'\n'
             continue
         fi
         _KCONFIG_TYPES["$sym"]="$kind"
@@ -911,6 +941,140 @@ is_prunable_toggle() {
         # Complex/continued prompt guards are left to explicit user controls.
     done <<<"${_KCONFIG_PROMPTS[$sym]:-}"
     return 1
+}
+
+_trim_kconfig_expr() {
+    local text="$1"
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text%"${text##*[![:space:]]}"}"
+    printf '%s' "$text"
+}
+
+# Strip balanced outer parentheses: "(A || B)" -> "A || B", but "(A) && (B)" is kept.
+_strip_kconfig_parens() {
+    local expr i c depth
+    expr="$(_trim_kconfig_expr "$1")"
+    while [[ "$expr" == "("*")" ]]; do
+        depth=0
+        for ((i = 0; i < ${#expr} - 1; i++)); do
+            c="${expr:i:1}"
+            [[ "$c" == "(" ]] && depth=$((depth + 1))
+            [[ "$c" == ")" ]] && depth=$((depth - 1))
+            ((depth == 0)) && break
+        done
+        ((i < ${#expr} - 1)) && break
+        expr="$(_trim_kconfig_expr "${expr:1:${#expr}-2}")"
+    done
+    printf '%s' "$expr"
+}
+
+# Split "$1" at parenthesis depth 0 on the operator "$2" ("&&" or "||"), one part per line.
+_split_kconfig_expr() {
+    local expr="$1" op="$2" part="" i c depth=0
+    for ((i = 0; i < ${#expr}; i++)); do
+        c="${expr:i:1}"
+        if [[ "$c" == "(" ]]; then
+            depth=$((depth + 1))
+        elif [[ "$c" == ")" ]]; then
+            depth=$((depth - 1))
+        elif ((depth == 0)) && [[ "${expr:i:2}" == "$op" ]]; then
+            printf '%s\n' "$part"
+            part=""
+            i=$((i + 1))
+            continue
+        fi
+        part+="$c"
+    done
+    printf '%s\n' "$part"
+}
+
+# Three-valued check of one dependency term against the final .config:
+# 0 = satisfied, 1 = unsatisfied (prints "SYM=value"), 2 = unknown (literals,
+# comparisons, nested expressions beyond the depth limit).
+_kconfig_term_state() {
+    local term value
+    term="$(_trim_kconfig_expr "$1")"
+    case "$term" in
+        y | m) return 0 ;;
+        n) return 1 ;;
+    esac
+    if [[ "$term" =~ ^[A-Za-z0-9_]+$ ]]; then
+        value="${_SYMBOL_VALUE_CACHE[$term]:-n}"
+        [[ "$value" != n ]] && return 0
+        printf '%s\n' "$term=n"
+        return 1
+    fi
+    if [[ "$term" =~ ^![A-Za-z0-9_]+$ ]]; then
+        value="${_SYMBOL_VALUE_CACHE[${term:1}]:-n}"
+        [[ "$value" == n ]] && return 0
+        printf '%s\n' "${term:1}=$value"
+        return 1
+    fi
+    return 2
+}
+
+# Print the unsatisfied terms of a dependency expression, one per line.
+# "&&" groups must all hold; an "||" group fails only when every alternative does.
+_collect_unmet_terms() {
+    local expr="$1" depth="${2:-0}" part alt state hit
+    local -a parts alternatives sub group
+    expr="$(_strip_kconfig_parens "$expr")"
+    ((depth > 4)) && return 0
+    mapfile -t parts < <(_split_kconfig_expr "$expr" "&&")
+    for part in "${parts[@]}"; do
+        part="$(_strip_kconfig_parens "$part")"
+        [[ -n "$part" ]] || continue
+        if [[ "$part" == *"||"* ]]; then
+            mapfile -t alternatives < <(_split_kconfig_expr "$part" "||")
+            group=()
+            hit=0
+            for alt in "${alternatives[@]}"; do
+                mapfile -t sub < <(_collect_unmet_terms "$alt" $((depth + 1)))
+                if ((${#sub[@]} == 0)); then
+                    hit=1
+                    break
+                fi
+                group+=("${sub[@]}")
+            done
+            ((hit)) || printf '%s\n' "${group[@]}"
+        elif [[ "$part" == *"&&"* ]]; then
+            _collect_unmet_terms "$part" $((depth + 1))
+        else
+            if state="$(_kconfig_term_state "$part")"; then
+                continue
+            fi
+            [[ -n "$state" ]] && printf '%s\n' "$state"
+        fi
+    done
+    return 0
+}
+
+# Prints "depends on EXPR; unmet: A=n, B=y" for the first "depends on" line of
+# CONFIG_$1 that the final .config does not satisfy. A hint, not a Kconfig evaluation.
+describe_unmet_dependencies() {
+    local sym="$1" expr
+    local -a unmet
+    while IFS= read -r expr; do
+        [[ -n "$expr" ]] || continue
+        mapfile -t unmet < <(_collect_unmet_terms "$expr")
+        if ((${#unmet[@]})); then
+            printf 'depends on %s; unmet: %s\n' "$expr" "$(IFS=,; printf '%s' "${unmet[*]}" | sed 's/,/, /g')"
+            return
+        fi
+    done <<<"${_KCONFIG_DEPENDS[$sym]:-}"
+}
+
+# Prints "selected by: FOO=y, BAR=m" for the enabled selectors of CONFIG_$1.
+describe_active_selectors() {
+    local sym="$1" selector value
+    local -a active=()
+    while IFS= read -r selector; do
+        [[ -n "$selector" ]] || continue
+        value="${_SYMBOL_VALUE_CACHE[$selector]:-n}"
+        [[ "$value" == n ]] || active+=("$selector=$value")
+    done <<<"${_KCONFIG_SELECTORS[$sym]:-}"
+    ((${#active[@]})) && printf 'selected by: %s\n' "$(IFS=,; printf '%s' "${active[*]}" | sed 's/,/, /g')"
+    return 0
 }
 
 symbol_value() {
@@ -1487,13 +1651,13 @@ is_x86_config() {
 detect_host_cpu_vendor() {
     local vendor_id="" line
 
-    if [[ -r /proc/cpuinfo ]]; then
+    if [[ -r "${HOST_ROOT}/proc/cpuinfo" ]]; then
         while IFS= read -r line; do
             if [[ "$line" == vendor_id* ]]; then
                 vendor_id="${line#*: }"
                 break
             fi
-        done < /proc/cpuinfo
+        done < "${HOST_ROOT}/proc/cpuinfo"
     fi
 
     case "$vendor_id" in
@@ -1681,7 +1845,7 @@ detect_host_video_support() {
         esac
 
         append_unique_item "$profile" detected_profiles
-    done < <(find /sys/class/drm -mindepth 1 -maxdepth 1 -type l -name 'card[0-9]*' -print0 2>/dev/null)
+    done < <(find "${HOST_ROOT}/sys/class/drm" -mindepth 1 -maxdepth 1 -type l -name 'card[0-9]*' -print0 2>/dev/null)
 
     if ((${#detected_profiles[@]} == 1)); then
         printf '%s\n' "${detected_profiles[0]}"
@@ -1721,7 +1885,7 @@ detect_host_video_support() {
         esac
 
         append_unique_item "$profile" detected_profiles
-    done < <(find /sys/bus/pci/devices -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+    done < <(find "${HOST_ROOT}/sys/bus/pci/devices" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 
     if ((${#detected_profiles[@]} == 1)); then
         printf '%s\n' "${detected_profiles[0]}"
@@ -1754,7 +1918,7 @@ resolve_video_support() {
 }
 
 detect_host_uefi_support() {
-    if [[ -d /sys/firmware/efi ]]; then
+    if [[ -d "${HOST_ROOT}/sys/firmware/efi" ]]; then
         printf '%s\n' "on"
     else
         printf '%s\n' "off"
@@ -1820,10 +1984,10 @@ detect_host_initrd_support() {
     local ramdisk_image=""
     local ramdisk_size=""
 
-    if [[ -r /sys/kernel/boot_params/data ]]; then
-        ramdisk_image="$(od -An -j $((0x218)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null)" || true
+    if [[ -r "${HOST_ROOT}/sys/kernel/boot_params/data" ]]; then
+        ramdisk_image="$(od -An -j $((0x218)) -N 4 -t u4 "${HOST_ROOT}/sys/kernel/boot_params/data" 2>/dev/null)" || true
         ramdisk_image="${ramdisk_image//[[:space:]]/}"
-        ramdisk_size="$(od -An -j $((0x21c)) -N 4 -t u4 /sys/kernel/boot_params/data 2>/dev/null)" || true
+        ramdisk_size="$(od -An -j $((0x21c)) -N 4 -t u4 "${HOST_ROOT}/sys/kernel/boot_params/data" 2>/dev/null)" || true
         ramdisk_size="${ramdisk_size//[[:space:]]/}"
 
         if [[ -n "$ramdisk_image" && -n "$ramdisk_size" ]]; then
@@ -1837,7 +2001,7 @@ detect_host_initrd_support() {
     fi
 
     local _cmdline
-    if [[ -r /proc/cmdline ]] && { _cmdline="$(</proc/cmdline)"; [[ "$_cmdline" =~ (^|[[:space:]])initrd= ]]; }; then
+    if [[ -r "${HOST_ROOT}/proc/cmdline" ]] && { _cmdline="$(<"${HOST_ROOT}/proc/cmdline")"; [[ "$_cmdline" =~ (^|[[:space:]])initrd= ]]; }; then
         printf '%s\n' "on"
     else
         printf '%s\n' "unknown"
@@ -1852,7 +2016,7 @@ detect_host_tpm_versions() {
     local path version description
     local -a versions=()
 
-    for path in /sys/class/tpm/tpm*; do
+    for path in "${HOST_ROOT}"/sys/class/tpm/tpm*; do
         [[ -d "$path" ]] || continue
 
         version=""
@@ -1925,7 +2089,7 @@ resolve_tpm_support() {
 detect_host_dma_engine_support() {
     local path
 
-    for path in /sys/class/dma/*; do
+    for path in "${HOST_ROOT}"/sys/class/dma/*; do
         [[ -e "$path" ]] || continue
         printf '%s\n' "on"
         return
@@ -1938,25 +2102,109 @@ resolve_dma_engine_support() {
     resolve_on_off_support DMA_ENGINE_SUPPORT detect_host_dma_engine_support "dma dmaengine"
 }
 
+# Platform-driver evidence readers. Everything comes from sysfs/procfs under HOST_ROOT;
+# no dmidecode/lspci is run.
+
+# Comma-separated ACPI device instances with the given HID (IPI0001:00,...), or nothing.
+platform_acpi_instances() {
+    local path
+    local -a found=()
+    for path in "${HOST_ROOT}/sys/bus/acpi/devices/$1:"*; do
+        [[ -e "$path" ]] && found+=("${path##*/}")
+    done
+    ((${#found[@]})) && { local IFS=,; printf '%s\n' "${found[*]}"; }
+    return 0
+}
+
+# True when an SMBIOS entry of the given type (38 = IPMI device) is exported.
+platform_dmi_has_entry_type() {
+    local path
+    for path in "${HOST_ROOT}/sys/firmware/dmi/entries/$1-"*; do
+        [[ -e "$path" ]] && return 0
+    done
+    return 1
+}
+
+platform_dmi_sys_vendor() {
+    local file="${HOST_ROOT}/sys/class/dmi/id/sys_vendor" value
+    [[ -r "$file" ]] || return 0
+    value="$(<"$file")"
+    _trim_kconfig_expr "$value"
+    echo
+}
+
+# One line per PCI device: "bdf<TAB>vendor<TAB>device<TAB>class" (lower-case 0x.. ids, class without 0x).
+list_platform_pci_devices() {
+    local path vendor device class
+    while IFS= read -r -d '' path; do
+        [[ -r "$path/vendor" && -r "$path/device" && -r "$path/class" ]] || continue
+        vendor="$(<"$path/vendor")"
+        device="$(<"$path/device")"
+        class="$(<"$path/class")"
+        class="${class#0x}"
+        printf '%s\t%s\t%s\t%s\n' "${path##*/}" "${vendor@L}" "${device@L}" "${class@L}"
+    done < <(find "${HOST_ROOT}/sys/bus/pci/devices" -mindepth 1 -maxdepth 1 -print0 2>/dev/null | sort -z)
+}
+
+# Sets REPLY="<family> <model>" (decimal) from the first CPU of /proc/cpuinfo, or "".
+detect_host_cpu_family_model() {
+    local line family="" model=""
+    REPLY=""
+    [[ -r "${HOST_ROOT}/proc/cpuinfo" ]] || return 0
+    while IFS= read -r line; do
+        case "$line" in
+            "cpu family"*) family="${line#*: }" ;;
+            model[[:space:]]*|model:*) model="${line#*: }" ;;
+            "") [[ -n "$family" || -n "$model" ]] && break ;;
+        esac
+    done < "${HOST_ROOT}/proc/cpuinfo"
+    [[ "$family" =~ ^[0-9]+$ && "$model" =~ ^[0-9]+$ ]] && REPLY="$family $model"
+    return 0
+}
+
+detect_host_iommu_support() {
+    local path
+
+    # The running kernel drives an IOMMU: /sys/class/iommu has entries (dmar0, ivhd0...).
+    for path in "${HOST_ROOT}"/sys/class/iommu/*; do
+        [[ -e "$path" ]] || continue
+        printf '%s\n' "on"
+        return
+    done
+
+    # Firmware advertises one even when the current kernel lacks the driver or booted
+    # with it disabled: ACPI DMAR (Intel VT-d) or IVRS (AMD-Vi). The table itself is
+    # root-only, but its existence is visible to everyone. A CPU/firmware without either
+    # (a Celeron without VT-d, for example) resolves to off.
+    for path in "${HOST_ROOT}/sys/firmware/acpi/tables/DMAR" "${HOST_ROOT}/sys/firmware/acpi/tables/IVRS"; do
+        if [[ -e "$path" ]]; then
+            printf '%s\n' "on"
+            return
+        fi
+    done
+
+    printf '%s\n' "off"
+}
+
 resolve_iommu_support() {
-    resolve_on_off_support IOMMU_SUPPORT "" "iommu"
+    resolve_on_off_support IOMMU_SUPPORT detect_host_iommu_support "iommu"
 }
 
 detect_host_numa_support() {
     local online=""
 
-    if [[ ! -d /sys/devices/system/node ]]; then
+    if [[ ! -d "${HOST_ROOT}/sys/devices/system/node" ]]; then
         printf '%s\n' "off"
         return
     fi
 
-    if compgen -G "/sys/devices/system/node/node[1-9]*" >/dev/null; then
+    if compgen -G "${HOST_ROOT}/sys/devices/system/node/node[1-9]*" >/dev/null; then
         printf '%s\n' "on"
         return
     fi
 
-    if [[ -r /sys/devices/system/node/online ]]; then
-        online="$(</sys/devices/system/node/online)"
+    if [[ -r "${HOST_ROOT}/sys/devices/system/node/online" ]]; then
+        online="$(<"${HOST_ROOT}/sys/devices/system/node/online")"
         online="${online//[[:space:]]/}"
         case "$online" in
             "" | 0)
@@ -2028,9 +2276,9 @@ detect_host_nr_cpus() {
     local path cpu_list count
 
     for path in \
-        /sys/devices/system/cpu/present \
-        /sys/devices/system/cpu/possible \
-        /sys/devices/system/cpu/online; do
+        "${HOST_ROOT}/sys/devices/system/cpu/present" \
+        "${HOST_ROOT}/sys/devices/system/cpu/possible" \
+        "${HOST_ROOT}/sys/devices/system/cpu/online"; do
         [[ -r "$path" ]] || continue
         cpu_list="$(<"$path")"
         cpu_list="${cpu_list//[[:space:]]/}"
@@ -2057,8 +2305,8 @@ detect_host_nr_cpus() {
         fi
     fi
 
-    if [[ -r /proc/cpuinfo ]]; then
-        count="$(awk '/^processor[[:space:]]*:/{count++} END{print count+0}' /proc/cpuinfo 2>/dev/null || true)"
+    if [[ -r "${HOST_ROOT}/proc/cpuinfo" ]]; then
+        count="$(awk '/^processor[[:space:]]*:/{count++} END{print count+0}' "${HOST_ROOT}/proc/cpuinfo" 2>/dev/null || true)"
         if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
             printf '%s\n' "$count"
             return
@@ -2208,6 +2456,18 @@ probe_xfs_deprecated_features() {
     if [[ "$need_ascii_ci" == "1" ]]; then
         printf '%s\n' "ascii_ci"
     fi
+}
+
+resolve_platform_drivers() {
+    local mode="${PLATFORM_DRIVERS@L}"
+    case "$mode" in
+        "" | none | off | 0) printf '%s\n' "none" ;;
+        auto) printf '%s\n' "auto" ;;
+        *)
+            echo "Invalid PLATFORM_DRIVERS: $PLATFORM_DRIVERS (use none or auto)" >&2
+            exit 1
+            ;;
+    esac
 }
 
 resolve_host_type() {
@@ -2961,6 +3221,7 @@ prepare_initramfs_check() {
         || die "Initramfs inspection requires Python 3.11 or later"
     [[ -r "$SCRIPT_DIR/lib/initramfs_check.py" ]] || die "Missing helper: $SCRIPT_DIR/lib/initramfs_check.py"
     _INITRAMFS_EVIDENCE="$(python3 -B "$SCRIPT_DIR/lib/initramfs_check.py" discover \
+        --host-root "${HOST_ROOT:-/}" \
         --generator "$INITRAMFS_GENERATOR" --producer-config "$INITRAMFS_CONFIG" \
         --image "$INITRAMFS_IMAGE" --compression "$INITRAMFS_COMPRESSION")" \
         || die "Could not inspect initramfs compression; original config was not modified"
@@ -4266,6 +4527,207 @@ configure_nr_cpus_profile() {
     set_val_config_symbol NR_CPUS "$adjusted"
 }
 
+# --- Platform drivers (PLATFORM_DRIVERS=auto) ---------------------------------------
+# Evidence from the running host is turned into driver requests. Each request is
+# printed with its evidence; the value follows one rule (request_platform_driver).
+
+declare -A _PLATFORM_REQUESTS=()
+declare -a _PLATFORM_REQUEST_ORDER=() _PLATFORM_PARENTS=()
+
+add_platform_request() {
+    local evidence="$1" sym
+    shift
+    for sym in "$@"; do
+        [[ -v _PLATFORM_REQUESTS[$sym] ]] && continue
+        _PLATFORM_REQUESTS["$sym"]="$evidence"
+        _PLATFORM_REQUEST_ORDER+=("$sym")
+    done
+}
+
+add_platform_parents() {
+    local sym
+    for sym in "$@"; do
+        append_unique_item "$sym" _PLATFORM_PARENTS
+    done
+}
+
+# Already built in stays built in; tristate with MODULES=y becomes a module; else built in.
+# A symbol missing from this tree is reported and skipped without failing --strict.
+request_platform_driver() {
+    local sym="$1" evidence="$2" current
+    if ! have_symbol "$sym"; then
+        echo "    $evidence -> CONFIG_$sym not available in this tree"
+        return 0
+    fi
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    current="${_SYMBOL_VALUE_CACHE[$sym]:-n}"
+    if [[ "$current" == y ]]; then
+        echo "    $evidence -> CONFIG_$sym=y"
+        enable_config_symbol "$sym" builtin
+    elif is_symbol_enabled_now MODULES && [[ "${_KCONFIG_TYPES[$sym]:-}" == tristate ]]; then
+        echo "    $evidence -> CONFIG_$sym=m"
+        module_config_symbol "$sym"
+    else
+        echo "    $evidence -> CONFIG_$sym=y"
+        enable_config_symbol "$sym" builtin
+    fi
+}
+
+collect_platform_ipmi_requests() {
+    local ipi power_meter reason=""
+    ipi="$(platform_acpi_instances IPI0001)"
+    power_meter="$(platform_acpi_instances ACPI000D)"
+    if [[ -n "$ipi" ]]; then
+        reason="$ipi"
+    elif platform_dmi_has_entry_type 38; then
+        reason="DMI type 38 (IPMI device)"
+    elif [[ -n "$power_meter" ]]; then
+        # acpi_power_meter's _PMM reads an IPMI OperationRegion; without acpi_ipmi the
+        # kernel logs "No handler for Region [POWR] [IPMI]" on every hwmon read.
+        reason="$power_meter (ACPI power meter _PMM uses an IPMI OperationRegion)"
+    fi
+    if [[ -n "$reason" ]]; then
+        add_platform_parents IPMI_HANDLER
+        add_platform_request "$reason" IPMI_HANDLER IPMI_DEVICE_INTERFACE IPMI_SI ACPI_IPMI
+    fi
+    if [[ -n "$power_meter" ]]; then
+        add_platform_parents HWMON
+        add_platform_request "$power_meter" SENSORS_ACPI_POWER
+    fi
+}
+
+collect_platform_dmi_vendor_requests() {
+    local pci_table="$1" vendor pci_hint=""
+    vendor="$(platform_dmi_sys_vendor)"
+    if [[ -z "$vendor" ]]; then
+        echo "    (dmi/id/sys_vendor not readable; skipping the vendor table)"
+        return 0
+    fi
+    case "$vendor" in
+        HP | HPE | Hewlett-Packard | "Hewlett Packard Enterprise")
+            pci_hint="$(awk -F'\t' '$2 == "0x103c" && ($3 == "0x3306" || $3 == "0x3307") { print $1 " 103c:" substr($3, 3); exit }' <<<"$pci_table")"
+            if [[ -n "$pci_hint" ]]; then
+                pci_hint="PCI $pci_hint"
+            else
+                pci_hint="DMI only"
+            fi
+            add_platform_parents PCI WATCHDOG
+            add_platform_request "sys_vendor=$vendor ($pci_hint)" HP_ILO HP_WATCHDOG
+            ;;
+        "Dell Inc.")
+            add_platform_request "sys_vendor=$vendor" DCDBAS DELL_SMBIOS
+            ;;
+        Supermicro)
+            echo "    (sys_vendor=Supermicro: IPMI is covered by the ACPI/DMI evidence)"
+            ;;
+        *)
+            echo "    (sys_vendor=$vendor: no vendor-specific platform drivers in the table)"
+            ;;
+    esac
+}
+
+# Host bridges handled by ie31200_edac (drivers/edac/ie31200_edac.c, 7.2).
+_IE31200_HOST_BRIDGES=" 0x0108 0x010c 0x0150 0x0158 0x015c 0x0c04 0x0c08 0x190f 0x1918 0x191f 0x3e00 0x3e0f 0x3e18 0x3e1f 0x3e30 0x3e31 0x3e32 0x3e33 0x3ec2 0x3ec6 0x3eca 0x4630 0x4639 0x463c 0x4640 0x4642 0x4643 0x4648 0x4660 0x4668 0x590f 0x5918 0xa700 0xa702 0xa703 0xa704 0xa731 0xa732 0xa733 0xa740 0xa741 0xa744 0xa745 "
+
+collect_platform_edac_requests() {
+    local pci_table="$1" cpu_vendor="$2" line bdf vendor device class family model driver=""
+    local -a parents=(RAS EDAC X86_MCE)
+    case "$cpu_vendor" in
+        intel)
+            while IFS=$'\t' read -r bdf vendor device class; do
+                [[ "$vendor" == 0x8086 && "$class" == 060000 ]] || continue
+                if [[ "$_IE31200_HOST_BRIDGES" == *" $device "* ]]; then
+                    add_platform_parents "${parents[@]}" X86_MCE_INTEL
+                    add_platform_request "PCI $bdf 8086:${device#0x} (host bridge)" EDAC_IE31200
+                fi
+            done <<<"$pci_table"
+            detect_host_cpu_family_model
+            [[ -n "$REPLY" ]] || return 0
+            read -r family model <<<"$REPLY"
+            ((family == 6)) || return 0
+            case "$model" in
+                45 | 62 | 63 | 79 | 86 | 87 | 133) driver=EDAC_SBRIDGE ;;   # SNB/IVB/HSW/BDW-X, BDW-D, KNL, KNM
+                85) driver=EDAC_SKX ;;                                      # Skylake-X
+                143 | 207 | 173 | 174 | 175 | 182 | 221) driver=EDAC_I10NM ;; # SPR, EMR, GNR-X/D, SRF, Grand Ridge, CWF
+            esac
+            if [[ -n "$driver" ]]; then
+                add_platform_parents "${parents[@]}" X86_MCE_INTEL
+                add_platform_request "$(printf 'cpuinfo family 6 model 0x%x' "$model")" "$driver"
+            fi
+            ;;
+        amd)
+            detect_host_cpu_family_model
+            [[ -n "$REPLY" ]] || return 0
+            read -r family model <<<"$REPLY"
+            # amd64_edac covers family 0x0f onwards; the EDAC_DECODE_MCE dependency is AMD-only.
+            if ((family >= 15)); then
+                add_platform_parents "${parents[@]}" X86_MCE_AMD
+                add_platform_request "$(printf 'cpuinfo family 0x%x (AMD)' "$family")" EDAC_DECODE_MCE EDAC_AMD64
+            fi
+            ;;
+    esac
+}
+
+collect_platform_pch_requests() {
+    local pci_table="$1" cpu_vendor="$2" bdf vendor device class
+    while IFS=$'\t' read -r bdf vendor device class; do
+        [[ "$vendor" == 0x8086 ]] || continue
+        case "$class" in
+            0c0500)
+                add_platform_parents I2C
+                add_platform_request "PCI $bdf 8086:${device#0x} (SMBus)" I2C_I801
+                ;;
+            0601*)
+                add_platform_parents WATCHDOG
+                add_platform_request "PCI $bdf 8086:${device#0x} (LPC/eSPI bridge)" ITCO_WDT
+                # ITCO_WDT selects LPC_ICH only when EXPERT=n.
+                is_symbol_enabled_now EXPERT && add_platform_request "PCI $bdf 8086:${device#0x} (LPC/eSPI bridge, EXPERT=y)" LPC_ICH
+                ;;
+        esac
+    done <<<"$pci_table"
+    case "$cpu_vendor" in
+        intel)
+            add_platform_parents HWMON
+            add_platform_request "cpuinfo vendor GenuineIntel" SENSORS_CORETEMP
+            ;;
+        amd)
+            add_platform_parents HWMON
+            add_platform_request "cpuinfo vendor AuthenticAMD" SENSORS_K10TEMP
+            ;;
+    esac
+}
+
+configure_platform_drivers_profile() {
+    local sym pci_table cpu_vendor
+    _PLATFORM_REQUESTS=()
+    _PLATFORM_REQUEST_ORDER=()
+    _PLATFORM_PARENTS=()
+    echo
+    echo "==> Applying platform drivers profile: auto"
+    [[ -n "$HOST_ROOT" ]] && echo "    (host root: $HOST_ROOT)"
+    pci_table="$(list_platform_pci_devices)"
+    collect_platform_ipmi_requests
+    collect_platform_dmi_vendor_requests "$pci_table"
+    if is_x86_config; then
+        cpu_vendor="$(resolve_cpu_vendor_or_detect)"
+        collect_platform_edac_requests "$pci_table" "$cpu_vendor"
+        collect_platform_pch_requests "$pci_table" "$cpu_vendor"
+    else
+        echo "    (.config is not x86: skipping EDAC, PCH, hwmon and watchdog detection)"
+    fi
+    if ((${#_PLATFORM_REQUEST_ORDER[@]} == 0)); then
+        echo "    (no platform driver evidence found on this host)"
+        return 0
+    fi
+    ((${#_PLATFORM_PARENTS[@]})) && enable_parents_if_present "${_PLATFORM_PARENTS[@]}"
+    for sym in "${_PLATFORM_REQUEST_ORDER[@]}"; do
+        request_platform_driver "$sym" "${_PLATFORM_REQUESTS[$sym]}"
+    done
+    if [[ -v _PLATFORM_REQUESTS[HP_WATCHDOG] && -v _PLATFORM_REQUESTS[ITCO_WDT] ]]; then
+        echo "    (hpwdt and iTCO_wdt can coexist; both are requested)"
+    fi
+}
+
 configure_application_profiles() {
     local profile sym
     local qemu_cpu_vendor=""
@@ -4512,6 +4974,7 @@ validate_tunables() {
     NUMA_SUPPORT_EFFECTIVE="$(resolve_numa_support)"
     NR_CPUS_EFFECTIVE="$(resolve_nr_cpus)"
     HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
+    PLATFORM_DRIVERS_EFFECTIVE="$(resolve_platform_drivers)"
     APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
     validate_enum PREEMPTION 'keep|none|voluntary|full|lazy|rt'
     validate_enum PREEMPT_DYNAMIC 'keep|on|off'
@@ -4587,7 +5050,7 @@ capture_protected_values() {
 }
 
 verify_config_result() {
-    local sym actual expected issue
+    local sym actual expected issue hint
     local failures=0
     _load_symbol_cache
     for issue in "${_UNSUPPORTED_REQUESTS[@]}"; do
@@ -4598,14 +5061,21 @@ verify_config_result() {
         expected="${_REQUESTED_VALUES[$sym]}"
         actual="${_SYMBOL_VALUE_CACHE[$sym]:-n}"
         if [[ "$expected" != "$actual" ]]; then
-            echo "Unmet request: CONFIG_$sym requested=$expected final=$actual (check Kconfig dependencies/choices)" >&2
+            if [[ "$expected" == n ]]; then
+                hint="$(describe_active_selectors "$sym")"
+            else
+                hint="$(describe_unmet_dependencies "$sym")"
+            fi
+            echo "Unmet request: CONFIG_$sym requested=$expected final=$actual (check Kconfig dependencies/choices${hint:+; $hint})" >&2
             failures=$((failures + 1))
         fi
     done
     for sym in "${!_PROTECTED_ORIGINAL_VALUES[@]}"; do
         expected="${_PROTECTED_ORIGINAL_VALUES[$sym]}"
         actual="${_SYMBOL_VALUE_CACHE[$sym]:-__absent__}"
-        if [[ "$expected" != "$actual" ]]; then
+        # A disabled symbol whose prompt disappears after olddefconfig (or the reverse) is
+        # unchanged: "# CONFIG_X is not set" and an absent line both mean n.
+        if [[ "${expected/__absent__/n}" != "${actual/__absent__/n}" ]]; then
             echo "Protected symbol changed: CONFIG_$sym before=$expected final=$actual" >&2
             failures=$((failures + 1))
         fi
@@ -5088,6 +5558,10 @@ fi
 
 if [[ "$HOST_TYPE_EFFECTIVE" != "none" ]]; then
     configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+fi
+
+if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == "auto" ]]; then
+    configure_platform_drivers_profile
 fi
 
 # Uncommon or legacy network protocols for a general-purpose server
