@@ -4766,7 +4766,10 @@ configure_application_profiles() {
                 append_unique_item DRM_AMDGPU available_syms
                 ;;
             nebula)
-                # Userspace tunnel: needs TUN, not the in-kernel WireGuard driver.
+                # Userspace tunnel (nebula 1.11: /dev/net/tun with IFF_MULTI_QUEUE,
+                # addresses/routes over rtnetlink in the main table, SO_MARK on its
+                # UDP socket). No netfilter or policy routing; not the in-kernel
+                # WireGuard driver. An IPv6 overlay needs IPV6 on top of this.
                 for sym in NET INET TUN; do
                     append_unique_item "$sym" enable_syms
                 done

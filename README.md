@@ -439,8 +439,11 @@ These options change kernel build configuration and defaults. They do not create
     memory prerequisites. Existing `DRM_AMDGPU=m` is preserved. This does not
     certify a GPU/userspace combination or install ROCm. KFD belongs to amdgpu;
     an absent standalone KFD entry in `lsmod` does not indicate missing support.
-  - `nebula`: userspace VPN support through TUN. It does not implicitly enable
-    the kernel WireGuard implementation. See the
+  - `nebula`: userspace VPN support through TUN. Nebula 1.11 opens
+    `/dev/net/tun` (multi-queue), manages its addresses and routes over
+    rtnetlink in the main table and sets `SO_MARK` on its UDP socket; it needs
+    no netfilter or policy-routing support and does not use the kernel
+    WireGuard driver. An IPv6 overlay also needs `IPV6`. See the
     [Nebula TUN configuration](https://nebula.defined.net/docs/config/tun/).
   - `warp`: Cloudflare WARP client (`warp-svc`). Userspace WireGuard/MASQUE
     over TUN, the `inet cloudflare-warp` nftables table (including reject
