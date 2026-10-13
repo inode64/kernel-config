@@ -827,6 +827,19 @@ config HID_LED
         self.assert_success(self.run_script(*args, "--disable-symbols=HIDRAW"))
         self.assert_symbol("HIDRAW", "n")
 
+    def test_warp_profile_enables_policy_routing_and_nftables(self):
+        self.add_symbols("TUN", "IP_MULTIPLE_TABLES", "IPV6_MULTIPLE_TABLES",
+                         "NF_TABLES", "NF_TABLES_INET", "NFT_REJECT_INET")
+        self.set_baseline_symbols(TUN="n", IP_MULTIPLE_TABLES="n", IPV6_MULTIPLE_TABLES="n",
+                                  NF_TABLES="n", NF_TABLES_INET="n", NFT_REJECT_INET="n")
+        self.assert_success(self.run_script("--strict", "--applications=nebula"))
+        self.assert_symbol("TUN", "y")
+        self.assert_symbol("IPV6_MULTIPLE_TABLES", "n")
+        self.assert_success(self.run_script("--strict", "--applications=warp"))
+        for symbol in ("TUN", "IP_MULTIPLE_TABLES", "IPV6_MULTIPLE_TABLES",
+                       "NF_TABLES", "NF_TABLES_INET", "NFT_REJECT_INET"):
+            self.assert_symbol(symbol, "y")
+
     def test_new_application_profiles_respect_protection_and_none(self):
         self.add_symbols("HIDRAW", "TUN")
         self.set_baseline_symbols(HIDRAW="n", TUN="n")

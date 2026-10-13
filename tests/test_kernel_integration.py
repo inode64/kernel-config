@@ -109,7 +109,12 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script(*args))
         self.assert_values(DRM_AMDGPU="m", FUSE_FS="m", SND_USB_AUDIO="m",
                            USB_VIDEO_CLASS="m", HSA_AMD="y", HSA_AMD_SVM="y",
-                           HIDRAW="y", INOTIFY_USER="y", SECCOMP_FILTER="y", TUN="y")
+                           HIDRAW="y", INOTIFY_USER="y", SECCOMP_FILTER="y", TUN="y",
+                           IP_MULTIPLE_TABLES="y", IPV6_MULTIPLE_TABLES="y", NF_TABLES_INET="y")
+        # warp needs nf_tables and nft_reject_inet, built-in or modular.
+        config = dict(re.findall(r"^CONFIG_(\w+)=(.*)$", self.config.read_text(), re.M))
+        for symbol in ("NF_TABLES", "NFT_REJECT", "NFT_REJECT_INET"):
+            self.assertIn(config.get(symbol, "n"), ("y", "m"), symbol)
         before = self.config.read_bytes()
         self.assert_success(self.run_script(*args))
         self.assertEqual(self.config.read_bytes(), before)

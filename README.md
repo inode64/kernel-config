@@ -439,9 +439,16 @@ These options change kernel build configuration and defaults. They do not create
     memory prerequisites. Existing `DRM_AMDGPU=m` is preserved. This does not
     certify a GPU/userspace combination or install ROCm. KFD belongs to amdgpu;
     an absent standalone KFD entry in `lsmod` does not indicate missing support.
-  - `nebula`, `warp`: userspace VPN support through TUN. Neither implicitly
-    enables the kernel WireGuard implementation. See the
+  - `nebula`: userspace VPN support through TUN. It does not implicitly enable
+    the kernel WireGuard implementation. See the
     [Nebula TUN configuration](https://nebula.defined.net/docs/config/tun/).
+  - `warp`: Cloudflare WARP client (`warp-svc`). Userspace WireGuard/MASQUE
+    over TUN, the `inet cloudflare-warp` nftables table (including reject
+    expressions) and fwmark policy routing for IPv4 and IPv6
+    (`IP_MULTIPLE_TABLES`, `IPV6_MULTIPLE_TABLES`). Client 2026.8+ installs the
+    IPv6 fwmark rule unconditionally; without `IPV6_MULTIPLE_TABLES` the tunnel
+    fails with "IPv6 fwmark rule install: Address family not supported by
+    protocol (os error 97)". The kernel WireGuard driver is not required.
 
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy

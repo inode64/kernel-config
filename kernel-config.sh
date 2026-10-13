@@ -4765,9 +4765,21 @@ configure_application_profiles() {
                 done
                 append_unique_item DRM_AMDGPU available_syms
                 ;;
-            nebula | warp)
-                # Userspace tunnels need TUN, not the in-kernel WireGuard driver.
+            nebula)
+                # Userspace tunnel: needs TUN, not the in-kernel WireGuard driver.
                 for sym in NET INET TUN; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
+            warp)
+                # Cloudflare WARP (warp-svc): userspace WireGuard/MASQUE over TUN,
+                # an nftables table "inet cloudflare-warp" (reject expressions
+                # included) and fwmark policy-routing rules for IPv4 *and* IPv6.
+                # Since client 2026.8 the IPv6 rule is installed unconditionally:
+                # without IPV6_MULTIPLE_TABLES the tunnel never comes up
+                # ("IPv6 fwmark rule install: Address family not supported by
+                # protocol (os error 97)").
+                for sym in NET INET IPV6 TUN IP_ADVANCED_ROUTER IP_MULTIPLE_TABLES IPV6_MULTIPLE_TABLES NETFILTER NF_TABLES NF_TABLES_INET NF_TABLES_IPV4 NF_TABLES_IPV6 NFT_REJECT NFT_REJECT_INET; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
