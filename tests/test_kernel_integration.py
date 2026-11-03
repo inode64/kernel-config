@@ -119,6 +119,19 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script(*args))
         self.assertEqual(self.config.read_bytes(), before)
 
+    def test_real_python_profile_restores_cross_memory_attach(self):
+        self.prepare_baseline(CROSS_MEMORY_ATTACH="n", DNOTIFY="n")
+        self.assert_success(self.run_script("--strict", "--applications=python"))
+        self.assert_values(CROSS_MEMORY_ATTACH="y", DNOTIFY="y")
+
+    def test_real_hvo_default_follows_tree_version(self):
+        self.prepare_baseline(HUGETLBFS="y", HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON="y")
+        makefile = (self.tree / "Makefile").read_text()
+        version = tuple(int(re.search(rf"^{key} = (\d+)$", makefile, re.M).group(1))
+                        for key in ("VERSION", "PATCHLEVEL"))
+        self.assert_success(self.run_script("--strict"))
+        self.assert_values(HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON="y" if version >= (7, 2) else "n")
+
     def test_real_desktop_applications_restore_disabled_parents(self):
         self.prepare_baseline(DRM="n", SOUND="n", MEDIA_SUPPORT="n", USB="n",
                               HID="n", FUSE_FS="n", TUN="n")

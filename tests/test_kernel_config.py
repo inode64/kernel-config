@@ -840,6 +840,75 @@ config HID_LED
                        "NF_TABLES", "NF_TABLES_INET", "NFT_REJECT_INET"):
             self.assert_symbol(symbol, "y")
 
+    def test_python_profile_enables_remote_debugging_syscalls(self):
+        self.add_symbols("CROSS_MEMORY_ATTACH", "DNOTIFY")
+        self.set_baseline_symbols(CROSS_MEMORY_ATTACH="n", DNOTIFY="n")
+        self.assert_success(self.run_script("--strict", "--applications=python"))
+        self.assert_symbol("CROSS_MEMORY_ATTACH", "y")
+        self.assert_symbol("DNOTIFY", "y")
+        self.assert_success(self.run_script("--strict", "--applications=python",
+                                            "--disable-symbols=DNOTIFY"))
+        self.assert_symbol("DNOTIFY", "n")
+
+    def write_tree_version(self, version, patchlevel):
+        (self.tree / "Makefile").write_text(
+            f"VERSION = {version}\nPATCHLEVEL = {patchlevel}\nSUBLEVEL = 0\n")
+
+    def test_hvo_default_is_disabled_before_7_2(self):
+        sym = "HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON"
+        self.add_symbols(sym)
+        self.set_baseline_symbols(**{sym: "y"})
+        # The fixture Makefile has no version, which counts as affected.
+        for version, expected in ((None, "n"), ((6, 18), "n"), ((7, 1), "n"),
+                                  ((7, 2), "y"), ((8, 0), "y")):
+            with self.subTest(version=version):
+                self.config.write_text(self.baseline)
+                if version:
+                    self.write_tree_version(*version)
+                result = self.run_script("--strict")
+                self.assert_success(result)
+                self.assert_symbol(sym, expected)
+                self.assertEqual("Disabling HVO by default" in result.stdout, expected == "n")
+
+    def test_hvo_default_explicit_request_requires_7_2(self):
+        sym = "HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON"
+        self.add_symbols(sym)
+        self.set_baseline_symbols(**{sym: "n"})
+        self.write_tree_version(6, 18)
+        result = self.run_script("--strict", f"--enable-symbols={sym}")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"CONFIG_{sym}=y is only allowed from Linux 7.2 (tree: 6.18)", result.stderr)
+        self.assert_untouched()
+        result = self.run_script(f"--enable-symbols={sym}")
+        self.assert_success(result)
+        self.assertIn("only allowed from Linux 7.2", result.stderr)
+        self.assert_untouched()
+        self.write_tree_version(7, 2)
+        self.assert_success(self.run_script("--strict", f"--enable-symbols={sym}"))
+        self.assert_symbol(sym, "y")
+
+    def test_hvo_default_protected_before_7_2_is_kept_but_rejected(self):
+        sym = "HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON"
+        self.add_symbols(sym)
+        self.set_baseline_symbols(**{sym: "y"})
+        self.write_tree_version(6, 18)
+        protect = f"--protected-config-symbols={sym}"
+        for args in ((protect,), (protect, f"--enable-symbols={sym}")):
+            with self.subTest(args=args):
+                result = self.run_script("--strict", *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stderr.count("only allowed from Linux 7.2 (tree: 6.18)"), 1)
+                self.assertNotIn("Disabling HVO by default", result.stdout)
+                self.assert_untouched()
+        result = self.run_script(protect)
+        self.assert_success(result)
+        self.assertIn(f"protected CONFIG_{sym}=y is only allowed from Linux 7.2", result.stderr)
+        self.assert_symbol(sym, "y")
+        self.write_tree_version(7, 2)
+        result = self.run_script("--strict", protect)
+        self.assert_success(result)
+        self.assertNotIn("only allowed from Linux 7.2", result.stderr)
+
     def test_new_application_profiles_respect_protection_and_none(self):
         self.add_symbols("HIDRAW", "TUN")
         self.set_baseline_symbols(HIDRAW="n", TUN="n")

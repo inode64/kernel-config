@@ -425,7 +425,7 @@ These options change kernel build configuration and defaults. They do not create
   Enables kernel features commonly required by selected applications.
 
   Supported profiles:
-  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`
+  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `python`
 
   - `desktop`: GNOME/Wayland interfaces, browser namespaces/seccomp, IDE file
     notifications, FUSE portals, input/HID and DRM synchronization. This enables
@@ -452,6 +452,15 @@ These options change kernel build configuration and defaults. They do not create
     IPv6 fwmark rule unconditionally; without `IPV6_MULTIPLE_TABLES` the tunnel
     fails with "IPv6 fwmark rule install: Address family not supported by
     protocol (os error 97)". The kernel WireGuard driver is not required.
+  - `python`: the options `dev-lang/python` checks (`CROSS_MEMORY_ATTACH`,
+    `DNOTIFY`). Without `CROSS_MEMORY_ATTACH`, `process_vm_readv` and
+    `process_vm_writev` return `ENOSYS`, and CPython 3.14+ remote debugging
+    (`python -m pdb -p`, `sys.remote_exec()`) falls back to opening
+    `/proc/PID/mem` read-write. The Portage sandbox denies that file during the
+    `USE=pgo` profiling run, so the emerge fails right after
+    "Source compiled." with an access violation on `/proc/<pid>/mem`.
+    `DNOTIFY` only enables `test_fcntl`. Both default to `y` upstream and cost
+    nothing until a program calls them.
 
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy
@@ -829,6 +838,34 @@ removed later, annotated in the script with the removal version:
 Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
 `PERSISTENT_HUGE_ZERO_FOLIO` 6.18+, `RSEQ_SLICE_EXTENSION` 7.0+, `SCHED_CACHE`,
 `NUMA_MIGRATION` and `KMALLOC_PARTITION_*` 7.2+) are no-ops on older kernels.
+
+### HugeTLB vmemmap optimization before 7.2
+
+On every run, a tree older than Linux 7.2 gets
+`HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON` disabled. The version comes from
+`VERSION`/`PATCHLEVEL` in the tree's `Makefile`; if it cannot be read, the tree is
+treated as older. An explicit `--enable-symbols` request for it is reported as an
+unmet request (and rejected with `--strict`) instead of being applied. Listing it in
+`--protected-config-symbols` keeps an enabled value, but it is reported the same
+way. From 7.2 the baseline value is kept and the option can be requested.
+
+The reason is a bug in the 6.18 stable series. 6.18.51 brought in part of the HVO
+rework: it dropped the step that cleaned up the restored `struct page`s, but not
+the zeroed shared tail page that makes that step unnecessary in 7.2. When a HugeTLB
+page goes back to the buddy allocator, the head `struct page`s are copied into the
+tail ones, and one of them keeps the folio's page count where `memcg_data` lives
+(`0x200` for 2 MB). Later the kernel takes that value for a memory cgroup and oopses
+in `uncharge_folio`, typically hours after the HugeTLB pages were released. Booted
+with `init_on_free=1`, reserving and releasing 2 MB pages makes 6.18.57 report
+`BUG: Bad page state` (`page still charged to cgroup`, `corrupted mapping in tail page`).
+6.12.41, 6.18.12, 6.19.6, 7.0.14 and 7.2.0 report none. Kconfig cannot tell
+the affected trees apart, so the script gates by version.
+
+The option only sets the default. HVO itself (`HUGETLB_PAGE_OPTIMIZE_VMEMMAP`)
+stays built and can still be turned on with `hugetlb_free_vmemmap=on` or the
+`vm.hugetlb_optimize_vmemmap` sysctl. On an affected kernel, keep it off before
+reserving HugeTLB pages that may be released later. Without the default, HVO no
+longer saves about 28 KiB of `struct page` memory per 2 MB HugeTLB page.
 
 ## Caveats
 

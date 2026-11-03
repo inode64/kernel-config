@@ -85,7 +85,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
-#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup
+#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python
 #   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
 #   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
@@ -239,6 +239,7 @@ Notes:
   --io-uring accepts: keep, on, off (default: keep).
   Symbol lists are comma-separated, case-sensitive Kconfig names (optional CONFIG_ prefix).
   --disable-symbols, --module-symbols and --enable-symbols apply last; module requires MODULES=y.
+  HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON is disabled on trees older than Linux 7.2; requesting or protecting it there is an unmet request.
   Explicit tuning controls override profile defaults. keep leaves the profile/baseline unchanged.
   The all-optimizations preset does not enable --prune-hardening.
   --optimization-profile accepts: none, server, desktop, realtime.
@@ -2356,7 +2357,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup)
+            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | python)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -2365,7 +2366,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup" >&2
+                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python" >&2
                 exit 1
                 ;;
         esac
@@ -3202,6 +3203,53 @@ configure_symbol_overrides() {
             request_explicit_symbol "$sym" "$value"
         done
     done
+}
+
+# VERSION.PATCHLEVEL of the target tree, or nothing when the Makefile does not say.
+kernel_tree_version() {
+    [[ -r "$KSRCDIR/Makefile" ]] || return 0
+    awk -F '[[:space:]]*=[[:space:]]*' '
+        $1 == "VERSION" && $2 ~ /^[0-9]+$/ { version = $2 }
+        $1 == "PATCHLEVEL" && $2 ~ /^[0-9]+$/ { patchlevel = $2 }
+        version != "" && patchlevel != "" { print version "." patchlevel; exit }
+    ' "$KSRCDIR/Makefile"
+}
+
+# HugeTLB Vmemmap Optimization (HVO) may only default to on from Linux 7.2.
+# Stable 6.18.51 took part of the HVO rework: it dropped reset_struct_pages()
+# but kept a copy of the head vmemmap page as the shared tail page, because the
+# zeroed per-zone tail page of 7.2 did not come with it. Freeing a HugeTLB page
+# then copies the head struct pages into every restored vmemmap page (struct
+# pages 64-66, 128-130...), and 65 inherits the folio's _nr_pages (512) where
+# memcg_data lives. A later free takes 0x200 for a memcg pointer and oopses in
+# uncharge_folio. Booted with init_on_free=1, 6.18.57 reports "Bad page state"
+# as soon as HugeTLB pages are freed; 6.12.41, 6.18.12, 6.19.6, 7.0.14 and
+# 7.2.0 report none.
+# Kconfig cannot tell the trees apart, so the version decides, and an unknown
+# version counts as affected.
+configure_hugetlb_vmemmap_default() {
+    local sym=HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON version reason
+    have_symbol "$sym" || return 0
+    version="$(kernel_tree_version)"
+    if [[ "$version" =~ ^([0-9]+)\.([0-9]+)$ ]] \
+        && ((BASH_REMATCH[1] > 7 || (BASH_REMATCH[1] == 7 && BASH_REMATCH[2] >= 2))); then
+        return 0
+    fi
+    reason="is only allowed from Linux 7.2 (tree: ${version:-unknown}); freeing HugeTLB pages with HVO corrupts struct pages"
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[$sym]:-}" == y ]]; then
+        record_config_request_issue "CONFIG_$sym=y $reason"
+    fi
+    _load_symbol_cache
+    is_symbol_enabled_now "$sym" || return 0
+    if is_protected_config_symbol "$sym"; then
+        # Protection keeps the value, but the kernel must not pass strict validation.
+        [[ "${_EXPLICIT_SYMBOL_VALUES[$sym]:-}" == y ]] \
+            || record_config_request_issue "protected CONFIG_$sym=y $reason"
+        return 0
+    fi
+    echo
+    echo "==> Disabling HVO by default on Linux ${version:-unknown} (allowed from 7.2)"
+    disable_config_symbol "$sym"
 }
 
 _INITRAMFS_EVIDENCE=""
@@ -4916,6 +4964,18 @@ configure_application_profiles() {
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
+            python)
+                # The options dev-lang/python checks (PYTHON_KERNEL_CHECKS).
+                # Without CROSS_MEMORY_ATTACH, process_vm_readv/writev return
+                # ENOSYS and 3.14+ remote debugging (pdb -p, sys.remote_exec)
+                # falls back to opening /proc/PID/mem read-write. Portage's
+                # sandbox denies that during the USE=pgo profiling run, so the
+                # build dies right after "Source compiled.". DNOTIFY only gates
+                # test_fcntl.
+                for sym in CROSS_MEMORY_ATTACH DNOTIFY; do
+                    append_unique_item "$sym" enable_syms
+                done
+                ;;
         esac
     done
 
@@ -5689,6 +5749,7 @@ fi
 configure_explicit_controls
 configure_extended_controls
 configure_symbol_overrides
+configure_hugetlb_vmemmap_default
 
 if is_enabled "$PRUNE_UNUSED_MODULES"; then
     probe_and_prune_unused_module_symbols
