@@ -3420,6 +3420,32 @@ reassert_disable_requests() {
     done
 }
 
+# Promptless toggles (SUNRPC, LOCKD, TRACING...) take the value of the options
+# that select them, or their default. Pinning one fails as soon as a consumer is
+# built in (SUNRPC kept =m while NFSD=y selects it), so application profiles drop
+# them, together with any earlier request, instead of setting a value.
+drop_hidden_toggle_requests() {
+    local -n syms_ref="$1"
+    local sym
+    local -a kept=() hidden=()
+    for sym in "${syms_ref[@]}"; do
+        case "${_KCONFIG_TYPES[$sym]:-}" in
+            bool | tristate)
+                if [[ -z "${_KCONFIG_PROMPTS[$sym]:-}" ]]; then
+                    hidden+=("$sym")
+                    unset '_REQUESTED_VALUES[$sym]'
+                    continue
+                fi
+                ;;
+        esac
+        kept+=("$sym")
+    done
+    syms_ref=("${kept[@]}")
+    if ((${#hidden[@]} > 0)); then
+        echo "    (no prompt, left to the options that select them: ${hidden[*]})"
+    fi
+}
+
 # Fixed prune lists keep what an enabled feature selects: olddefconfig would
 # turn it back on and --strict reject the run (OPENVSWITCH selects MPLS).
 disable_unless_selected() {
@@ -5123,9 +5149,12 @@ configure_application_profiles() {
         esac
     done
 
+    local -a loadable_keys=("${!loadable_syms[@]}")
+    drop_hidden_toggle_requests enable_syms
+    drop_hidden_toggle_requests loadable_keys
     if ((${#enable_syms[@]} > 0)); then
         enable_parents_if_present "${enable_syms[@]}"
-        reassert_disable_requests "${enable_syms[@]}" "${!loadable_syms[@]}"
+        reassert_disable_requests "${enable_syms[@]}" "${loadable_keys[@]}"
         if ((${#available_syms[@]} > 0)); then
             # Keep already modular hotplug/GPU drivers modular. Refresh after
             # making their parents available, then reapply child capabilities.
@@ -5134,10 +5163,10 @@ configure_application_profiles() {
         fi
         enable_if_present "${enable_syms[@]}"
     fi
-    if ((${#loadable_syms[@]} > 0)); then
+    if ((${#loadable_keys[@]} > 0)); then
         while IFS= read -r sym; do
             request_module_or_builtin "$sym" "${loadable_syms[$sym]}"
-        done < <(printf '%s\n' "${!loadable_syms[@]}" | sort)
+        done < <(printf '%s\n' "${loadable_keys[@]}" | sort)
     fi
 }
 

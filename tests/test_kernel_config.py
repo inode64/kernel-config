@@ -1119,6 +1119,22 @@ config HID_LED
         self.assert_symbol("SOFTLOCKUP_DETECTOR", "y")
         self.assert_symbol("DEBUG_MISC", "y")
 
+    def test_profiles_leave_promptless_symbols_to_their_selectors(self):
+        self.add_kconfig('''
+            config SUNRPC
+            \ttristate
+            config NFSD
+            \ttristate "NFS server support"
+        ''')
+        self.set_baseline_symbols(SUNRPC="m", NFSD="n")
+        # An earlier explicit request for the hidden symbol is dropped as well.
+        result = self.run_script("--strict", "--applications=nfs-server")
+        self.assert_success(result)
+        self.assertIn("no prompt, left to the options that select them:", result.stdout)
+        self.assertNotIn("Enabling: CONFIG_SUNRPC", result.stdout)
+        self.assert_symbol("SUNRPC", "m")
+        self.assert_symbol("NFSD", "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

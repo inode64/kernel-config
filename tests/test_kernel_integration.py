@@ -166,6 +166,12 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_enabled("IP_NF_TARGET_NETMAP", "IP_NF_TARGET_REDIRECT", "IP_NF_TARGET_TTL",
                             "IP6_NF_TARGET_HL", "IP_NF_FILTER", "IP_NF_NAT", "IP_NF_RAW")
 
+    def test_real_nfs_server_next_to_a_modular_nfs_client(self):
+        # SUNRPC, LOCKD and GRACE_PERIOD are hidden: NFSD=y raises them to y.
+        self.prepare_baseline(NFS_FS="m", NFSD="n")
+        self.assert_success(self.run_script("--strict", "--applications=nfs-server"))
+        self.assert_values(NFSD="y", SUNRPC="y", LOCKD="y", GRACE_PERIOD="y", NFS_FS="m")
+
     def test_real_tunnel_profiles_leave_udp_tunnel_to_its_selectors(self):
         # GENEVE=m leaves NET_UDP_TUNNEL=m; docker then builds VXLAN in.
         self.prepare_baseline(VXLAN="n", GENEVE="m", OPENVSWITCH="m", NET_UDP_TUNNEL="m")
