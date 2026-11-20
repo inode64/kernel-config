@@ -4884,7 +4884,9 @@ configure_application_profiles() {
                 fi
                 ;;
             openvswitch)
-                for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX NET_UDP_TUNNEL; do
+                # NET_UDP_TUNNEL is a hidden tristate selected by VXLAN, GENEVE and
+                # WIREGUARD; pinning its old =m conflicts with a built-in consumer.
+                for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
@@ -4919,7 +4921,8 @@ configure_application_profiles() {
             wireguard)
                 # CRYPTO_CURVE25519 moved to the promptless CRYPTO_LIB_CURVE25519 in 6.18
                 # (selected by WIREGUARD); the old name is kept for 6.12-6.17 trees.
-                for sym in WIREGUARD NET_UDP_TUNNEL CRYPTO_CHACHA20POLY1305 CRYPTO_CURVE25519 CRYPTO_LIB_CHACHA20POLY1305; do
+                # WIREGUARD also selects the hidden NET_UDP_TUNNEL at its own level.
+                for sym in WIREGUARD CRYPTO_CHACHA20POLY1305 CRYPTO_CURVE25519 CRYPTO_LIB_CHACHA20POLY1305; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;

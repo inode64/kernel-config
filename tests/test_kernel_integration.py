@@ -153,6 +153,12 @@ class KernelIntegrationTests(unittest.TestCase):
         for symbol in symbols:
             self.assertIn(config.get(symbol, "n"), ("y", "m"), symbol)
 
+    def test_real_tunnel_profiles_leave_udp_tunnel_to_its_selectors(self):
+        # GENEVE=m leaves NET_UDP_TUNNEL=m; docker then builds VXLAN in.
+        self.prepare_baseline(VXLAN="n", GENEVE="m", OPENVSWITCH="m", NET_UDP_TUNNEL="m")
+        self.assert_success(self.run_script("--strict", "--applications=docker,openvswitch,wireguard"))
+        self.assert_values(VXLAN="y", NET_UDP_TUNNEL="y")
+
     def test_real_docker_with_legacy_gated_iptables(self):
         if "config NETFILTER_XTABLES_LEGACY" not in (self.tree / "net/netfilter/Kconfig").read_text():
             self.skipTest("requires a 6.17+ tree with NETFILTER_XTABLES_LEGACY")

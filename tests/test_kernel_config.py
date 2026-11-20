@@ -950,6 +950,18 @@ config HID_LED
         for symbol in legacy:
             self.assert_symbol(symbol, "y")
 
+    def test_tunnel_profiles_do_not_pin_the_hidden_udp_tunnel(self):
+        self.add_kconfig('''
+            config NET_UDP_TUNNEL
+            \ttristate
+        ''')
+        self.add_symbols("OPENVSWITCH", "VXLAN", "WIREGUARD", kind="tristate")
+        self.set_baseline_symbols(NET_UDP_TUNNEL="m", VXLAN="m")
+        result = self.run_script("--strict", "--applications=openvswitch,wireguard")
+        self.assert_success(result)
+        self.assertNotIn("CONFIG_NET_UDP_TUNNEL", result.stdout)
+        self.assert_symbol("VXLAN", "m")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",
