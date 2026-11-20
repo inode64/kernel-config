@@ -142,11 +142,13 @@ class KernelIntegrationTests(unittest.TestCase):
 
     def test_real_amd_host_with_qemu_and_nftables(self):
         self.prepare_baseline(KVM="m", KVM_AMD="m", NF_TABLES="m", NFT_NAT="m",
-                              VHOST_NET="m", VHOST_VSOCK="n", VHOST_SCSI="n", VHOST_VDPA="n")
+                              VHOST_NET="m", VHOST_VSOCK="n", VHOST_SCSI="n", VHOST_VDPA="n",
+                              X86_ACPI_CPUFREQ="n")
         self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=amd",
                                             "--host-type=baremetal", "--applications=qemu,firewalld"))
         self.assert_values(KVM_AMD="m", VHOST_NET="m", VHOST_VSOCK="y", VHOST="y",
-                           VHOST_IOTLB="y", NF_TABLES="m", NFT_NAT="m")
+                           VHOST_IOTLB="y", NF_TABLES="m", NFT_NAT="m",
+                           X86_AMD_PSTATE="y", X86_ACPI_CPUFREQ="y")
 
     def assert_enabled(self, *symbols):
         config = dict(re.findall(r"^CONFIG_(\w+)=(.*)$", self.config.read_text(), re.M))

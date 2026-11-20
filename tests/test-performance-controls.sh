@@ -104,6 +104,9 @@ config X86_AMD_PSTATE
 config X86_AMD_PSTATE_DEFAULT_MODE
 	int "AMD Processor P-State default mode"
 	depends on X86_AMD_PSTATE
+
+config X86_ACPI_CPUFREQ
+	tristate "ACPI Processor P-States driver"
 EOF
 
     cat >"$tree/.config" <<'EOF'
@@ -157,6 +160,7 @@ CONFIG_CPU_SUP_AMD=y
 # CONFIG_X86_INTEL_PSTATE is not set
 CONFIG_X86_AMD_PSTATE=y
 CONFIG_X86_AMD_PSTATE_DEFAULT_MODE=3
+# CONFIG_X86_ACPI_CPUFREQ is not set
 EOF
     # The merged script discovers definitions from Kconfig, including symbols
     # absent from .config; provide types/prompts instead of a config-only fixture.
@@ -169,7 +173,7 @@ EOF
             sym=$2; sub(/^CONFIG_/, "", sym); kind="bool"
         }
         sym != "" {
-            if (sym !~ /^(PROCESSOR_SELECT|CPU_SUP_|X86_.*PSTATE)/)
+            if (sym !~ /^(PROCESSOR_SELECT|CPU_SUP_|X86_.*PSTATE|X86_ACPI_CPUFREQ)/)
                 printf "config %s\n    %s \"%s\"\n", sym, kind, sym
             sym=""
         }
@@ -247,6 +251,7 @@ test_cpu_vendor_filter() {
     assert_contains "$output" "CONFIG_CPU_SUP_AMD: y -> n"
     assert_contains "$output" "CONFIG_X86_AMD_PSTATE: y -> n"
     assert_contains "$output" "CONFIG_X86_INTEL_PSTATE: n -> y"
+    assert_contains "$output" "CONFIG_X86_ACPI_CPUFREQ: n -> y"
     if grep -Fq 'Disabling: CONFIG_X86_AMD_PSTATE_DEFAULT_MODE' "$output"; then fail "int symbols must not be pruned by the vendor filter"; fi
 
     # without EXPERT the CPU_SUP_* prompts do not exist; they must be left alone

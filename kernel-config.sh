@@ -5601,6 +5601,10 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
         else
             enable_if_present X86_INTEL_PSTATE
         fi
+        # acpi-cpufreq is the fallback when the pstate driver refuses to load
+        # (no CPPC/HWP, firmware settings): without it the host has no cpufreq
+        # driver at all. It is a late_initcall, so the pstate driver binds first.
+        enable_if_present X86_ACPI_CPUFREQ
     fi
 fi
 
