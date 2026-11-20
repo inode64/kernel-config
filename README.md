@@ -171,7 +171,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 ```
 
 - `FIRMWARE_COMPRESSION=keep|on|off`
-  Preserves firmware decoding by default. `on` requests compressed firmware support with XZ and ZSTD; `off` explicitly disables compressed firmware support.
+  Preserves firmware decoding by default (the `server` profile adds the XZ and ZSTD decoders). `on` requests compressed firmware support with XZ and ZSTD; `off` explicitly disables compressed firmware support.
 
 - `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset: `OPTIMIZATION_PROFILE=server`, kernel `ZSTD` compression and server profile zswap tuning (`zstd`, falling back to `lz4`; the initial compression preset uses LZO). It preserves existing initramfs and firmware decompression support and does not disable shared compression libraries.
@@ -195,6 +195,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.
     CPU time accounting switches to `TICK_CPU_ACCOUNTING` unless the selected tick mode uses `NO_HZ_FULL`.
     It makes `mq-deadline`, `kyber`, BBR (`TCP_CONG_BBR`), `NET_SCH_FQ` and `NET_SCH_FQ_CODEL` available without changing the `DEFAULT_*` choices; symbols already built as modules stay `=m`.
+    It enables compressed firmware loading (`FW_LOADER_COMPRESS` with XZ and ZSTD) when the kernel has a firmware loader: `linux-firmware` built with `compress-zstd` or `compress-xz` installs `.zst`/`.xz` files, and without the decoders a driver such as `ice` cannot load them (the E810 then runs in safe mode). `--firmware-compression=off` overrides it.
     THP defaults to `madvise`: QEMU marks guest RAM with `MADV_HUGEPAGE`, so virtual machines keep huge pages, while databases that ask for THP off are not forced into them.
     It enables `RCU_NOCB_CPU` and `RCU_NOCB_CPU_DEFAULT_ALL`, which offloads RCU callbacks on every CPU at boot; `profiles/server-kvm-host.sh` turns the latter off for VM hosts.
 

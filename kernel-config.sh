@@ -3864,6 +3864,14 @@ configure_optimization_profile() {
 
             configure_throughput_memory_defaults server
 
+            # linux-firmware installs .zst/.xz files with USE=compress-zstd or
+            # compress-xz; without the decoders the load fails (ice then runs the
+            # E810 in safe mode). An explicit --firmware-compression=off still wins.
+            ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+            if [[ "${_SYMBOL_VALUE_CACHE[FW_LOADER]:-n}" != n ]]; then
+                enable_if_present FW_LOADER_COMPRESS FW_LOADER_COMPRESS_XZ FW_LOADER_COMPRESS_ZSTD
+            fi
+
             # observability: only enable monitoring symbols when not pruning
             if is_enabled "$wants_observability"; then
                 enable_if_present \

@@ -1023,6 +1023,22 @@ config HID_LED
                 self.assert_symbol("TCG_TPM2_HMAC", baseline)
                 self.assertNotIn("CONFIG_TCG_TPM2_HMAC", result.stdout)
 
+    def test_server_profile_enables_compressed_firmware(self):
+        self.add_symbols("FW_LOADER")
+        self.set_baseline_symbols(FW_LOADER="y", FW_LOADER_COMPRESS="n",
+                                  FW_LOADER_COMPRESS_XZ="n", FW_LOADER_COMPRESS_ZSTD="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for symbol in ("FW_LOADER_COMPRESS", "FW_LOADER_COMPRESS_XZ", "FW_LOADER_COMPRESS_ZSTD"):
+            self.assert_symbol(symbol, "y")
+        self.set_baseline_symbols(FW_LOADER_COMPRESS="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--firmware-compression=off"))
+        self.assert_symbol("FW_LOADER_COMPRESS", "n")
+        # Without a firmware loader there is nothing to decompress.
+        self.set_baseline_symbols(FW_LOADER="n", FW_LOADER_COMPRESS="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("FW_LOADER_COMPRESS", "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",
