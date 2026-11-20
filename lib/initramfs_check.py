@@ -32,6 +32,7 @@ MAX_MEMBERS = 256
 # of the root device, and the kernel symbols the layer needs (y or m is enough,
 # the initramfs loads modules). Levels follow md/level in sysfs.
 ROOT_LAYER_MODULES = {"md": "ugrd.fs.mdraid", "lvm": "ugrd.fs.lvm", "crypt": "ugrd.crypto.cryptsetup"}
+ROOT_LAYER_AUTODETECT = {"md": "autodetect_raid", "lvm": "autodetect_lvm", "crypt": "autodetect_luks"}
 ROOT_LAYER_KCONFIG = {"md": ("BLK_DEV_MD",), "lvm": ("BLK_DEV_DM",), "crypt": ("BLK_DEV_DM", "DM_CRYPT"),
                       "dm": ("BLK_DEV_DM",)}
 RAID_LEVEL_KCONFIG = {"raid0": "MD_RAID0", "raid1": "MD_RAID1", "raid10": "MD_RAID10", "raid4": "MD_RAID456",
@@ -603,16 +604,29 @@ class Inspector:
                          "mounted directly from /dev/mdN stops at 'No device mapper name found' and never reaches "
                          "the linux_raid_member check that would enable the module, so the initramfs ships "
                          "without mdadm",
-                   "lvm": "ugrd only adds it when autodetection resolves an LVM2_member slave of the root "
-                          "device-mapper node; an explicit module entry does not depend on that detection",
-                   "crypt": "ugrd only adds it when autodetection resolves a crypto_LUKS slave of the root "
-                            "device-mapper node; an explicit module entry does not depend on that detection"}
+                   "lvm": "ugrd only adds it through device-mapper autodetection of the root, which "
+                          "this configuration turns off",
+                   "crypt": "ugrd only adds it through device-mapper autodetection of the root, which "
+                            "this configuration turns off"}
+        # On a device-mapper root, ugrd 2.x's _autodetect_dm follows the slaves
+        # recursively and enables the module of every LVM2_member, linux_raid_member
+        # and crypto_LUKS layer it meets (an LV on md gets ugrd.fs.lvm and
+        # ugrd.fs.mdraid). hostonly, autodetect_dm or the layer's switch set to
+        # false turns that off; a root mounted from /dev/mdN is not covered (above).
+        dm_root = bool(layers) and layers[0]["type"] in ("lvm", "crypt", "dm") and all(
+            settings.get(key, True) is not False for key in ("hostonly", "autodetect_dm"))
         for layer in layers:
             module = ROOT_LAYER_MODULES.get(layer["type"])
             if not module:
                 continue
-            root["modules"][module] = module in modules
-            if module not in modules:
+            switch = ROOT_LAYER_AUTODETECT[layer["type"]]
+            if module in modules:
+                root["modules"][module] = "listed"
+            elif dm_root and settings.get(switch, True) is not False:
+                root["modules"][module] = "autodetected"
+                result["issues"].append({"status": "warning", "message": f"ugrd root coverage: {module} is not listed in modules of {config}; ugrd 2.x adds it through device-mapper autodetection of the root ({switch}), listing it keeps the image independent of that detection"})
+            else:
+                root["modules"][module] = "missing"
                 result["issues"].append({"status": "incompatible", "message": f"ugrd root coverage: {module} is not listed in modules of {config}; {reasons[layer['type']]}"})
         if md_layers and root["other_md"]:
             covered = self.mdadm_conf_lists(md_layers[0]["uuid"], settings)
@@ -673,8 +687,8 @@ def render(result, values):
     root = result.get("root")
     if root:
         print(f"  Root device: {root['source']} ({describe_layers(root['layers'])})")
-        for module, present in root["modules"].items():
-            print(f"    {module}: {'listed' if present else 'missing'}")
+        for module, state in root["modules"].items():
+            print(f"    {module}: {state}")
         if root["other_md"]:
             print(f"    Other md arrays: {', '.join(root['other_md'])} (mdadm.conf: {root['mdadm_conf']})")
     for image in result["images"]:

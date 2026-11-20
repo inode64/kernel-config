@@ -306,11 +306,11 @@ class RootCoverageTests(InspectorCase):
         self.assertEqual(len(result["issues"]), 1)
         self.assertIn("ugrd.fs.mdraid", result["issues"][0]["message"])
         self.assertIn("etc/ugrd/config.toml", result["issues"][0]["message"])
-        self.assertFalse(result["root"]["modules"]["ugrd.fs.mdraid"])
+        self.assertEqual(result["root"]["modules"]["ugrd.fs.mdraid"], "missing")
         result = self.evaluate(self.ugrd('modules = ["ugrd.fs.mdraid"]'), **self.kernel_md())
         self.assertEqual(result["status"], "compatible")
         self.assertEqual(result["issues"], [])
-        self.assertTrue(result["root"]["modules"]["ugrd.fs.mdraid"])
+        self.assertEqual(result["root"]["modules"]["ugrd.fs.mdraid"], "listed")
         self.assertEqual(result["root"]["layers"][0]["metadata"], "0.90")
         self.assertEqual(result["root"]["source"], "/dev/md127")
         self.assertEqual(result["root"]["other_md"], [])
@@ -352,14 +352,28 @@ class RootCoverageTests(InspectorCase):
         self.assertEqual(result["issues"], [])
         self.assertEqual(result["root"]["other_md"], [])
 
-    def test_lvm_over_luks_requires_both_modules_and_symbols(self):
+    def test_lvm_over_luks_relies_on_dm_autodetection_unless_disabled(self):
         layers = [("dm-1", "lvm", {"name": "vg-root"}), ("dm-0", "crypt", {"name": "cryptroot"}),
                   ("sda2", "part", {"parent": "sda"}), ("sda", "disk", {})]
         self.fake_root_device("/dev/mapper/vg-root", layers)
+        # ugrd 2.x autodetects every layer under a device-mapper root by default.
         result = self.evaluate(self.ugrd(), BLK_DEV_DM="y", DM_CRYPT="m")
-        self.assertEqual(result["status"], "incompatible")
-        self.assertEqual(sorted(i["status"] for i in result["issues"]), ["incompatible", "incompatible"])
-        self.assertEqual(result["root"]["modules"], {"ugrd.fs.lvm": False, "ugrd.crypto.cryptsetup": False})
+        self.assertEqual(result["status"], "compatible")
+        self.assertEqual([i["status"] for i in result["issues"]], ["warning", "warning"])
+        self.assertIn("autodetect_luks", result["issues"][1]["message"])
+        self.assertEqual(result["root"]["modules"], {"ugrd.fs.lvm": "autodetected",
+                                                     "ugrd.crypto.cryptsetup": "autodetected"})
+        for setting in ("hostonly = false", "autodetect_dm = false"):
+            with self.subTest(setting=setting):
+                result = self.evaluate(self.ugrd(setting), BLK_DEV_DM="y", DM_CRYPT="m")
+                self.assertEqual(result["status"], "incompatible")
+                self.assertEqual([i["status"] for i in result["issues"]], ["incompatible", "incompatible"])
+                self.assertEqual(result["root"]["modules"], {"ugrd.fs.lvm": "missing",
+                                                             "ugrd.crypto.cryptsetup": "missing"})
+        result = self.evaluate(self.ugrd("autodetect_luks = false"), BLK_DEV_DM="y", DM_CRYPT="m")
+        self.assertEqual([i["status"] for i in result["issues"]], ["warning", "incompatible"])
+        self.assertEqual(result["root"]["modules"], {"ugrd.fs.lvm": "autodetected",
+                                                     "ugrd.crypto.cryptsetup": "missing"})
         self.assertEqual([(l["type"], l["name"]) for l in result["root"]["layers"]], [("lvm", "vg-root"), ("crypt", "cryptroot")])
         evidence = self.ugrd('modules = ["ugrd.fs.lvm", "ugrd.crypto.cryptsetup"]')
         result = self.evaluate(evidence, BLK_DEV_DM="y", DM_CRYPT="m")
@@ -368,6 +382,21 @@ class RootCoverageTests(InspectorCase):
         result = self.evaluate(evidence, BLK_DEV_DM="y")
         self.assertEqual([i["message"] for i in result["issues"]],
                          ["CONFIG_DM_CRYPT must be y or m for the root device (/dev/mapper/vg-root cryptroot)"])
+
+    def test_lvm_on_md_root_is_autodetected(self):
+        layers = [("dm-0", "lvm", {"name": "data-boot"}), ("md126", "md", {"level": "raid5", "metadata": "1.2"}),
+                  ("nvme0n1p2", "part", {"parent": "nvme0n1"}), ("nvme0n1", "disk", {})]
+        self.fake_root_device("/dev/mapper/data-boot", layers)
+        kernel = {"BLK_DEV_DM": "y", **self.kernel_md()}
+        result = self.evaluate(self.ugrd(), **kernel)
+        self.assertEqual(result["status"], "compatible")
+        self.assertEqual(result["root"]["modules"], {"ugrd.fs.lvm": "autodetected", "ugrd.fs.mdraid": "autodetected"})
+        result = self.evaluate(self.ugrd("autodetect_raid = false"), **kernel)
+        self.assertEqual(result["status"], "incompatible")
+        self.assertEqual(result["root"]["modules"]["ugrd.fs.mdraid"], "missing")
+        result = self.evaluate(self.ugrd('modules = ["ugrd.fs.lvm", "ugrd.fs.mdraid"]'), **kernel)
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(self.evaluate(self.ugrd(), BLK_DEV_DM="y", BLK_DEV_MD="y")["status"], "incompatible")
 
     def test_plain_partition_has_no_requirements(self):
         self.fake_root_device("/dev/nvme0n1p2", [("nvme0n1p2", "part", {"parent": "nvme0n1"}), ("nvme0n1", "disk", {})])
