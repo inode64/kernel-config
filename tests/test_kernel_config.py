@@ -1402,6 +1402,21 @@ config HID_LED
                                             "--enable-symbols=RT_GROUP_SCHED"))
         self.assert_symbol("RT_GROUP_SCHED", "y")
 
+    def test_server_profile_enables_net_sched_before_qdiscs(self):
+        self.add_symbols("NET", "NET_SCHED", "NET_SCH_FQ", "NET_SCH_FQ_CODEL",
+                         "TCP_CONG_ADVANCED", "TCP_CONG_BBR")
+        self.set_baseline_symbols(NET="y", NET_SCHED="n", NET_SCH_FQ="n", NET_SCH_FQ_CODEL="n",
+                                  TCP_CONG_ADVANCED="n", TCP_CONG_BBR="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for sym in ("NET_SCHED", "NET_SCH_FQ", "NET_SCH_FQ_CODEL", "TCP_CONG_ADVANCED", "TCP_CONG_BBR"):
+            self.assert_symbol(sym, "y")
+        # Without NET, none of the network algorithms or qdiscs are requested.
+        self.set_baseline_symbols(NET="n", NET_SCHED="n", NET_SCH_FQ="n", NET_SCH_FQ_CODEL="n",
+                                  TCP_CONG_ADVANCED="n", TCP_CONG_BBR="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for sym in ("NET_SCHED", "NET_SCH_FQ", "NET_SCH_FQ_CODEL", "TCP_CONG_ADVANCED", "TCP_CONG_BBR"):
+            self.assert_symbol(sym, "n")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",

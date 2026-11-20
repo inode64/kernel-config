@@ -4035,12 +4035,26 @@ configure_optimization_profile() {
                 refresh_config_visibility
             fi
 
-            enable_parents_if_present \
-                BLK_CGROUP \
-                CGROUP_SCHED \
-                TCP_CONG_ADVANCED \
-                TRANSPARENT_HUGEPAGE \
+            local -a server_parents=(
+                BLK_CGROUP
+                CGROUP_SCHED
+                TRANSPARENT_HUGEPAGE
                 ZSWAP
+            )
+            local -a server_available=(
+                MQ_IOSCHED_DEADLINE
+                MQ_IOSCHED_KYBER
+            )
+            if ! have_symbol NET || is_symbol_enabled_now NET; then
+                server_parents+=(NET_SCHED TCP_CONG_ADVANCED)
+                server_available+=(
+                    NET_SCH_FQ
+                    NET_SCH_FQ_CODEL
+                    TCP_CONG_ADVANCED
+                    TCP_CONG_BBR
+                )
+            fi
+            enable_parents_if_present "${server_parents[@]}"
 
             # I/O schedulers and network algorithms are only made available
             # (existing =m stays =m); DEFAULT_* choices are left untouched.
@@ -4070,13 +4084,7 @@ configure_optimization_profile() {
             # clash with a later --tick-mode=full.
             disable_if_present RCU_NOCB_CPU_DEFAULT_ALL
 
-            enable_if_unset \
-                MQ_IOSCHED_DEADLINE \
-                MQ_IOSCHED_KYBER \
-                NET_SCH_FQ \
-                NET_SCH_FQ_CODEL \
-                TCP_CONG_ADVANCED \
-                TCP_CONG_BBR
+            enable_if_unset "${server_available[@]}"
 
             if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
                 select_if_present TRANSPARENT_HUGEPAGE_MADVISE \

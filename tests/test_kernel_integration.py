@@ -238,6 +238,11 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(RT_GROUP_SCHED="n", CGROUP_SCHED="y", FAIR_GROUP_SCHED="y")
 
+    def test_real_server_profile_enables_net_sched_for_qdiscs(self):
+        self.prepare_baseline(NET_SCHED="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(NET_SCHED="y", NET_SCH_FQ="y", NET_SCH_FQ_CODEL="y")
+
     def test_real_rasdaemon_keeps_trace_events_under_all_optimizations(self):
         # The pruned tracers come back at their default (y) once FTRACE returns,
         # unless the earlier disable requests are applied again. TCP_CONG_ADVANCED=n
