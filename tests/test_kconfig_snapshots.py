@@ -19,7 +19,7 @@ class SnapshotTests(unittest.TestCase):
                  "discover_debug_trace_kconfig_symbols", "discover_selftest_kconfig_symbols",
                  "discover_coverage_kconfig_symbols", "discover_fault_injection_kconfig_symbols",
                  "discover_legacy_kconfig_symbols", "discover_dangerous_kconfig_symbols",
-                 "load_defined_symbols"]
+                 "discover_hardening_kconfig_symbols", "load_defined_symbols"]
         cls.functions = "\n".join(re.search(r"^" + name + r"\(\) \{\n.*?^\}", source,
                                             re.M | re.S)[0] for name in names)
 
@@ -92,6 +92,9 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(version=snapshot.name):
                 self.assertNotIn("EARLY_PRINTK", self.discover(snapshot, "debug_trace", arch="x86"))
                 self.assertNotIn("CPU_BIG_ENDIAN", self.discover(snapshot, "legacy", arch="powerpc"))
+                hardening = self.discover(snapshot, "hardening", arch="x86")
+                self.assertFalse({"INIT_STACK_NONE", "RANDSTRUCT_NONE"} & hardening)
+                self.assertTrue({"INIT_STACK_ALL_ZERO", "RANDSTRUCT_FULL"} <= hardening)
 
     def test_new_72_controls_are_discovered(self):
         snapshot = SCRIPT.parent / "linux-7.2.0"

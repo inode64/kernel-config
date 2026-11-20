@@ -761,6 +761,60 @@ endmenu
         self.assert_success(self.run_script("--strict", "--prune-legacy", env={"ARCH": "powerpc"}))
         self.assert_symbol("CPU_BIG_ENDIAN", "y")
 
+    def test_hardening_pruning_selects_none_choices_and_disables_runtime_toggles(self):
+        self.add_kconfig('''
+            menu "Kernel hardening options"
+            config INIT_STACK_NONE
+            \tbool "no automatic stack variable initialization (weakest)"
+            config INIT_STACK_ALL_ZERO
+            \tbool "zero-init everything (strongest and safest)"
+            config INIT_STACK_ALL_PATTERN
+            \tbool "pattern-init everything (strongest)"
+            config RANDSTRUCT_NONE
+            \tbool "Disable structure layout randomization"
+            config RANDSTRUCT_FULL
+            \tbool "Fully randomize structure layout"
+            config RANDSTRUCT_PERFORMANCE
+            \tbool "Limit randomization of structure layout to cache-lines"
+            config KSTACK_ERASE
+            \tbool "Poison kernel stack before returning from syscalls"
+            config KSTACK_ERASE_RUNTIME_DISABLE
+            \tbool "Allow runtime disabling of kernel stack erasing"
+            endmenu
+        ''')
+        self.set_baseline_symbols(
+            INIT_STACK_NONE="n", INIT_STACK_ALL_ZERO="y", INIT_STACK_ALL_PATTERN="n",
+            RANDSTRUCT_NONE="n", RANDSTRUCT_FULL="y", RANDSTRUCT_PERFORMANCE="n",
+            KSTACK_ERASE="y", KSTACK_ERASE_RUNTIME_DISABLE="n",
+        )
+        self.assert_success(self.run_script("--strict", "--prune-hardening"))
+        self.assert_symbol("INIT_STACK_NONE", "y")
+        self.assert_symbol("INIT_STACK_ALL_ZERO", "n")
+        self.assert_symbol("RANDSTRUCT_NONE", "y")
+        self.assert_symbol("RANDSTRUCT_FULL", "n")
+        self.assert_symbol("KSTACK_ERASE", "n")
+        self.assert_symbol("KSTACK_ERASE_RUNTIME_DISABLE", "n")
+        # A protected hardening choice member prevents selecting the NONE sibling.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script(
+            "--strict", "--prune-hardening", "--protected-config-symbols=INIT_STACK_ALL_ZERO",
+        ))
+        self.assert_symbol("INIT_STACK_ALL_ZERO", "y")
+        self.assert_symbol("INIT_STACK_NONE", "n")
+        self.assert_symbol("RANDSTRUCT_NONE", "y")
+
+    def test_inverse_disable_excludes_legacy_spi_nor_swp_and_keeps_crypto_tests(self):
+        self.add_kconfig('''
+            config MTD_SPI_NOR_SWP_DISABLE
+            \tbool "Disable SWP on any flashes (legacy behavior)"
+            config CRYPTO_MANAGER_DISABLE_TESTS
+            \tbool "Disable run-time self tests"
+        ''')
+        self.set_baseline_symbols(MTD_SPI_NOR_SWP_DISABLE="y", CRYPTO_MANAGER_DISABLE_TESTS="n")
+        self.assert_success(self.run_script("--strict", "--prune-legacy", "--prune-selftest"))
+        self.assert_symbol("MTD_SPI_NOR_SWP_DISABLE", "n")
+        self.assert_symbol("CRYPTO_MANAGER_DISABLE_TESTS", "y")
+
     def test_legacy_pruning_preserves_af_alg_application_abi(self):
         with (self.tree / "Kconfig").open("a") as stream:
             stream.write('''

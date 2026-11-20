@@ -1662,8 +1662,12 @@ discover_debug_trace_kconfig_symbols() {
 }
 
 discover_hardening_kconfig_symbols() {
+    # INIT_STACK_NONE and RANDSTRUCT_NONE are the disabled members of their
+    # choices in security/Kconfig.hardening; disabling every choice member makes
+    # olddefconfig pick the choice default (INIT_STACK_ALL_ZERO on modern
+    # compilers) and fails strict validation.
     discover_kconfig_symbols_by_pattern "(hardening|hardened|mitigations? for cpu vulnerabilities|stack protector|shadow stack|fortify|control flow integrity|kcfi|strict kernel rwx|strict module rwx|memory protection keys|remove the kernel mapping in user mode|reset memory attack mitigation)" \
-        | awk '$0 != "QCOM_RPMH"'
+        | awk '$0 != "QCOM_RPMH" && $0 != "INIT_STACK_NONE" && $0 != "RANDSTRUCT_NONE"'
 }
 
 discover_selftest_kconfig_symbols() {
@@ -3456,6 +3460,12 @@ prepare_sorted_unique_symbols() {
 is_inverse_disable_symbol() {
     normalize_config_symbol_name "$1"
     case "$REPLY" in
+        # MTD_SPI_NOR_SWP_DISABLE is a legacy choice member, not an inverse
+        # disable of a legacy feature; *_RUNTIME_DISABLE toggles depend on the
+        # feature being pruned in the same pass (KSTACK_ERASE / STACKLEAK).
+        MTD_SPI_NOR_SWP_DISABLE | *_RUNTIME_DISABLE)
+            return 1
+            ;;
         *_DISABLE | *_DISABLE_* | *_DISABLED | *_DISABLED_*)
             return 0
             ;;
@@ -5820,6 +5830,20 @@ if is_enabled "$PRUNE_HARDENING"; then
         SHUFFLE_PAGE_ALLOCATOR \
         SLAB_FREELIST_HARDENED \
         SLAB_FREELIST_RANDOM
+
+    # Select the disabled choice members explicitly so olddefconfig does not
+    # fall back to INIT_STACK_ALL_ZERO (default when the compiler supports it)
+    # unless a sibling choice member was protected at y.
+    if have_symbol INIT_STACK_NONE \
+        && ! { is_protected_config_symbol INIT_STACK_ALL_ZERO && is_symbol_enabled_now INIT_STACK_ALL_ZERO; } \
+        && ! { is_protected_config_symbol INIT_STACK_ALL_PATTERN && is_symbol_enabled_now INIT_STACK_ALL_PATTERN; }; then
+        enable_if_present INIT_STACK_NONE
+    fi
+    if have_symbol RANDSTRUCT_NONE \
+        && ! { is_protected_config_symbol RANDSTRUCT_FULL && is_symbol_enabled_now RANDSTRUCT_FULL; } \
+        && ! { is_protected_config_symbol RANDSTRUCT_PERFORMANCE && is_symbol_enabled_now RANDSTRUCT_PERFORMANCE; }; then
+        enable_if_present RANDSTRUCT_NONE
+    fi
 fi
 
 invalidate_symbol_cache

@@ -272,7 +272,7 @@ Overridden settings are skipped before applying their dependencies. RT and NUMA 
   Disables `CONFIG_RV`, removing its dependent monitors after Kconfig normalization. Also included in observability/debug pruning, since RV can select tracing support.
 
 - `PRUNE_HARDENING`
-  Disables hardening and mitigation symbols discovered from Kconfig prompts, plus runtime-cost randomization that pattern discovery misses: `RANDOMIZE_KSTACK_OFFSET_DEFAULT`, `SLAB_FREELIST_RANDOM`, `SLAB_FREELIST_HARDENED`, `SHUFFLE_PAGE_ALLOCATOR`, `RANDOM_KMALLOC_CACHES` / `KMALLOC_PARTITION_*`, `PAGE_TABLE_CHECK`.
+  Disables hardening and mitigation symbols discovered from Kconfig prompts (switching the stack-initialization and struct-layout-randomization choices to `INIT_STACK_NONE` and `RANDSTRUCT_NONE` unless a sibling choice member is protected), plus runtime-cost randomization that pattern discovery misses: `RANDOMIZE_KSTACK_OFFSET_DEFAULT`, `SLAB_FREELIST_RANDOM`, `SLAB_FREELIST_HARDENED`, `SHUFFLE_PAGE_ALLOCATOR`, `RANDOM_KMALLOC_CACHES` / `KMALLOC_PARTITION_*`, `PAGE_TABLE_CHECK`.
 
 - `PRUNE_SELFTEST`
   Disables selftests and test-only options discovered from Kconfig prompts, plus reviewed exceptions including `IO_URING_MOCK_FILE`, `CRYPTO_BENCHMARK`, `MMC_TEST`, `IOMMUFD_TEST`, `HVC_UDBG` and `NFSD_FLEXFILELAYOUT`.

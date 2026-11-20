@@ -312,6 +312,12 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--enable-symbols=DEBUG_INFO_NONE"))
         self.assert_values(EARLY_PRINTK="y")
 
+    def test_real_hardening_pruning_selects_none_choices(self):
+        self.prepare_baseline(INIT_STACK_ALL_ZERO="y")
+        self.assert_success(self.run_script("--strict", "--prune-hardening"))
+        self.assert_values(INIT_STACK_NONE="y", INIT_STACK_ALL_ZERO="n",
+                           RANDSTRUCT_NONE="y", RANDSTRUCT_FULL="n")
+
     def test_real_mixed_case_audio_removal_preserves_strix_and_active_audio(self):
         disabled = ["SND_SOC_AMD_ACP3x", "SND_SOC_AMD_RENOIR", "SND_SOC_AMD_ACP5x",
                     "SND_SOC_AMD_ACP6x", "SND_SOC_AMD_ACP7X", "SND_SOC_SOF_AMD_RENOIR",
