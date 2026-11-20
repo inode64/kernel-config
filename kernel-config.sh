@@ -4003,6 +4003,16 @@ configure_optimization_profile() {
         CC_OPTIMIZE_FOR_SIZE \
         SLUB_TINY
 
+    # Project C (BMQ/PDS, gentoo-sources USE=experimental) replaces EEVDF and
+    # rules out PSI, SCHED_CACHE, SCHED_CORE, NUMA_BALANCING, UCLAMP_TASK,
+    # PREEMPT_RT and sched_ext; it defaults to y when the Gentoo defaults patch
+    # is not applied. Disable it before scheduler selection across all profiles.
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    if [[ "${_SYMBOL_VALUE_CACHE[SCHED_ALT]:-n}" == "y" ]] && ! is_protected_config_symbol SCHED_ALT; then
+        disable_if_present SCHED_ALT
+        refresh_config_visibility
+    fi
+
     configure_orc_unwinder
     configure_fast_checksums
     configure_profile_scheduler "$profile"
@@ -4025,15 +4035,6 @@ configure_optimization_profile() {
                 RT_GROUP_SCHED \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
-
-            # Project C (BMQ/PDS, gentoo-sources USE=experimental) replaces EEVDF and
-            # rules out PSI, SCHED_CACHE, SCHED_CORE, NUMA_BALANCING and sched_ext; it
-            # defaults to y when the Gentoo defaults patch is not applied.
-            ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
-            if [[ "${_SYMBOL_VALUE_CACHE[SCHED_ALT]:-n}" == "y" ]] && ! is_protected_config_symbol SCHED_ALT; then
-                disable_if_present SCHED_ALT
-                refresh_config_visibility
-            fi
 
             local -a server_parents=(
                 BLK_CGROUP

@@ -1417,6 +1417,20 @@ config HID_LED
         for sym in ("NET_SCHED", "NET_SCH_FQ", "NET_SCH_FQ_CODEL", "TCP_CONG_ADVANCED", "TCP_CONG_BBR"):
             self.assert_symbol(sym, "n")
 
+    def test_all_optimization_profiles_disable_sched_alt(self):
+        self.add_symbols("SCHED_ALT")
+        for profile in ("server", "desktop", "realtime"):
+            with self.subTest(profile=profile):
+                self.set_baseline_symbols(SCHED_ALT="y")
+                self.assert_success(self.run_script("--strict", f"--optimization-profile={profile}"))
+                self.assert_symbol("SCHED_ALT", "n")
+        # Protecting SCHED_ALT keeps it across profiles.
+        self.set_baseline_symbols(SCHED_ALT="y")
+        self.assert_success(self.run_script(
+            "--strict", "--optimization-profile=desktop", "--protected-config-symbols=SCHED_ALT",
+        ))
+        self.assert_symbol("SCHED_ALT", "y")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
