@@ -185,7 +185,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
   Current profile behavior:
 
-  All profiles enable `CC_OPTIMIZE_FOR_PERFORMANCE`, topology-aware scheduling (`SCHED_MC`, `SCHED_SMT`, `SCHED_CLUSTER`, `SCHED_MC_PRIO`), the TEO cpuidle governor (`CPU_IDLE_GOV_TEO`), `RSEQ`, and disable `SLUB_TINY`.
+  All profiles enable `CC_OPTIMIZE_FOR_PERFORMANCE`, topology-aware scheduling (`SCHED_MC`, `SCHED_SMT`, `SCHED_CLUSTER`, `SCHED_MC_PRIO`), the TEO cpuidle governor (`CPU_IDLE_GOV_TEO`), `RSEQ`, and disable `SLUB_TINY`. On x86_64 they replace the frame-pointer unwinder with ORC (`UNWINDER_ORC`). `arch/x86/Kconfig.debug` documents that unwinder as 5-10% faster than frame pointers, at roughly 2-4MB more RAM, and it is the x86_64 default. A baseline already using `UNWINDER_GUESS`, a protected choice member, or an explicit `--enable-symbols`/`--disable-symbols` for the choice is left alone. arm64 selects `FRAME_POINTER` itself and has no ORC unwinder, so it is unchanged.
 
   - `server`
     Prioritizes throughput and stable background behavior:

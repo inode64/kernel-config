@@ -3889,6 +3889,26 @@ configure_native_cpu_profile() {
     fi
 }
 
+configure_orc_unwinder() {
+    local sym
+    # arch/x86/Kconfig.debug: the ORC unwinder is the x86_64 default and is
+    # 5-10% faster than frame pointers (about 2-4MB more RAM). Only replace
+    # the frame-pointer unwinder. UNWINDER_GUESS is the EXPERT choice with no
+    # runtime overhead, so a baseline that picked it stays there. arm64
+    # selects FRAME_POINTER itself and has no ORC unwinder; UNWINDER_ORC
+    # depends on X86_64, so that target is unchanged. A protected member or
+    # an explicit --enable-symbols/--disable-symbols for the choice wins.
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    [[ "${_SYMBOL_VALUE_CACHE[UNWINDER_FRAME_POINTER]:-n}" == y ]] || return 0
+    for sym in UNWINDER_ORC UNWINDER_FRAME_POINTER UNWINDER_GUESS; do
+        if is_protected_config_symbol "$sym" || [[ -v _EXPLICIT_SYMBOL_VALUES[$sym] ]]; then
+            return 0
+        fi
+    done
+    kconfig_depends_met UNWINDER_ORC || return 0
+    request_choice UNWINDER_ORC UNWINDER_FRAME_POINTER UNWINDER_GUESS
+}
+
 configure_optimization_profile() {
     local profile="$1"
 
@@ -3923,6 +3943,7 @@ configure_optimization_profile() {
         CC_OPTIMIZE_FOR_SIZE \
         SLUB_TINY
 
+    configure_orc_unwinder
     configure_profile_scheduler "$profile"
     case "$profile" in
         server)

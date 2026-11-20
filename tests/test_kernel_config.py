@@ -367,6 +367,66 @@ class ScriptTests(unittest.TestCase):
         self.assert_symbol("VIRT_CPU_ACCOUNTING_GEN", "n")
         self.assert_symbol("VIRT_CPU_ACCOUNTING_NATIVE", "n")
 
+    def test_profiles_replace_frame_pointer_unwinder_with_orc(self):
+        self.add_kconfig('''
+            config X86_64
+            \tbool
+
+            config UNWINDER_ORC
+            \tbool "ORC unwinder"
+            \tdepends on X86_64
+
+            config UNWINDER_FRAME_POINTER
+            \tbool "Frame pointer unwinder"
+
+            config UNWINDER_GUESS
+            \tbool "Guess unwinder"
+            \tdepends on EXPERT
+        ''')
+        self.set_baseline_symbols(
+            X86_64="y", UNWINDER_FRAME_POINTER="y", UNWINDER_ORC="n", UNWINDER_GUESS="n",
+        )
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
+        self.assert_symbol("UNWINDER_ORC", "y")
+        self.assert_symbol("UNWINDER_FRAME_POINTER", "n")
+        self.assert_symbol("UNWINDER_GUESS", "n")
+
+        # x86_32 and any target where ORC's dependency is unmet stay put.
+        self.config.write_text(self.baseline)
+        self.set_baseline_symbols(X86_64="n", UNWINDER_FRAME_POINTER="y", UNWINDER_ORC="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("UNWINDER_FRAME_POINTER", "y")
+        self.assert_symbol("UNWINDER_ORC", "n")
+
+        # The guess unwinder is the EXPERT choice with no runtime overhead.
+        self.config.write_text(self.baseline)
+        self.set_baseline_symbols(
+            X86_64="y", UNWINDER_GUESS="y", UNWINDER_FRAME_POINTER="n", UNWINDER_ORC="n", EXPERT="y",
+        )
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("UNWINDER_GUESS", "y")
+        self.assert_symbol("UNWINDER_ORC", "n")
+        self.assert_symbol("UNWINDER_FRAME_POINTER", "n")
+
+        # A protected frame-pointer unwinder, or an explicit enable, wins.
+        self.config.write_text(self.baseline)
+        self.set_baseline_symbols(
+            X86_64="y", UNWINDER_FRAME_POINTER="y", UNWINDER_ORC="n", UNWINDER_GUESS="n",
+        )
+        self.assert_success(self.run_script(
+            "--strict", "--optimization-profile=server",
+            "--protected-config-symbols=UNWINDER_FRAME_POINTER",
+        ))
+        self.assert_symbol("UNWINDER_FRAME_POINTER", "y")
+        self.assert_symbol("UNWINDER_ORC", "n")
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script(
+            "--strict", "--optimization-profile=server",
+            "--enable-symbols=UNWINDER_FRAME_POINTER",
+        ))
+        self.assert_symbol("UNWINDER_FRAME_POINTER", "y")
+        self.assert_symbol("UNWINDER_ORC", "n")
+
     def test_explicit_controls_override_profile_in_strict_mode(self):
         self.add_symbols("PREEMPT_NONE", "PREEMPT_VOLUNTARY", "PREEMPT", "PREEMPT_LAZY",
                          "PREEMPT_DYNAMIC", "PREEMPT_RT", "NO_HZ_FULL", "NO_HZ_IDLE", "HZ_PERIODIC",

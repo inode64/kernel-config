@@ -396,6 +396,16 @@ class KernelIntegrationTests(unittest.TestCase):
                                                     f"--tick-mode={mode}"))
                 self.assert_values(**{symbol: "y", "NO_HZ_FULL": "n", "RCU_NOCB_CPU": "n"})
 
+    def test_real_profile_replaces_frame_pointer_unwinder_with_orc(self):
+        debug = self.tree / "arch/x86/Kconfig.debug"
+        if not debug.is_file() or "config UNWINDER_ORC" not in debug.read_text():
+            self.skipTest("x86 ORC unwinder is not in this tree")
+        if "CONFIG_X86_64=y" not in self.config.read_text():
+            self.skipTest("ORC unwinder depends on X86_64")
+        self.prepare_baseline(UNWINDER_ORC="n", UNWINDER_FRAME_POINTER="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(UNWINDER_ORC="y", UNWINDER_FRAME_POINTER="n")
+
     def test_real_server_profile_uses_idle_ticks_without_rcu_offload(self):
         # NO_HZ_FULL selects RCU_NOCB_CPU; with RCU_EXPERT left off, leaving
         # full dynticks is what turns the offload back off.
