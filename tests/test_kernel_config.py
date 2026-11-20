@@ -427,6 +427,65 @@ class ScriptTests(unittest.TestCase):
         self.assert_symbol("UNWINDER_FRAME_POINTER", "y")
         self.assert_symbol("UNWINDER_ORC", "n")
 
+    def test_profiles_enable_fast_crc(self):
+        self.add_kconfig('''
+            config CRC_OPTIMIZATIONS
+            \tbool "Enable optimized CRC implementations" if EXPERT
+            \tdepends on !UML
+
+            config CRC32
+            \ttristate "CRC32/CRC32c functions"
+
+            config CRC32_SLICEBY8
+            \tbool "Slice by 8 bytes"
+
+            config CRC32_SLICEBY4
+            \tbool "Slice by 4 bytes"
+
+            config CRC32_SARWATE
+            \tbool "Sarwate's Algorithm"
+
+            config CRC32_BIT
+            \tbool "Classic Algorithm"
+        ''')
+        self.set_baseline_symbols(
+            CRC_OPTIMIZATIONS="n", CRC32="y", UML="n",
+            CRC32_SARWATE="y", CRC32_SLICEBY8="n", CRC32_SLICEBY4="n", CRC32_BIT="n",
+        )
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("CRC_OPTIMIZATIONS", "y")
+        self.assert_symbol("CRC32_SLICEBY8", "y")
+        self.assert_symbol("CRC32_SARWATE", "n")
+        self.assert_symbol("CRC32_SLICEBY4", "n")
+        self.assert_symbol("CRC32_BIT", "n")
+
+        # The 6.12 choice depends on CRC32. Leave a slower member when it is off.
+        self.config.write_text(self.baseline)
+        self.set_baseline_symbols(CRC32="n", CRC32_SARWATE="y", CRC32_SLICEBY8="n", CRC_OPTIMIZATIONS="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
+        self.assert_symbol("CRC_OPTIMIZATIONS", "y")
+        self.assert_symbol("CRC32", "n")
+        self.assert_symbol("CRC32_SARWATE", "y")
+        self.assert_symbol("CRC32_SLICEBY8", "n")
+
+        # An explicit choice wins, and UML cannot select CRC_OPTIMIZATIONS.
+        self.config.write_text(self.baseline)
+        self.set_baseline_symbols(
+            CRC32="y", CRC32_SARWATE="y", CRC32_SLICEBY8="n", CRC_OPTIMIZATIONS="n", UML="y",
+        )
+        self.assert_success(self.run_script(
+            "--strict", "--optimization-profile=server", "--enable-symbols=CRC32_SARWATE",
+        ))
+        self.assert_symbol("CRC32_SARWATE", "y")
+        self.assert_symbol("CRC32_SLICEBY8", "n")
+        self.assert_symbol("CRC_OPTIMIZATIONS", "n")
+
+    def test_crc_tuning_skips_absent_symbols(self):
+        result = self.run_script("--strict", "--optimization-profile=realtime")
+        self.assert_success(result)
+        self.assertNotIn("CRC_OPTIMIZATIONS", result.stdout)
+        self.assertNotIn("CRC32_SLICEBY8", result.stdout)
+
     def test_explicit_controls_override_profile_in_strict_mode(self):
         self.add_symbols("PREEMPT_NONE", "PREEMPT_VOLUNTARY", "PREEMPT", "PREEMPT_LAZY",
                          "PREEMPT_DYNAMIC", "PREEMPT_RT", "NO_HZ_FULL", "NO_HZ_IDLE", "HZ_PERIODIC",

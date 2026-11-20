@@ -396,6 +396,24 @@ class KernelIntegrationTests(unittest.TestCase):
                                                     f"--tick-mode={mode}"))
                 self.assert_values(**{symbol: "y", "NO_HZ_FULL": "n", "RCU_NOCB_CPU": "n"})
 
+    def test_real_profile_enables_crc_optimizations(self):
+        kconfig = self.tree / "lib/crc/Kconfig"
+        if not kconfig.is_file() or "config CRC_OPTIMIZATIONS" not in kconfig.read_text():
+            self.skipTest("CRC_OPTIMIZATIONS is not in this tree")
+        # The prompt exists only with EXPERT; otherwise olddefconfig forces default y.
+        self.prepare_baseline(EXPERT="y", CRC_OPTIMIZATIONS="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(CRC_OPTIMIZATIONS="y")
+
+    def test_real_profile_selects_crc32_slice_by_8(self):
+        kconfig = self.tree / "lib/Kconfig"
+        if not kconfig.is_file() or "config CRC32_SLICEBY8" not in kconfig.read_text():
+            self.skipTest("CRC32 implementation choice is not in this tree")
+        self.prepare_baseline(CRC32="y", CRC32_SLICEBY8="n", CRC32_SLICEBY4="n",
+                              CRC32_BIT="n", CRC32_SARWATE="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(CRC32_SLICEBY8="y", CRC32_SARWATE="n", CRC32_SLICEBY4="n", CRC32_BIT="n")
+
     def test_real_profile_replaces_frame_pointer_unwinder_with_orc(self):
         debug = self.tree / "arch/x86/Kconfig.debug"
         if not debug.is_file() or "config UNWINDER_ORC" not in debug.read_text():

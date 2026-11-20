@@ -3909,6 +3909,34 @@ configure_orc_unwinder() {
     request_choice UNWINDER_ORC UNWINDER_FRAME_POINTER UNWINDER_GUESS
 }
 
+configure_fast_checksums() {
+    local sym slower
+    # lib/crc/Kconfig (6.18+): CRC_OPTIMIZATIONS defaults to y. Disabling it
+    # makes CRC much slower; the help says to keep it unless minimizing size.
+    # It depends on !UML. CRC*_ARCH is promptless and follows this option, so
+    # it is not set here. 6.12 has no CRC_OPTIMIZATIONS symbol.
+    if kconfig_depends_met CRC_OPTIMIZATIONS; then
+        enable_if_present CRC_OPTIMIZATIONS
+    fi
+
+    # 6.12 lib/Kconfig: the CRC32 choice defaults to slice-by-8, "the fastest".
+    # Slice-by-4, Sarwate and the bit implementation are the slower members.
+    # The choice depends on CRC32, so leave it when CRC32 is off.
+    have_symbol CRC32_SLICEBY8 || return 0
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    [[ "${_SYMBOL_VALUE_CACHE[CRC32]:-y}" != n ]] || return 0
+    for slower in CRC32_SLICEBY4 CRC32_SARWATE CRC32_BIT; do
+        [[ "${_SYMBOL_VALUE_CACHE[$slower]:-n}" == y ]] || continue
+        for sym in CRC32_SLICEBY8 CRC32_SLICEBY4 CRC32_SARWATE CRC32_BIT; do
+            if is_protected_config_symbol "$sym" || [[ -v _EXPLICIT_SYMBOL_VALUES[$sym] ]]; then
+                return 0
+            fi
+        done
+        select_if_present CRC32_SLICEBY8 CRC32_SLICEBY4 CRC32_SARWATE CRC32_BIT
+        return 0
+    done
+}
+
 configure_optimization_profile() {
     local profile="$1"
 
@@ -3944,6 +3972,7 @@ configure_optimization_profile() {
         SLUB_TINY
 
     configure_orc_unwinder
+    configure_fast_checksums
     configure_profile_scheduler "$profile"
     case "$profile" in
         server)

@@ -185,7 +185,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
   Current profile behavior:
 
-  All profiles enable `CC_OPTIMIZE_FOR_PERFORMANCE`, topology-aware scheduling (`SCHED_MC`, `SCHED_SMT`, `SCHED_CLUSTER`, `SCHED_MC_PRIO`), the TEO cpuidle governor (`CPU_IDLE_GOV_TEO`), `RSEQ`, and disable `SLUB_TINY`. On x86_64 they replace the frame-pointer unwinder with ORC (`UNWINDER_ORC`). `arch/x86/Kconfig.debug` documents that unwinder as 5-10% faster than frame pointers, at roughly 2-4MB more RAM, and it is the x86_64 default. A baseline already using `UNWINDER_GUESS`, a protected choice member, or an explicit `--enable-symbols`/`--disable-symbols` for the choice is left alone. arm64 selects `FRAME_POINTER` itself and has no ORC unwinder, so it is unchanged.
+  All profiles enable `CC_OPTIMIZE_FOR_PERFORMANCE`, topology-aware scheduling (`SCHED_MC`, `SCHED_SMT`, `SCHED_CLUSTER`, `SCHED_MC_PRIO`), the TEO cpuidle governor (`CPU_IDLE_GOV_TEO`), `RSEQ`, and disable `SLUB_TINY`. On x86_64 they replace the frame-pointer unwinder with ORC (`UNWINDER_ORC`). `arch/x86/Kconfig.debug` documents that unwinder as 5-10% faster than frame pointers, at roughly 2-4MB more RAM, and it is the x86_64 default. A baseline already using `UNWINDER_GUESS`, a protected choice member, or an explicit `--enable-symbols`/`--disable-symbols` for the choice is left alone. arm64 selects `FRAME_POINTER` itself and has no ORC unwinder, so it is unchanged. They also enable `CRC_OPTIMIZATIONS` when that symbol exists (6.18+; `lib/crc/Kconfig` says to keep it enabled unless minimizing size, because disabling it makes CRC much slower). On 6.12, which has no such symbol, a slower `CRC32` implementation (`CRC32_SLICEBY4`, `CRC32_SARWATE` or `CRC32_BIT`) is moved to `CRC32_SLICEBY8` when `CRC32` is enabled. That is the choice default, and `lib/Kconfig` calls it the fastest of the four.
 
   - `server`
     Prioritizes throughput and stable background behavior:
@@ -911,7 +911,7 @@ removed later, annotated in the script with the removal version:
 
 Symbols the script uses that only exist in newer trees (`NO_PAGE_MAPCOUNT` and
 `DETECT_HUNG_TASK_BLOCKER` 6.15+, `X86_NATIVE_CPU` 6.16+, `NETFILTER_XTABLES_LEGACY`
-6.17+, `PERSISTENT_HUGE_ZERO_FOLIO` 6.18+, `RSEQ_SLICE_EXTENSION` 7.0+, `SCHED_CACHE`,
+6.17+, `PERSISTENT_HUGE_ZERO_FOLIO` and `CRC_OPTIMIZATIONS` 6.18+, `RSEQ_SLICE_EXTENSION` 7.0+, `SCHED_CACHE`,
 `NUMA_MIGRATION` and `KMALLOC_PARTITION_*` 7.2+) are no-ops on older kernels.
 
 ### HugeTLB vmemmap optimization before 7.2
