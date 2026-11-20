@@ -1007,6 +1007,22 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--prune-debug-trace"))
         self.assert_symbol("DM_DEBUG_BLOCK_MANAGER_LOCKING", "n")
 
+    def test_tpm_on_leaves_tpm2_hmac_to_the_baseline(self):
+        self.add_symbols("TCG_TPM", "HW_RANDOM_TPM", "TCG_TIS_CORE", "TCG_TIS", "TCG_CRB",
+                         "TCG_VTPM_PROXY", "TCG_TPM2_HMAC")
+        env = self.make_host_root()
+        tpm = Path(env["KC_HOST_ROOT"]) / "sys/class/tpm/tpm0"
+        tpm.mkdir(parents=True)
+        (tpm / "tpm_version_major").write_text("2\n")
+        for baseline in ("n", "y"):
+            with self.subTest(baseline=baseline):
+                self.set_baseline_symbols(TCG_CRB="n", TCG_TPM2_HMAC=baseline)
+                result = self.run_script("--strict", "--tpm-support=on", env=env)
+                self.assert_success(result)
+                self.assert_symbol("TCG_CRB", "y")
+                self.assert_symbol("TCG_TPM2_HMAC", baseline)
+                self.assertNotIn("CONFIG_TCG_TPM2_HMAC", result.stdout)
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

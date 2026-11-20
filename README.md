@@ -389,6 +389,7 @@ These options change kernel build configuration and defaults. They do not create
 
 - `TPM_SUPPORT=none|auto|on|off`
   Keeps or prunes TPM support and attempts to detect TPM `1.2` or `2.0`.
+  `on` keeps the TIS/CRB drivers for the detected version but leaves `TCG_TPM2_HMAC` as the baseline has it: upstream defaults to `n` because HMAC and encryption are added to every kernel-to-TPM transaction. `off` removes it with the rest of TPM support.
 
 - `DMA_ENGINE_SUPPORT=none|auto|on|off`
   Keeps or prunes `CONFIG_DMADEVICES` based on whether the running host exposes `dmaengine` devices.

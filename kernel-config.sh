@@ -4381,7 +4381,9 @@ configure_tpm_support_profile() {
             for version in "$@"; do
                 case "$version" in
                     2.0)
-                        append_unique_item "TCG_TPM2_HMAC" enable_syms
+                        # TCG_TPM2_HMAC stays as the baseline has it: upstream
+                        # defaults to n and it adds HMAC and encryption to every
+                        # kernel-to-TPM transaction.
                         append_unique_item "TCG_CRB" enable_syms
                         append_unique_item "TCG_TIS" enable_syms
                         ;;
