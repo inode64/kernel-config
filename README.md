@@ -189,7 +189,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
   - `server`
     Prioritizes throughput and stable background behavior:
-    Preemption preference is `PREEMPT_NONE`, then `PREEMPT_LAZY`, `PREEMPT_VOLUNTARY`, or full preemption, skipping a model whose direct dependencies are unmet. From Linux 7.4 (`7dadeaa6`, "sched: Further restrict the preemption modes") `PREEMPT_NONE` depends on `ARCH_NO_PREEMPT` and `PREEMPT_VOLUNTARY` depends on `!ARCH_HAS_PREEMPT_LAZY`. x86, arm64 and the other lazy-preemption architectures therefore get `PREEMPT_LAZY`, the model upstream left in place of the old server and voluntary choices. A config migrated from 6.18 still lists `PREEMPT_NONE`; the profile does not request it once the dependency is unmet, because strict mode would reject the run. It requests `NO_HZ_FULL` when the baseline enables SMP and the required accounting capabilities, otherwise `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
+    Preemption preference is `PREEMPT_NONE`, then `PREEMPT_LAZY`, `PREEMPT_VOLUNTARY`, or full preemption, skipping a model whose direct dependencies are unmet. From Linux 7.4 (`7dadeaa6`, "sched: Further restrict the preemption modes") `PREEMPT_NONE` depends on `ARCH_NO_PREEMPT` and `PREEMPT_VOLUNTARY` depends on `!ARCH_HAS_PREEMPT_LAZY`. x86, arm64 and the other lazy-preemption architectures therefore get `PREEMPT_LAZY`, the model upstream left in place of the old server and voluntary choices. A config migrated from 6.18 still lists `PREEMPT_NONE`; the profile does not request it once the dependency is unmet, because strict mode would reject the run. It requests `NO_HZ_IDLE` and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`). `NO_HZ_FULL` is left to the realtime profile and to `--tick-mode=full`: `Documentation/timers/no_hz.rst` says adaptive ticks should not be enabled by default, and selecting it removes `TICK_CPU_ACCOUNTING` (`VIRT_CPU_ACCOUNTING_GEN`, which it forces, is documented as a significant cost and "only useful if you are working on the full dynticks subsystem"). The `HAVE_CONTEXT_TRACKING_USER` and `HAVE_VIRT_CPU_ACCOUNTING_GEN` symbols are architecture capabilities, enabled on every 64-bit x86 build, so they are not evidence that the baseline wanted full dynticks.
     It also enables `SCHED_CACHE` and Multi-Gen LRU when those symbols are available.
     It disables the Project C alternative scheduler (`SCHED_ALT`, BMQ/PDS from gentoo-sources `USE=experimental`), which replaces EEVDF and rules out PSI, `SCHED_CACHE`, `SCHED_CORE`, NUMA balancing and sched_ext.
     Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.
@@ -200,7 +200,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     It disables `NO_PAGE_MAPCOUNT`, still marked EXPERIMENTAL in 7.2, and `RT_GROUP_SCHED` (default `n`): with it, `SCHED_FIFO`/`SCHED_RR` tasks outside the root cgroup fail until each group is given an RT budget, which breaks systemd services and containers that request real-time priority. A host that budgets RT time per cgroup (`docker run --cpu-rt-runtime`) passes `--enable-symbols=RT_GROUP_SCHED`.
     Memory error recovery: `MEMORY_FAILURE` (and `ACPI_APEI_MEMORY_FAILURE` with APEI), so an uncorrectable error in a user page, such as a VM's RAM, kills its owner instead of panicking the host; `RAS_CEC` also soft-offlines pages with repeated corrected errors when `DEBUG_FS` is enabled, which Kconfig requires (`--all-optimizations` prunes it; rasdaemon can do that offlining instead).
     THP defaults to `madvise`: QEMU marks guest RAM with `MADV_HUGEPAGE`, so virtual machines keep huge pages, while databases that ask for THP off are not forced into them.
-    It enables `RCU_NOCB_CPU` and `RCU_NOCB_CPU_DEFAULT_ALL`, which offloads RCU callbacks on every CPU at boot; `profiles/server-kvm-host.sh` turns the latter off for VM hosts.
+    It disables `RCU_NOCB_CPU_DEFAULT_ALL`. Offloading callbacks on every CPU adds a kthread per CPU and increases `call_rcu()` overhead and context-switch rates (`kernel/rcu/Kconfig` says to leave it off when unsure). Fedora and RHEL build `RCU_NOCB_CPU` but leave this option off, so `rcu_nocbs=` and `nohz_full=` still choose the CPUs. The profile does not request `RCU_NOCB_CPU`: it depends on `RCU_EXPERT` or `NO_HZ_FULL`, and `NO_HZ_FULL` selects it. An existing `RCU_EXPERT` baseline keeps its own value. `profiles/server-kvm-host.sh` still disables `RCU_NOCB_CPU_DEFAULT_ALL` explicitly so a baseline from an older run, which enabled it, converges even when a trailing `--disable-symbols` replaces that list.
 
   - `desktop`
     Prioritizes interactivity:
@@ -212,7 +212,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
   - `realtime`
     Prioritizes deterministic low-latency execution:
-    `PREEMPT_RT` when its prerequisites are enabled (otherwise full preemption), `HZ_1000` preference, `RCU_BOOST`, and `RCU_NOCB_CPU` support. Tick selection uses the same capability checks as `server`; `RCU_NOCB_CPU_DEFAULT_ALL` is left unchanged.
+    `PREEMPT_RT` when its prerequisites are enabled (otherwise full preemption), `HZ_1000` preference, `RCU_BOOST`, and `RCU_NOCB_CPU` support. It requests `NO_HZ_FULL` when the baseline enables SMP and the accounting capabilities full dynticks requires, otherwise `NO_HZ_IDLE`. `RCU_NOCB_CPU_DEFAULT_ALL` is left unchanged.
     Full dynticks isolation also requires boot configuration (for example `nohz_full=` and CPU isolation/affinity tuning).
 
 - `VALIDATION_MODE=warn|strict`
@@ -553,13 +553,13 @@ type and the hardware filters in `auto` mode. It also defaults to a **strict dry
 overrides. Run it on the target host so the `auto` detections see the real CPU,
 firmware, NUMA and DMA engines. It enables `MAGIC_SYSRQ` (kept for console
 emergencies, with `MAGIC_SYSRQ_SERIAL` off) and disables
-`RCU_NOCB_CPU_DEFAULT_ALL` (the server profile would offload RCU callbacks on
-every CPU, a cost on a VM host that never sets `nohz_full=`). Both are set
+`RCU_NOCB_CPU_DEFAULT_ALL` (offloading RCU callbacks on every CPU, including a
+VM host that never sets `nohz_full=`; the server profile disables it too). Both are set
 explicitly rather than protected, so a baseline left by an earlier run, where
-the pruning had already removed SysRq or the server profile had already turned
+the pruning had already removed SysRq or an older server profile had turned
 the offload on, converges to the same result. A trailing `--enable-symbols` or
 `--disable-symbols` replaces these lists; repeat their entries when passing
-your own.
+your own. The profile still turns the offload off if that entry is dropped.
 
 ```bash
 ./profiles/server-kvm-host.sh /usr/src/linux

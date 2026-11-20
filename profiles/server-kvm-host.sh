@@ -15,13 +15,15 @@
 # hosts with an installed initramfs generator (it errors when no generator or
 # image can be inspected).
 #
-# Set explicitly, so a baseline left by an earlier run converges too: the server
-# profile enables RCU_NOCB_CPU_DEFAULT_ALL, which offloads RCU callbacks on every
-# CPU (a cost on a VM host that never sets nohz_full=), and the dangerous/insecure
+# Set explicitly, so a baseline left by an earlier run converges too. An older
+# server profile enabled RCU_NOCB_CPU_DEFAULT_ALL, which offloads RCU callbacks
+# on every CPU (a kthread per CPU, and a higher call_rcu cost, on a host that
+# never sets nohz_full=); the profile now disables it. The dangerous/insecure
 # pruning removes MAGIC_SYSRQ, which a remote server should keep for emergencies
 # over the console (MAGIC_SYSRQ_SERIAL stays off). Protecting them instead would
 # keep whatever the baseline had. A trailing --enable-symbols or --disable-symbols
-# replaces these lists, so repeat their entries when passing your own.
+# replaces these lists, so repeat their entries when passing your own. The
+# profile still turns the offload off if that entry is dropped.
 set -Eeuo pipefail
 project_dir="$(dirname -- "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")")"
 

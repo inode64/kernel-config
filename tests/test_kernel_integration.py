@@ -396,6 +396,15 @@ class KernelIntegrationTests(unittest.TestCase):
                                                     f"--tick-mode={mode}"))
                 self.assert_values(**{symbol: "y", "NO_HZ_FULL": "n", "RCU_NOCB_CPU": "n"})
 
+    def test_real_server_profile_uses_idle_ticks_without_rcu_offload(self):
+        # NO_HZ_FULL selects RCU_NOCB_CPU; with RCU_EXPERT left off, leaving
+        # full dynticks is what turns the offload back off.
+        self.prepare_baseline(NO_HZ_FULL="y", RCU_NOCB_CPU_DEFAULT_ALL="y", RCU_EXPERT="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(NO_HZ_IDLE="y", NO_HZ_FULL="n", HZ_PERIODIC="n",
+                           RCU_NOCB_CPU_DEFAULT_ALL="n", RCU_NOCB_CPU="n",
+                           TICK_CPU_ACCOUNTING="y", VIRT_CPU_ACCOUNTING_GEN="n")
+
     def test_real_profile_thp_off_and_both_rt_controls(self):
         for option in ("--thp=off", "--preemption=rt", "--preempt-mode=rt"):
             with self.subTest(option=option):

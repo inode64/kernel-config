@@ -2897,7 +2897,14 @@ configure_tick_mode() {
 
 configure_profile_scheduler() {
     local profile="$1" model="" tick=idle
-    if [[ "$profile" != desktop ]] && is_symbol_enabled_now SMP \
+    # Full dynticks is a realtime/HPC feature. Documentation/timers/no_hz.rst
+    # says not to enable it by default: user/kernel transitions get more
+    # expensive, and without nohz_full= no CPU is adaptive. It still forces
+    # VIRT_CPU_ACCOUNTING_GEN, because TICK_CPU_ACCOUNTING depends on
+    # !NO_HZ_FULL. The HAVE_* symbols are architecture capabilities (on for
+    # every 64-bit x86 build), not a sign that the baseline asked for it.
+    # A server that wants it passes --tick-mode=full.
+    if [[ "$profile" == realtime ]] && is_symbol_enabled_now SMP \
         && is_symbol_enabled_now HAVE_CONTEXT_TRACKING_USER \
         && is_symbol_enabled_now HAVE_VIRT_CPU_ACCOUNTING_GEN; then
         tick=full
@@ -3968,11 +3975,18 @@ configure_optimization_profile() {
                 FAIR_GROUP_SCHED \
                 KSM \
                 MEMCG \
-                RCU_NOCB_CPU \
-                RCU_NOCB_CPU_DEFAULT_ALL \
                 TRANSPARENT_HUGEPAGE \
                 ZSWAP \
                 ZSWAP_DEFAULT_ON
+
+            # Offloading every CPU's RCU callbacks adds one kthread per CPU and
+            # raises call_rcu() cost (kernel/rcu/Kconfig: "Say N if you are
+            # unsure"). Fedora and RHEL build RCU_NOCB_CPU but leave
+            # DEFAULT_ALL off, so rcu_nocbs= and nohz_full= still work.
+            # RCU_NOCB_CPU itself is not requested here: it needs RCU_EXPERT or
+            # NO_HZ_FULL, and NO_HZ_FULL selects it. Requesting it off would
+            # clash with a later --tick-mode=full.
+            disable_if_present RCU_NOCB_CPU_DEFAULT_ALL
 
             enable_if_unset \
                 MQ_IOSCHED_DEADLINE \

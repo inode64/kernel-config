@@ -275,7 +275,9 @@ class ScriptTests(unittest.TestCase):
         self.set_baseline_symbols(PREEMPT_NONE="n", PREEMPT_DYNAMIC="n", EXPERT="y",
                                   ARCH_SUPPORTS_RT="y", HAVE_CONTEXT_TRACKING_USER="y",
                                   HAVE_VIRT_CPU_ACCOUNTING_GEN="y")
-        for profile, model, tick in [("server", "PREEMPT_NONE", "NO_HZ_FULL"),
+        # HAVE_* are architecture capabilities. Only realtime treats them as a
+        # reason to select full dynticks; server stays on idle ticks.
+        for profile, model, tick in [("server", "PREEMPT_NONE", "NO_HZ_IDLE"),
                                      ("desktop", "PREEMPT", "NO_HZ_IDLE"),
                                      ("realtime", "PREEMPT", "NO_HZ_FULL")]:
             with self.subTest(profile=profile):
@@ -340,6 +342,30 @@ class ScriptTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_symbol("PREEMPT_NONE", "y")
         self.assert_symbol("PREEMPT_LAZY", "n")
+
+    def test_server_profile_uses_idle_ticks_and_drops_rcu_offload_default(self):
+        # A 64-bit SMP baseline advertises full-dynticks capabilities and may
+        # still offload every CPU. The server profile must not keep that.
+        self.add_symbols(
+            "NO_HZ_FULL", "NO_HZ_IDLE", "HZ_PERIODIC",
+            "RCU_NOCB_CPU", "RCU_NOCB_CPU_DEFAULT_ALL",
+            "TICK_CPU_ACCOUNTING", "VIRT_CPU_ACCOUNTING_GEN", "VIRT_CPU_ACCOUNTING_NATIVE",
+        )
+        self.set_baseline_symbols(
+            HAVE_CONTEXT_TRACKING_USER="y", HAVE_VIRT_CPU_ACCOUNTING_GEN="y",
+            RCU_EXPERT="n", RCU_NOCB_CPU="y", RCU_NOCB_CPU_DEFAULT_ALL="y",
+            NO_HZ_FULL="y", NO_HZ_IDLE="n", HZ_PERIODIC="n",
+            TICK_CPU_ACCOUNTING="n", VIRT_CPU_ACCOUNTING_GEN="y",
+            VIRT_CPU_ACCOUNTING_NATIVE="n",
+        )
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("NO_HZ_IDLE", "y")
+        self.assert_symbol("NO_HZ_FULL", "n")
+        self.assert_symbol("HZ_PERIODIC", "n")
+        self.assert_symbol("RCU_NOCB_CPU_DEFAULT_ALL", "n")
+        self.assert_symbol("TICK_CPU_ACCOUNTING", "y")
+        self.assert_symbol("VIRT_CPU_ACCOUNTING_GEN", "n")
+        self.assert_symbol("VIRT_CPU_ACCOUNTING_NATIVE", "n")
 
     def test_explicit_controls_override_profile_in_strict_mode(self):
         self.add_symbols("PREEMPT_NONE", "PREEMPT_VOLUNTARY", "PREEMPT", "PREEMPT_LAZY",
