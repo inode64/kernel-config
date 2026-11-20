@@ -1039,6 +1039,28 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_symbol("FW_LOADER_COMPRESS", "n")
 
+    def test_server_profile_enables_memory_error_recovery(self):
+        recovery = ("MEMORY_FAILURE", "ACPI_APEI_MEMORY_FAILURE", "RAS_CEC")
+        self.add_symbols("ARCH_SUPPORTS_MEMORY_FAILURE", "ACPI_APEI", "X86_MCE", "DEBUG_FS", *recovery)
+        base = dict(ARCH_SUPPORTS_MEMORY_FAILURE="y", ACPI_APEI="y", X86_MCE="y", DEBUG_FS="y",
+                    **dict.fromkeys(recovery, "n"))
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for symbol in recovery:
+            self.assert_symbol(symbol, "y")
+        # RAS_CEC depends on DEBUG_FS; the rest does not.
+        self.set_baseline_symbols(**base | {"DEBUG_FS": "n"})
+        result = self.run_script("--strict", "--optimization-profile=server")
+        self.assert_success(result)
+        self.assertIn("RAS_CEC needs DEBUG_FS", result.stdout)
+        self.assert_symbol("MEMORY_FAILURE", "y")
+        self.assert_symbol("RAS_CEC", "n")
+        # Architectures without memory-failure support are left alone.
+        self.set_baseline_symbols(**base | {"ARCH_SUPPORTS_MEMORY_FAILURE": "n"})
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for symbol in recovery:
+            self.assert_symbol(symbol, "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

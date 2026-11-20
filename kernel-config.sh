@@ -3872,6 +3872,24 @@ configure_optimization_profile() {
                 enable_if_present FW_LOADER_COMPRESS FW_LOADER_COMPRESS_XZ FW_LOADER_COMPRESS_ZSTD
             fi
 
+            # Without MEMORY_FAILURE an uncorrectable error in a user page (a VM's
+            # RAM) panics the host instead of killing its owner; the APEI variant
+            # covers errors the firmware reports through GHES. RAS_CEC soft-offlines
+            # pages with repeated corrected errors, but Kconfig ties it to DEBUG_FS.
+            if [[ "${_SYMBOL_VALUE_CACHE[ARCH_SUPPORTS_MEMORY_FAILURE]:-n}" == y ]]; then
+                enable_if_present MEMORY_FAILURE
+                if [[ "${_SYMBOL_VALUE_CACHE[ACPI_APEI]:-n}" == y ]]; then
+                    enable_if_present ACPI_APEI_MEMORY_FAILURE
+                fi
+                if [[ "${_SYMBOL_VALUE_CACHE[X86_MCE]:-n}" == y ]]; then
+                    if [[ "${_SYMBOL_VALUE_CACHE[DEBUG_FS]:-n}" == y ]]; then
+                        enable_if_present RAS_CEC
+                    elif have_symbol RAS_CEC; then
+                        echo "    (RAS_CEC needs DEBUG_FS; rasdaemon can soft-offline pages with repeated corrected errors instead)"
+                    fi
+                fi
+            fi
+
             # observability: only enable monitoring symbols when not pruning
             if is_enabled "$wants_observability"; then
                 enable_if_present \

@@ -190,6 +190,16 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(FW_LOADER_COMPRESS="y", FW_LOADER_COMPRESS_XZ="y", FW_LOADER_COMPRESS_ZSTD="y")
 
+    def test_real_server_profile_enables_memory_error_recovery(self):
+        self.prepare_baseline(MEMORY_FAILURE="n", DEBUG_FS="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(MEMORY_FAILURE="y", ACPI_APEI_MEMORY_FAILURE="y", RAS_CEC="y")
+        # --all-optimizations prunes DEBUG_FS, so RAS_CEC goes but recovery stays.
+        result = self.run_script("--strict", "--all-optimizations")
+        self.assert_success(result)
+        self.assertIn("RAS_CEC needs DEBUG_FS", result.stdout)
+        self.assert_values(MEMORY_FAILURE="y", ACPI_APEI_MEMORY_FAILURE="y", RAS_CEC="n", DEBUG_FS="n")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():
