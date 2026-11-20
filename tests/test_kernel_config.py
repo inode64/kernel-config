@@ -1154,6 +1154,41 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
         self.assert_symbol("PREEMPT_DYNAMIC", "y")
 
+    def test_legacy_pruning_moves_sysfb_simplefb_to_efidrm_and_vesadrm(self):
+        self.add_kconfig('''
+            config SYSFB_SIMPLEFB
+            \tbool "Mark VGA/VBE/EFI FB as generic system framebuffer (deprecated)"
+        ''')
+        self.add_symbols("X86", "EFI", "MODULES", "FB_SIMPLE")
+        self.add_symbols("DRM_SIMPLEDRM", "DRM_EFIDRM", "DRM_VESADRM", kind="tristate")
+        base = dict(X86="y", EFI="y", MODULES="y", SYSFB_SIMPLEFB="y", DRM_SIMPLEDRM="y",
+                    DRM_EFIDRM="n", DRM_VESADRM="n", FB_SIMPLE="n")
+        # 7.2 does not deprecate it yet: nothing changes.
+        self.write_tree_version(7, 2)
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--prune-legacy"))
+        self.assert_symbol("SYSFB_SIMPLEFB", "y")
+        self.write_tree_version(7, 4)
+        for simpledrm in ("y", "m"):
+            with self.subTest(simpledrm=simpledrm):
+                self.set_baseline_symbols(**base | {"DRM_SIMPLEDRM": simpledrm})
+                result = self.run_script("--strict", "--prune-legacy")
+                self.assert_success(result)
+                self.assertIn("Migrating CONFIG_SYSFB_SIMPLEFB to CONFIG_DRM_EFIDRM CONFIG_DRM_VESADRM", result.stdout)
+                self.assert_symbol("SYSFB_SIMPLEFB", "n")
+                self.assert_symbol("DRM_EFIDRM", simpledrm)
+                self.assert_symbol("DRM_VESADRM", simpledrm)
+        # The fbdev simplefb console still needs it; with no user it just goes.
+        self.set_baseline_symbols(**base | {"DRM_SIMPLEDRM": "n", "FB_SIMPLE": "y"})
+        result = self.run_script("--strict", "--prune-legacy")
+        self.assert_success(result)
+        self.assertIn("Retaining CONFIG_SYSFB_SIMPLEFB", result.stdout)
+        self.assert_symbol("SYSFB_SIMPLEFB", "y")
+        self.set_baseline_symbols(**base | {"DRM_SIMPLEDRM": "n", "FB_SIMPLE": "n"})
+        self.assert_success(self.run_script("--strict", "--prune-legacy"))
+        self.assert_symbol("SYSFB_SIMPLEFB", "n")
+        self.assert_symbol("DRM_EFIDRM", "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

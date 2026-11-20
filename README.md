@@ -259,6 +259,8 @@ Overridden settings are skipped before applying their dependencies. RT and NUMA 
 
   Preserves `DRM_FBDEV_EMULATION`, whose legacy-labelled prompt still supplies the framebuffer console for DRM drivers.
 
+  From Linux 7.4, which deprecates `SYSFB_SIMPLEFB`, moves simpledrm users to its documented replacements: `DRM_EFIDRM` (with EFI) and `DRM_VESADRM` (on x86), at the level of `DRM_SIMPLEDRM`, so the early console (initramfs prompts, a rescue shell over a BMC) survives. A console on the fbdev simplefb driver keeps `SYSFB_SIMPLEFB`; with no user it is simply disabled.
+
   Preserves `DRM_AMD_DC_DCE` (7.4+, "AMD DC support for legacy DCE ASICs"): it is the display support of DCE 8-12 GPUs such as Polaris and Vega, unconditional before 7.4.
 
 - `PRUNE_DEBUG_TRACE`

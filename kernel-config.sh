@@ -1611,8 +1611,9 @@ discover_legacy_kconfig_symbols() {
     # AF_ALG remains an application ABI even when its prompts say deprecated.
     # DRM_AMD_DC_DCE (7.4+, "AMD DC support for legacy DCE ASICs") is the display
     # support of DCE 8-12 GPUs such as Polaris and Vega, unconditional before 7.4.
+    # SYSFB_SIMPLEFB (deprecated in 7.4) goes through migrate_sysfb_simplefb.
     discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))" \
-        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION" && $0 != "DRM_AMD_DC_DCE"'
+        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION" && $0 != "DRM_AMD_DC_DCE" && $0 != "SYSFB_SIMPLEFB"'
 }
 
 discover_debug_trace_kconfig_symbols() {
@@ -3196,6 +3197,48 @@ SND_SOC_INTEL_GLK_RT5682_MAX98357A_MACH SND_SOC_INTEL_SOF_RT5682_MACH
 SND_SOC_INTEL_CML_LP_DA7219_MAX98357A_MACH SND_SOC_INTEL_SOF_DA7219_MACH
 SND_SOC_INTEL_SOF_CML_RT1011_RT5682_MACH SND_SOC_INTEL_SOF_RT5682_MACH
 EOF
+}
+
+# Linux 7.4 deprecates SYSFB_SIMPLEFB in favour of efidrm and vesadrm. Dropping
+# it alone leaves simpledrm without the firmware framebuffer, and the host
+# without an early console (initramfs prompts, a rescue shell over a BMC), so
+# simpledrm users move to the replacements at the same level. A console on the
+# fbdev simplefb driver still needs the option and keeps it.
+migrate_sysfb_simplefb() {
+    local level sym version
+    local -a replacements=()
+    is_prunable_toggle SYSFB_SIMPLEFB || return 0
+    version="$(kernel_tree_version)"
+    if ! [[ "$version" =~ ^([0-9]+)\.([0-9]+)$ ]] \
+        || ((BASH_REMATCH[1] < 7 || (BASH_REMATCH[1] == 7 && BASH_REMATCH[2] < 4))); then
+        return 0
+    fi
+    _load_symbol_cache
+    [[ "${_SYMBOL_VALUE_CACHE[SYSFB_SIMPLEFB]:-n}" == y ]] || return 0
+    level="${_SYMBOL_VALUE_CACHE[DRM_SIMPLEDRM]:-n}"
+    if [[ "$level" == n ]]; then
+        if [[ "${_SYMBOL_VALUE_CACHE[FB_SIMPLE]:-n}" != n ]]; then
+            echo "Retaining CONFIG_SYSFB_SIMPLEFB: the fbdev simplefb console uses it"
+        else
+            disable_config_symbol SYSFB_SIMPLEFB
+        fi
+        return 0
+    fi
+    if [[ "${_SYMBOL_VALUE_CACHE[EFI]:-n}" == y ]] && have_symbol DRM_EFIDRM; then
+        replacements+=(DRM_EFIDRM)
+    fi
+    if is_x86_config && have_symbol DRM_VESADRM; then
+        replacements+=(DRM_VESADRM)
+    fi
+    if ((${#replacements[@]} == 0)); then
+        echo "Retaining CONFIG_SYSFB_SIMPLEFB: neither efidrm nor vesadrm is available"
+        return 0
+    fi
+    echo "Migrating CONFIG_SYSFB_SIMPLEFB to ${replacements[*]/#/CONFIG_}=$level"
+    for sym in "${replacements[@]}"; do
+        request_explicit_symbol "$sym" "$level"
+    done
+    disable_config_symbol SYSFB_SIMPLEFB
 }
 
 configure_symbol_overrides() {
@@ -5545,6 +5588,7 @@ if is_enabled "$PRUNE_LEGACY"; then
         USELIB
 
     prune_deprecated_aliases
+    migrate_sysfb_simplefb
     if is_symbol_enabled_now SGETMASK_SYSCALL && ! is_symbol_enabled_now EXPERT; then
         echo "Retaining CONFIG_SGETMASK_SYSCALL: its prompt requires CONFIG_EXPERT=y; EXPERT was not changed"
     fi
