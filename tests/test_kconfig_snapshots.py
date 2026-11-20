@@ -83,9 +83,13 @@ class SnapshotTests(unittest.TestCase):
         for snapshot in SNAPSHOTS:
             with self.subTest(version=snapshot.name):
                 debug = self.discover(snapshot, "debug_trace")
-                self.assertFalse({"IP_NF_RAW", "IP6_NF_RAW", "EARLY_PRINTK"} & debug)
+                self.assertFalse({"IP_NF_RAW", "IP6_NF_RAW", "EARLY_PRINTK",
+                                  "DEBUG_INFO_NONE", "DEBUG_INFO_COMPRESSED_NONE",
+                                  "BRANCH_PROFILE_NONE", "DEBUG_FS_ALLOW_NONE"} & debug)
                 # The TRACE target itself is still a packet-tracing debug aid.
                 self.assertIn("NETFILTER_XT_TARGET_TRACE", debug)
+                coverage = self.discover(snapshot, "coverage")
+                self.assertNotIn("BRANCH_PROFILE_NONE", coverage)
 
     def test_discovery_ignores_other_architecture_prompts(self):
         for snapshot in SNAPSHOTS:

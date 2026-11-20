@@ -308,9 +308,24 @@ class KernelIntegrationTests(unittest.TestCase):
 
     def test_real_debug_trace_pruning_keeps_x86_early_printk(self):
         self.prepare_baseline(EXPERT="y", EARLY_PRINTK="y")
-        self.assert_success(self.run_script("--strict", "--prune-debug-trace",
-                                            "--enable-symbols=DEBUG_INFO_NONE"))
-        self.assert_values(EARLY_PRINTK="y")
+        self.assert_success(self.run_script("--strict", "--prune-debug-trace"))
+        self.assert_values(EARLY_PRINTK="y", DEBUG_INFO_NONE="y")
+
+    def test_real_observability_coverage_and_debug_pruning_strict(self):
+        self.prepare_baseline(FTRACE="y", DEBUG_KERNEL="n")
+        self.assert_success(self.run_script("--strict", "--prune-observability"))
+        self.assert_values(FTRACE="n", BRANCH_PROFILE_NONE="n")
+        self.config.write_bytes(self.original)
+        self.prepare_baseline(FTRACE="n", DEBUG_KERNEL="n")
+        self.assert_success(self.run_script("--strict", "--prune-coverage"))
+        self.assert_values(DEBUG_INFO_NONE="n", BRANCH_PROFILE_NONE="n")
+        self.config.write_bytes(self.original)
+        self.prepare_baseline(DEBUG_KERNEL="y", DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT="y")
+        self.assert_success(self.run_script(
+            "--strict", "--prune-debug-trace", "--protected-config-symbols=DEBUG_KERNEL",
+        ))
+        self.assert_values(DEBUG_KERNEL="y", DEBUG_INFO_NONE="y",
+                           DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT="n")
 
     def test_real_hardening_pruning_selects_none_choices(self):
         self.prepare_baseline(INIT_STACK_ALL_ZERO="y")

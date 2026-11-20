@@ -815,6 +815,50 @@ endmenu
         self.assert_symbol("MTD_SPI_NOR_SWP_DISABLE", "n")
         self.assert_symbol("CRYPTO_MANAGER_DISABLE_TESTS", "y")
 
+    def test_debug_coverage_observability_pruning_respects_choice_parents(self):
+        self.add_kconfig('''
+            menu "Compile-time checks and compiler options"
+            config DEBUG_INFO_NONE
+            \tbool "Disable debug information"
+            config DEBUG_INFO_DWARF5
+            \tbool "Generate DWARF Version 5 debuginfo"
+            endmenu
+            config FTRACE
+            \tbool "Tracers"
+            config BRANCH_PROFILE_NONE
+            \tbool "No branch profiling"
+            config PROFILE_ALL_BRANCHES
+            \tbool "Profile all if conditionals"
+        ''')
+        # When DEBUG_KERNEL and FTRACE are off, neither NONE choice should be requested.
+        self.set_baseline_symbols(
+            DEBUG_KERNEL="n", DEBUG_INFO_NONE="n", DEBUG_INFO_DWARF5="n",
+            FTRACE="n", BRANCH_PROFILE_NONE="n", PROFILE_ALL_BRANCHES="n",
+        )
+        self.assert_success(self.run_script("--strict", "--prune-coverage",
+                                            env={"REMOVE_SYMBOLS": "DEBUG_INFO_NONE BRANCH_PROFILE_NONE"}))
+        self.assert_success(self.run_script("--strict", "--prune-observability",
+                                            env={"REMOVE_SYMBOLS": "BRANCH_PROFILE_NONE"}))
+        # When DEBUG_KERNEL stays on (protected), PRUNE_DEBUG_TRACE selects DEBUG_INFO_NONE.
+        self.set_baseline_symbols(
+            DEBUG_KERNEL="y", DEBUG_INFO_NONE="n", DEBUG_INFO_DWARF5="y",
+            FTRACE="y", BRANCH_PROFILE_NONE="n", PROFILE_ALL_BRANCHES="y",
+        )
+        self.assert_success(self.run_script(
+            "--strict", "--prune-debug-trace", "--protected-config-symbols=DEBUG_KERNEL",
+        ))
+        self.assert_symbol("DEBUG_KERNEL", "y")
+        self.assert_symbol("DEBUG_INFO_NONE", "y")
+        self.assert_symbol("DEBUG_INFO_DWARF5", "n")
+        # When FTRACE stays on (protected), PRUNE_OBSERVABILITY selects BRANCH_PROFILE_NONE.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script(
+            "--strict", "--prune-observability", "--protected-config-symbols=FTRACE",
+        ))
+        self.assert_symbol("FTRACE", "y")
+        self.assert_symbol("BRANCH_PROFILE_NONE", "y")
+        self.assert_symbol("PROFILE_ALL_BRANCHES", "n")
+
     def test_legacy_pruning_preserves_af_alg_application_abi(self):
         with (self.tree / "Kconfig").open("a") as stream:
             stream.write('''

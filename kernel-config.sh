@@ -1657,8 +1657,11 @@ discover_debug_trace_kconfig_symbols() {
     # IPV6_IOAM6_LWTUNNEL is IOAM in-band telemetry ("Trace insertion"), not debugging.
     # IP_NF_RAW/IP6_NF_RAW only mention TRACE as one user ("raw table support
     # (required for NOTRACK/TRACE)"); Docker 28+ writes its DROP rules there.
+    # DEBUG_INFO_NONE, DEBUG_INFO_COMPRESSED_NONE, BRANCH_PROFILE_NONE and
+    # DEBUG_FS_ALLOW_NONE are the disabled members of their Kconfig choices;
+    # disabling them fails strict mode whenever their parent stays enabled.
     discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing|developer use only|debugging only|only be enabled for testing|intended for testing|testing purposes|test only|not suitable for production|not for use in production|not in production kernels|not be enabled in production|do not use (it )?on production|do not enable on production|production (systems?|kernels?|builds?))" \
-        | awk '$0 != "PROC_MEM_FORCE_PTRACE" && $0 != "IPV6_IOAM6_LWTUNNEL" && $0 != "IP_NF_RAW" && $0 != "IP6_NF_RAW"'
+        | awk '$0 != "PROC_MEM_FORCE_PTRACE" && $0 != "IPV6_IOAM6_LWTUNNEL" && $0 != "IP_NF_RAW" && $0 != "IP6_NF_RAW" && $0 != "DEBUG_INFO_NONE" && $0 != "DEBUG_INFO_COMPRESSED_NONE" && $0 != "BRANCH_PROFILE_NONE" && $0 != "DEBUG_FS_ALLOW_NONE"'
 }
 
 discover_hardening_kconfig_symbols() {
@@ -1679,7 +1682,9 @@ discover_dangerous_kconfig_symbols() {
 }
 
 discover_coverage_kconfig_symbols() {
-    discover_kconfig_symbols_by_pattern "(gcov|coverage|kernel profiling|code profiling|function profiler|branch profil|profile guided optimi[sz]ation|profile all if conditionals|likely/unlikely profiler)"
+    # BRANCH_PROFILE_NONE is the disabled member of the Branch Profiling choice.
+    discover_kconfig_symbols_by_pattern "(gcov|coverage|kernel profiling|code profiling|function profiler|branch profil|profile guided optimi[sz]ation|profile all if conditionals|likely/unlikely profiler)" \
+        | awk '$0 != "BRANCH_PROFILE_NONE"'
 }
 
 discover_fault_injection_kconfig_symbols() {
@@ -4112,8 +4117,8 @@ configure_optimization_profile() {
             # Kconfig gates them behind DEBUG_KERNEL. When the profile turns that
             # on, it keeps off what DEBUG_KERNEL would add by default (DEBUG_MISC,
             # X86_DEBUG_FPU, RCU_TRACE) and keeps DEBUG_INFO_NONE, the member of
-            # the debug-info choice it exposes (the debug prune matches its
-            # prompt). A baseline that already had DEBUG_KERNEL keeps its choices.
+            # the debug-info choice it exposes. A baseline that already had
+            # DEBUG_KERNEL keeps its choices.
             # The hard-lockup detector is left alone; it takes a PMU counter per CPU.
             if have_symbol SOFTLOCKUP_DETECTOR; then
                 local -a lockup_syms=(DEBUG_KERNEL LOCKUP_DETECTOR SOFTLOCKUP_DETECTOR DETECT_HUNG_TASK DETECT_HUNG_TASK_BLOCKER)
@@ -5581,7 +5586,13 @@ if is_enabled "$PRUNE_COVERAGE"; then
         GCOV_KERNEL \
         GCOV_PROFILE_ALL
 
-    enable_if_present BRANCH_PROFILE_NONE
+    # Branch Profiling lives inside `if FTRACE`; selecting BRANCH_PROFILE_NONE
+    # when FTRACE is off causes olddefconfig to drop it and fail strict mode.
+    if is_symbol_enabled_now FTRACE \
+        && ! { is_protected_config_symbol PROFILE_ANNOTATED_BRANCHES && is_symbol_enabled_now PROFILE_ANNOTATED_BRANCHES; } \
+        && ! { is_protected_config_symbol PROFILE_ALL_BRANCHES && is_symbol_enabled_now PROFILE_ALL_BRANCHES; }; then
+        select_if_present BRANCH_PROFILE_NONE PROFILE_ANNOTATED_BRANCHES PROFILE_ALL_BRANCHES
+    fi
 fi
 
 if is_enabled "$PRUNE_FAULT_INJECTION"; then
@@ -5674,7 +5685,12 @@ if is_enabled "$PRUNE_OBSERVABILITY"; then
         TRACING \
         UPROBE_EVENTS
 
-    enable_if_present BRANCH_PROFILE_NONE
+    # Only select BRANCH_PROFILE_NONE when FTRACE remains enabled (e.g. protected).
+    if is_symbol_enabled_now FTRACE \
+        && ! { is_protected_config_symbol PROFILE_ANNOTATED_BRANCHES && is_symbol_enabled_now PROFILE_ANNOTATED_BRANCHES; } \
+        && ! { is_protected_config_symbol PROFILE_ALL_BRANCHES && is_symbol_enabled_now PROFILE_ALL_BRANCHES; }; then
+        select_if_present BRANCH_PROFILE_NONE PROFILE_ANNOTATED_BRANCHES PROFILE_ALL_BRANCHES
+    fi
 fi
 
 if is_enabled "$PRUNE_LEGACY"; then
@@ -5716,13 +5732,6 @@ if is_enabled "$PRUNE_LEGACY"; then
     fi
 fi
 
-# extra: debug info choice — only when actively pruning debug/coverage symbols
-if is_enabled "$PRUNE_DEBUG_TRACE" || is_enabled "$PRUNE_COVERAGE"; then
-    if have_symbol DEBUG_INFO_NONE; then
-        echo "Selecting: CONFIG_DEBUG_INFO_NONE"
-        enable_config_symbol DEBUG_INFO_NONE
-    fi
-fi
 # optional: BPF/observability
 if is_enabled "$PRUNE_BPF"; then
     echo
@@ -5802,6 +5811,19 @@ if is_enabled "$PRUNE_DEBUG_TRACE"; then
         ZRAM_MEMORY_TRACKING \
         SOFTLOCKUP_DETECTOR \
         ZSMALLOC_STAT
+fi
+
+# Debug information choice depends on DEBUG_KERNEL. Run after PRUNE_DEBUG_TRACE
+# so it only selects DEBUG_INFO_NONE when DEBUG_KERNEL remains enabled (e.g.
+# selected by EXPERT, protected, or only pruning coverage).
+if is_enabled "$PRUNE_DEBUG_TRACE" || is_enabled "$PRUNE_COVERAGE"; then
+    if have_symbol DEBUG_INFO_NONE && is_symbol_enabled_now DEBUG_KERNEL \
+        && ! { is_protected_config_symbol DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT && is_symbol_enabled_now DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT; } \
+        && ! { is_protected_config_symbol DEBUG_INFO_DWARF4 && is_symbol_enabled_now DEBUG_INFO_DWARF4; } \
+        && ! { is_protected_config_symbol DEBUG_INFO_DWARF5 && is_symbol_enabled_now DEBUG_INFO_DWARF5; }; then
+        echo "Selecting: CONFIG_DEBUG_INFO_NONE"
+        select_if_present DEBUG_INFO_NONE DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT DEBUG_INFO_DWARF4 DEBUG_INFO_DWARF5
+    fi
 fi
 
 if is_enabled "$PRUNE_RUNTIME_VERIFICATION" || is_enabled "$PRUNE_OBSERVABILITY" || is_enabled "$PRUNE_DEBUG_TRACE"; then
