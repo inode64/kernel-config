@@ -6078,6 +6078,13 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
             enable_if_present X86_AMD_PSTATE
         else
             enable_if_present X86_INTEL_PSTATE
+            # drivers/idle/Kconfig: intel_idle uses native Intel C-state tables
+            # (lower wakeup latency and deeper package C-states than acpi_idle,
+            # falling back to acpi_idle on unsupported CPUs).
+            if [[ "${_EXPLICIT_SYMBOL_VALUES[INTEL_IDLE]:-}" != n ]] \
+                && kconfig_depends_met INTEL_IDLE; then
+                enable_if_present INTEL_IDLE
+            fi
         fi
         # acpi-cpufreq is the fallback when the pstate driver refuses to load
         # (no CPPC/HWP, firmware settings): without it the host has no cpufreq

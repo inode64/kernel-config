@@ -148,7 +148,15 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--host-type=baremetal", "--applications=qemu,firewalld"))
         self.assert_values(KVM_AMD="m", VHOST_NET="m", VHOST_VSOCK="y", VHOST="y",
                            VHOST_IOTLB="y", NF_TABLES="m", NFT_NAT="m",
-                           X86_AMD_PSTATE="y", X86_ACPI_CPUFREQ="y")
+                           X86_AMD_PSTATE="y", X86_ACPI_CPUFREQ="y", INTEL_IDLE="n")
+
+    def test_real_intel_cpu_vendor_filter_enables_intel_idle(self):
+        self.prepare_baseline(CPU_IDLE="y", INTEL_IDLE="n", X86_ACPI_CPUFREQ="n")
+        self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=intel"))
+        self.assert_values(X86_INTEL_PSTATE="y", X86_ACPI_CPUFREQ="y", INTEL_IDLE="y")
+        self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=intel",
+                                            "--disable-symbols=INTEL_IDLE"))
+        self.assert_values(INTEL_IDLE="n")
 
     def assert_enabled(self, *symbols):
         config = dict(re.findall(r"^CONFIG_(\w+)=(.*)$", self.config.read_text(), re.M))

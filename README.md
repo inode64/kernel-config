@@ -379,7 +379,7 @@ These options change kernel build configuration and defaults. They do not create
 ### Platform and hardware filters
 
 - `CPU_VENDOR_FILTER=none|auto|amd|intel`
-  On x86, prunes options specific to the other CPU vendor, including the other vendor's cpufreq driver from `drivers/cpufreq/Kconfig.x86`, and enables the matching one (`X86_AMD_PSTATE` or `X86_INTEL_PSTATE`), plus `X86_ACPI_CPUFREQ` as its fallback: when the pstate driver refuses to load (no CPPC or HWP, firmware settings) the host would otherwise run without any cpufreq driver. acpi-cpufreq is a `late_initcall`, so the pstate driver still binds first.
+  On x86, prunes options specific to the other CPU vendor, including the other vendor's cpufreq driver from `drivers/cpufreq/Kconfig.x86`, and enables the matching one (`X86_AMD_PSTATE` or `X86_INTEL_PSTATE`), plus `X86_ACPI_CPUFREQ` as its fallback: when the pstate driver refuses to load (no CPPC or HWP, firmware settings) the host would otherwise run without any cpufreq driver. acpi-cpufreq is a `late_initcall`, so the pstate driver still binds first. When targeting Intel with `CPU_IDLE` and `CPU_SUP_INTEL` enabled, it also enables `INTEL_IDLE` (native MWAIT/C-state driver with `acpi_idle` fallback), matching the symmetric pruning that `amd` already performs.
   A symbol counts as vendor-specific only when every top-level `||` alternative of its `depends on` needs that vendor, so shared mitigations such as `MITIGATION_RETBLEED` (Intel and AMD Zen 1/2) are kept.
   `CPU_SUP_INTEL`/`CPU_SUP_AMD` are only user-visible under `PROCESSOR_SELECT`, which needs `CONFIG_EXPERT=y`; when `EXPERT` is off they and the other vendor's pstate driver are left untouched (Kconfig would force them back anyway).
 

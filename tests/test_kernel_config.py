@@ -1652,6 +1652,48 @@ config HID_LED
         self.assert_symbol("HALTPOLL_CPUIDLE", "n")
         self.assert_symbol("CPU_IDLE_GOV_HALTPOLL", "n")
 
+    def test_intel_cpu_vendor_filter_enables_intel_idle_when_deps_met(self):
+        self.add_kconfig('''
+            config X86
+            \tbool
+            config CPU_IDLE
+            \tbool "CPU idle PM support"
+            config CPU_SUP_INTEL
+            \tbool "Support Intel processors"
+            config X86_INTEL_PSTATE
+            \tbool "Intel P state control"
+            config X86_ACPI_CPUFREQ
+            \ttristate "ACPI Processor P-States driver"
+        ''')
+        self.add_kconfig('''
+            config INTEL_IDLE
+            \tbool "Cpuidle Driver for Intel Processors"
+            \tdepends on CPU_IDLE
+            \tdepends on X86
+            \tdepends on CPU_SUP_INTEL
+        ''', path="drivers/idle/Kconfig")
+        self.set_baseline_symbols(
+            X86="y", CPU_IDLE="y", CPU_SUP_INTEL="y",
+            X86_INTEL_PSTATE="n", X86_ACPI_CPUFREQ="n", INTEL_IDLE="n",
+        )
+        self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=intel"))
+        self.assert_symbol("X86_INTEL_PSTATE", "y")
+        self.assert_symbol("X86_ACPI_CPUFREQ", "y")
+        self.assert_symbol("INTEL_IDLE", "y")
+        # Respects explicit opt-out and missing CPU_IDLE.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script(
+            "--strict", "--cpu-vendor-filter=intel", "--disable-symbols=INTEL_IDLE",
+        ))
+        self.assert_symbol("INTEL_IDLE", "n")
+        self.set_baseline_symbols(CPU_IDLE="n", INTEL_IDLE="n")
+        self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=intel"))
+        self.assert_symbol("INTEL_IDLE", "n")
+        # AMD filter prunes INTEL_IDLE.
+        self.set_baseline_symbols(CPU_IDLE="y", INTEL_IDLE="y")
+        self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=amd"))
+        self.assert_symbol("INTEL_IDLE", "n")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
