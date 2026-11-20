@@ -901,8 +901,9 @@ removed later, annotated in the script with the removal version:
 | `HYPERV_IOMMU` | 7.0 | built unconditionally with `HYPERV` |
 | `RANDOM_KMALLOC_CACHES` | 7.0 | `KMALLOC_PARTITION_CACHES` / `_RANDOM` / `_TYPED` |
 
-Symbols the script uses that only exist in newer trees (`X86_NATIVE_CPU` 6.16+,
-`PERSISTENT_HUGE_ZERO_FOLIO` 6.18+, `RSEQ_SLICE_EXTENSION` 7.0+, `SCHED_CACHE`,
+Symbols the script uses that only exist in newer trees (`NO_PAGE_MAPCOUNT` and
+`DETECT_HUNG_TASK_BLOCKER` 6.15+, `X86_NATIVE_CPU` 6.16+, `NETFILTER_XTABLES_LEGACY`
+6.17+, `PERSISTENT_HUGE_ZERO_FOLIO` 6.18+, `RSEQ_SLICE_EXTENSION` 7.0+, `SCHED_CACHE`,
 `NUMA_MIGRATION` and `KMALLOC_PARTITION_*` 7.2+) are no-ops on older kernels.
 
 ### HugeTLB vmemmap optimization before 7.2
