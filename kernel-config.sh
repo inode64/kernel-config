@@ -4199,7 +4199,7 @@ configure_host_type_profile() {
     )
     # Synthetic video: DRM_HYPERV replaces FB_HYPERV, which Kconfig marks as
     # deprecated (so PRUNE_LEGACY disables it) but is the only console driver
-    # when the baseline has no DRM.
+    # when the baseline has no DRM. FB_HYPERV removed in 7.0: DRM_HYPERV only.
     local -a hyperv_video_syms=(
         DRM_HYPERV
         FB_HYPERV

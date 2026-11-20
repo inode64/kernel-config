@@ -902,6 +902,7 @@ removed later, annotated in the script with the removal version:
 | `CRYPTO_CURVE25519` | 6.17 | `CRYPTO_LIB_CURVE25519`, promptless and selected by `WIREGUARD` |
 | `NFS_V4_1` | 6.19 | folded into `NFS_V4`; `NFS_V4_2` remains |
 | `ATALK`, `CAIF`, `HAMRADIO`, `NF_CT_PROTO_UDPLITE`, `X86_RDC321X` | 7.0 | none (subsystems removed) |
+| `FB_HYPERV` | 6.19 | `DRM_HYPERV` (the `hyperv` host type keeps whichever exists) |
 | `HYPERV_IOMMU` | 7.0 | built unconditionally with `HYPERV` |
 | `RANDOM_KMALLOC_CACHES` | 7.0 | `KMALLOC_PARTITION_CACHES` / `_RANDOM` / `_TYPED` |
 | `HAVE_PREEMPT_DYNAMIC` | 7.3 | `ARCH_HAS_PREEMPT_LAZY` gates `PREEMPT_DYNAMIC` from 7.4 |
