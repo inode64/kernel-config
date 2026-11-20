@@ -956,7 +956,8 @@ config HID_LED
             \ttristate
         ''')
         self.add_symbols("OPENVSWITCH", "VXLAN", "WIREGUARD", kind="tristate")
-        self.set_baseline_symbols(NET_UDP_TUNNEL="m", VXLAN="m")
+        self.add_symbols("MODULES")
+        self.set_baseline_symbols(MODULES="y", NET_UDP_TUNNEL="m", VXLAN="m")
         result = self.run_script("--strict", "--applications=openvswitch,wireguard")
         self.assert_success(result)
         self.assertNotIn("CONFIG_NET_UDP_TUNNEL", result.stdout)

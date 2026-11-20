@@ -4999,12 +4999,15 @@ configure_application_profiles() {
                 fi
                 ;;
             openvswitch)
-                # NET_UDP_TUNNEL is a hidden tristate selected by VXLAN, GENEVE and
-                # WIREGUARD; pinning its old =m conflicts with a built-in consumer.
                 # OPENVSWITCH selects MPLS; request it so an earlier
                 # PRUNE_UNUSED_NET disable does not contradict the result.
-                for sym in OPENVSWITCH MPLS NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX; do
+                for sym in MPLS NF_CONNTRACK NETFILTER; do
                     append_unique_item "$sym" enable_syms
+                done
+                # The datapath and its tunnel drivers load on demand; with a
+                # modular NF_CONNTRACK, Kconfig caps OPENVSWITCH at =m.
+                for sym in OPENVSWITCH VXLAN GENEVE NET_IPGRE_DEMUX; do
+                    loadable_syms["$sym"]="$profile"
                 done
                 ;;
             ceph)
