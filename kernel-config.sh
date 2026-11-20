@@ -3803,12 +3803,15 @@ configure_optimization_profile() {
         server)
             echo "    (prioritizes throughput and low background overhead)"
 
+            # NO_PAGE_MAPCOUNT (6.15+) is still EXPERIMENTAL in 7.2; none of
+            # the distribution kernels compared enable it.
             disable_if_present \
                 CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
                 CPU_FREQ_DEFAULT_GOV_ONDEMAND \
                 CPU_FREQ_DEFAULT_GOV_POWERSAVE \
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
+                NO_PAGE_MAPCOUNT \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
 

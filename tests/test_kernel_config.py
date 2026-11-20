@@ -1061,6 +1061,17 @@ config HID_LED
         for symbol in recovery:
             self.assert_symbol(symbol, "n")
 
+    def test_server_profile_disables_experimental_no_page_mapcount(self):
+        self.add_symbols("NO_PAGE_MAPCOUNT")
+        self.set_baseline_symbols(NO_PAGE_MAPCOUNT="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
+        self.assert_symbol("NO_PAGE_MAPCOUNT", "y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("NO_PAGE_MAPCOUNT", "n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--enable-symbols=NO_PAGE_MAPCOUNT"))
+        self.assert_symbol("NO_PAGE_MAPCOUNT", "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

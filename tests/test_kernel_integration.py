@@ -200,6 +200,11 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assertIn("RAS_CEC needs DEBUG_FS", result.stdout)
         self.assert_values(MEMORY_FAILURE="y", ACPI_APEI_MEMORY_FAILURE="y", RAS_CEC="n", DEBUG_FS="n")
 
+    def test_real_server_profile_disables_no_page_mapcount(self):
+        self.prepare_baseline(TRANSPARENT_HUGEPAGE="y", NO_PAGE_MAPCOUNT="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(NO_PAGE_MAPCOUNT="n")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():
