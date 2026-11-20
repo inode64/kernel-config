@@ -1612,8 +1612,10 @@ discover_legacy_kconfig_symbols() {
     # DRM_AMD_DC_DCE (7.4+, "AMD DC support for legacy DCE ASICs") is the display
     # support of DCE 8-12 GPUs such as Polaris and Vega, unconditional before 7.4.
     # SYSFB_SIMPLEFB (deprecated in 7.4) goes through migrate_sysfb_simplefb.
+    # CEPH_FS_INLINE_DATA (7.4+, deprecated, default n) is only enabled for a
+    # filesystem that still holds inline data; without it those files read empty.
     discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))" \
-        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION" && $0 != "DRM_AMD_DC_DCE" && $0 != "SYSFB_SIMPLEFB"'
+        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION" && $0 != "DRM_AMD_DC_DCE" && $0 != "SYSFB_SIMPLEFB" && $0 != "CEPH_FS_INLINE_DATA"'
 }
 
 discover_debug_trace_kconfig_symbols() {
@@ -5063,6 +5065,12 @@ configure_application_profiles() {
                 for sym in CEPH_LIB CEPH_FS CRYPTO LIBCRC32C; do
                     append_unique_item "$sym" enable_syms
                 done
+                # 7.4 made inline data optional: without it the client takes every
+                # inode as having none, so a file whose data is still inline reads
+                # empty and is overwritten without being uninlined.
+                if have_symbol CEPH_FS_INLINE_DATA && ! is_symbol_enabled_now CEPH_FS_INLINE_DATA; then
+                    echo "    (CephFS: CEPH_FS_INLINE_DATA is off; check that \`ceph fs get <fs>\` shows inline_data disabled and uninline old files with an MDS scrub, or pass --enable-symbols=CEPH_FS_INLINE_DATA)"
+                fi
                 ;;
             nfs-client)
                 # NFS_V4_1 was folded into NFS_V4 in 7.0; NFS_V4_2 still exists.

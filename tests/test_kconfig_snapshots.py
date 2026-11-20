@@ -73,7 +73,8 @@ class SnapshotTests(unittest.TestCase):
                 else:
                     self.assertIn("NETFILTER_XT_MATCH_DCCP", legacy)
                 self.assertFalse({"NETFILTER_XT_TARGET_NFQUEUE", "NETFILTER_NETLINK_LOG", "TCM_USER2",
-                                  "DRM_AMD_DC", "DRM_AMD_DC_DCE", "SYSFB_SIMPLEFB", "SND_SOC_SOF_BAYTRAIL",
+                                  "DRM_AMD_DC", "DRM_AMD_DC_DCE", "SYSFB_SIMPLEFB", "CEPH_FS_INLINE_DATA",
+                                  "SND_SOC_SOF_BAYTRAIL",
                                   "CRYPTO_USER_API_HASH", "CRYPTO_USER_API_ENABLE_OBSOLETE",
                                   "COMPAT_VDSO"} & legacy)
 

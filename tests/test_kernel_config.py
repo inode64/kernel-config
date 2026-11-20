@@ -1189,6 +1189,24 @@ config HID_LED
         self.assert_symbol("SYSFB_SIMPLEFB", "n")
         self.assert_symbol("DRM_EFIDRM", "n")
 
+    def test_cephfs_inline_data_is_kept_and_its_absence_reported(self):
+        self.add_kconfig('''
+            config CEPH_FS_INLINE_DATA
+            \tbool "Enable CephFS inline data support (deprecated)"
+        ''')
+        self.add_symbols("CEPH_LIB", "CEPH_FS")
+        # A filesystem that still holds inline data needs it: legacy pruning keeps it.
+        self.set_baseline_symbols(CEPH_LIB="y", CEPH_FS="y", CEPH_FS_INLINE_DATA="y")
+        result = self.run_script("--strict", "--prune-legacy", "--applications=ceph")
+        self.assert_success(result)
+        self.assert_symbol("CEPH_FS_INLINE_DATA", "y")
+        self.assertNotIn("CEPH_FS_INLINE_DATA is off", result.stdout)
+        self.set_baseline_symbols(CEPH_FS_INLINE_DATA="n")
+        result = self.run_script("--strict", "--applications=ceph")
+        self.assert_success(result)
+        self.assertIn("CEPH_FS_INLINE_DATA is off", result.stdout)
+        self.assert_symbol("CEPH_FS_INLINE_DATA", "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",
