@@ -311,8 +311,9 @@ test_server_kvm_host_profile() {
     local output="$TEST_TMP/server-kvm.out"
     create_fixture "$tree"
     # Symbols the server profile touches that the shared fixture lacks.
-    printf 'CONFIG_MAGIC_SYSRQ=y\nCONFIG_RCU_NOCB_CPU_DEFAULT_ALL=y\nCONFIG_MODULES=y\nCONFIG_MODULE_FORCE_LOAD=y\nCONFIG_MODULE_FORCE_UNLOAD=y\nCONFIG_KERNEL_GZIP=y\n# CONFIG_KERNEL_ZSTD is not set\n' >>"$tree/.config"
-    for sym in MAGIC_SYSRQ RCU_NOCB_CPU_DEFAULT_ALL MODULES MODULE_FORCE_LOAD MODULE_FORCE_UNLOAD KERNEL_GZIP KERNEL_ZSTD; do
+    # MAGIC_SYSRQ off and RCU_NOCB_CPU_DEFAULT_ALL on: a baseline left by an older run.
+    printf '# CONFIG_MAGIC_SYSRQ is not set\nCONFIG_MAGIC_SYSRQ_SERIAL=y\nCONFIG_RCU_NOCB_CPU_DEFAULT_ALL=y\nCONFIG_MODULES=y\nCONFIG_MODULE_FORCE_LOAD=y\nCONFIG_MODULE_FORCE_UNLOAD=y\nCONFIG_KERNEL_GZIP=y\n# CONFIG_KERNEL_ZSTD is not set\n' >>"$tree/.config"
+    for sym in MAGIC_SYSRQ MAGIC_SYSRQ_SERIAL RCU_NOCB_CPU_DEFAULT_ALL MODULES MODULE_FORCE_LOAD MODULE_FORCE_UNLOAD KERNEL_GZIP KERNEL_ZSTD; do
         printf 'config %s\n    bool "%s"\n' "$sym" "$sym" >>"$tree/Kconfig"
     done
 
@@ -330,9 +331,9 @@ test_server_kvm_host_profile() {
     assert_contains "$output" "CONFIG_HZ_100: n -> y"
     assert_contains "$output" "CONFIG_KERNEL_ZSTD: n -> y"
     assert_contains "$output" "CONFIG_MODULE_FORCE_LOAD: y -> n"
-    assert_contains "$output" "Skipping protected symbol: CONFIG_MAGIC_SYSRQ"
-    if grep -Fq 'CONFIG_MAGIC_SYSRQ:' "$output"; then fail "the KVM server profile must keep MAGIC_SYSRQ"; fi
-    if grep -Fq 'CONFIG_RCU_NOCB_CPU_DEFAULT_ALL:' "$output"; then fail "the KVM server profile must not touch RCU_NOCB_CPU_DEFAULT_ALL"; fi
+    assert_contains "$output" "CONFIG_MAGIC_SYSRQ: n -> y"
+    assert_contains "$output" "CONFIG_MAGIC_SYSRQ_SERIAL: y -> n"
+    assert_contains "$output" "CONFIG_RCU_NOCB_CPU_DEFAULT_ALL: y -> n"
 }
 
 test_native_cpu() {

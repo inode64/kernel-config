@@ -529,9 +529,15 @@ type, the hardware filters in `auto` mode and the pruning that is safe on any
 production server (selftests, sanitizers, coverage, fault injection, dangerous
 options, radios). It also defaults to a **strict dry run** and accepts trailing
 overrides. Run it on the target host so the `auto` detections see the real CPU,
-firmware, NUMA and DMA engines. It protects `MAGIC_SYSRQ` (kept for console
-emergencies) and `RCU_NOCB_CPU_DEFAULT_ALL` (the server profile would offload RCU
-callbacks on every CPU when the baseline has `NO_HZ_FULL`).
+firmware, NUMA and DMA engines. It enables `MAGIC_SYSRQ` (kept for console
+emergencies, with `MAGIC_SYSRQ_SERIAL` off) and disables
+`RCU_NOCB_CPU_DEFAULT_ALL` (the server profile would offload RCU callbacks on
+every CPU, a cost on a VM host that never sets `nohz_full=`). Both are set
+explicitly rather than protected, so a baseline left by an earlier run, where
+the pruning had already removed SysRq or the server profile had already turned
+the offload on, converges to the same result. A trailing `--enable-symbols` or
+`--disable-symbols` replaces these lists; repeat their entries when passing
+your own.
 
 ```bash
 ./profiles/server-kvm-host.sh /usr/src/linux

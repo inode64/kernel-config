@@ -13,10 +13,13 @@
 # and `--initrd-compression=auto` on hosts with an installed initramfs generator
 # (it errors when no generator or image can be inspected).
 #
-# Protected on purpose: the server profile enables RCU_NOCB_CPU_DEFAULT_ALL with
-# NO_HZ_FULL, which offloads RCU callbacks on every CPU (a cost on a VM host that
-# never sets nohz_full=), and the dangerous/insecure pruning removes MAGIC_SYSRQ,
-# which a remote server should keep for emergencies over the console.
+# Set explicitly, so a baseline left by an earlier run converges too: the server
+# profile enables RCU_NOCB_CPU_DEFAULT_ALL, which offloads RCU callbacks on every
+# CPU (a cost on a VM host that never sets nohz_full=), and the dangerous/insecure
+# pruning removes MAGIC_SYSRQ, which a remote server should keep for emergencies
+# over the console (MAGIC_SYSRQ_SERIAL stays off). Protecting them instead would
+# keep whatever the baseline had. A trailing --enable-symbols or --disable-symbols
+# replaces these lists, so repeat their entries when passing your own.
 set -Eeuo pipefail
 project_dir="$(dirname -- "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")")"
 
@@ -30,5 +33,6 @@ exec "$project_dir/kernel-config.sh" \
     --prune-selftest --prune-sanitizers --prune-coverage \
     --prune-fault-injection --prune-dangerous --prune-radios \
     --module-force-load=off --module-force-unload=off \
-    --protected-config-symbols=CONFIG_MAGIC_SYSRQ,CONFIG_RCU_NOCB_CPU_DEFAULT_ALL \
+    --enable-symbols=MAGIC_SYSRQ \
+    --disable-symbols=MAGIC_SYSRQ_SERIAL,RCU_NOCB_CPU_DEFAULT_ALL \
     "$@"
