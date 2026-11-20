@@ -1521,6 +1521,44 @@ config HID_LED
         self.assert_symbol("RPS", "n")
         self.assert_symbol("RFS_ACCEL", "n")
 
+    def test_x86_x2apic_follows_iommu_and_guest_prerequisites(self):
+        self.add_kconfig('''
+            config X86
+            \tbool
+            config X86_64
+            \tbool
+            config X86_LOCAL_APIC
+            \tbool
+            config IOMMU_SUPPORT
+            \tbool "IOMMU Hardware Support"
+            config IRQ_REMAP
+            \tbool "Support for Interrupt Remapping"
+            config HYPERVISOR_GUEST
+            \tbool "Linux guest support"
+            config PARAVIRT
+            \tbool "Enable paravirtualization code"
+            config KVM_GUEST
+            \tbool "KVM Guest support"
+            config X86_X2APIC
+            \tbool "x2APIC interrupt controller architecture support"
+            \tdepends on X86_LOCAL_APIC && X86_64 && (IRQ_REMAP || HYPERVISOR_GUEST)
+        ''')
+        # Bare-metal with IOMMU+IRQ_REMAP enables X86_X2APIC under a profile.
+        self.set_baseline_symbols(X86="y", X86_64="y", X86_LOCAL_APIC="y",
+                                  IOMMU_SUPPORT="y", IRQ_REMAP="y",
+                                  HYPERVISOR_GUEST="n", X86_X2APIC="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("X86_X2APIC", "y")
+        # Turning off IOMMU on bare metal must not request X86_X2APIC.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--host-type=baremetal", "--iommu-support=off"))
+        self.assert_symbol("X86_X2APIC", "n")
+        # A KVM guest enables X86_X2APIC via HYPERVISOR_GUEST even with IOMMU off.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--host-type=qemu", "--iommu-support=off"))
+        self.assert_symbol("X86_X2APIC", "y")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",

@@ -451,6 +451,21 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(PCPU_DEV_REFCNT="y", BQL="y", RPS="y", RFS_ACCEL="y")
 
+    def test_real_x86_x2apic_respects_iommu_and_baremetal_or_guest(self):
+        self.prepare_baseline(IOMMU_SUPPORT="y", IRQ_REMAP="y", X86_X2APIC="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(X86_X2APIC="y")
+        self.config.write_bytes(self.original)
+        self.prepare_baseline(IOMMU_SUPPORT="y", IRQ_REMAP="y", X86_X2APIC="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--host-type=baremetal", "--iommu-support=off"))
+        self.assert_values(IOMMU_SUPPORT="n", X86_X2APIC="n")
+        self.config.write_bytes(self.original)
+        self.prepare_baseline(HYPERVISOR_GUEST="y", X86_X2APIC="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--iommu-support=off"))
+        self.assert_values(HYPERVISOR_GUEST="y", IOMMU_SUPPORT="n", X86_X2APIC="y")
+
     def test_real_profile_selects_crc32_slice_by_8(self):
         kconfig = self.tree / "lib/Kconfig"
         if not kconfig.is_file() or "config CRC32_SLICEBY8" not in kconfig.read_text():

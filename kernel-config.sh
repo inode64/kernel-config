@@ -4017,6 +4017,23 @@ configure_network_scaling() {
     fi
 }
 
+configure_x86_x2apic() {
+    # arch/x86/Kconfig: x2APIC replaces uncached MMIO local-APIC accesses (and
+    # VM-exiting MMIO traps in guests) with faster MSR accesses, falling back to
+    # xAPIC on hardware without x2APIC. Linux 6.12 had no default y, so configs
+    # migrated from older trees keep it off even when IRQ_REMAP or
+    # HYPERVISOR_GUEST is enabled. IRQ_REMAP lives inside `if IOMMU_SUPPORT`, so
+    # --iommu-support=off drops it during final olddefconfig.
+    [[ "${_EXPLICIT_SYMBOL_VALUES[X86_X2APIC]:-}" != n ]] || return 0
+    kconfig_depends_met X86_X2APIC || return 0
+    if ! is_symbol_enabled_now HYPERVISOR_GUEST; then
+        if have_symbol IOMMU_SUPPORT && ! is_symbol_enabled_now IOMMU_SUPPORT; then
+            return 0
+        fi
+    fi
+    enable_if_present X86_X2APIC
+}
+
 configure_optimization_profile() {
     local profile="$1"
 
@@ -6090,6 +6107,11 @@ fi
 
 if [[ "$HOST_TYPE_EFFECTIVE" != "none" ]]; then
     configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+fi
+
+if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" != "none" ]] \
+    || [[ "$HOST_TYPE_EFFECTIVE" =~ ^(qemu|vmware|hyperv|virtualbox)$ ]]; then
+    configure_x86_x2apic
 fi
 
 if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == "auto" ]]; then
