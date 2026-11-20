@@ -556,6 +556,35 @@ initramfs compatibility report tells whether the installed generator still
 produces something the kernel can unpack. Pass `--kernel-compression=keep` after
 the profile to leave the image format alone.
 
+### One config for identical hosts
+
+Hosts that share hardware and role drift apart when each kernel is configured
+on its own: same-model servers configured months apart can end up with
+different timer rates, preemption models, compression and SysRq settings. To
+converge them on one config:
+
+1. Collect each running config (`/proc/config.gz`) and normalize every copy on
+   the same target tree with `make KCONFIG_CONFIG=<copy> olddefconfig`.
+   Differences caused only by kernel versions disappear; the rest are real
+   choices. Do it in a writable copy of the tree: `cc-option` probes fail in a
+   root-owned one. A 6.16-or-older baseline loses the legacy iptables tables
+   on 6.17+ (`NETFILTER_XTABLES_LEGACY=n`), so compare `iptables -V` on every
+   host first.
+2. Start from the baseline that is already closest to the target and run the
+   profile with explicit values instead of `auto`: `--cpu-vendor-filter`,
+   `--uefi-support`, `--tpm-support`, `--iommu-support`, `--numa-support`,
+   `--dma-engine-support`, and `--nr-cpus` of the largest host.
+3. Pass the union of the hosts' applications, and keep each host's own
+   hardware with `--enable-symbols` or `--module-symbols`, for example a SAS
+   HBA or XFS quotas that only one host uses.
+4. Use `--native-cpu=on` only when every host has the same CPU generation and
+   the kernel is built on one of them.
+5. Check the result against the modules each host has loaded (`lsmod`). Before
+   installing, check every host's initramfs generator and compression: a
+   zstd-only kernel does not boot from the XZ image that an unconfigured
+   genkernel or ugrd still produces. With the new config in place,
+   `kernel-config.sh --check --strict` on each host reports it.
+
 ### Hardware as a regression reference
 
 Real desktops provide test cases for the general-purpose tool. Findings from
