@@ -85,7 +85,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
-#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python
+#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python, rasdaemon
 #   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
 #   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
@@ -2359,7 +2359,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | iptables-legacy | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | python)
+            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | iptables-legacy | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | python | rasdaemon)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -2368,7 +2368,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python" >&2
+                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python, rasdaemon" >&2
                 exit 1
                 ;;
         esac
@@ -3399,6 +3399,24 @@ disable_discovered_and_fixed_symbols() {
     if ((${#enable_inverse_syms[@]} > 0)); then
         enable_if_present "${enable_inverse_syms[@]}"
     fi
+}
+
+# A parent enabled after pruning (FTRACE for rasdaemon) brings back children
+# that the hidden-parent olddefconfig dropped from the file, at their Kconfig
+# default (UPROBE_EVENTS=y). Disable again what was already requested off,
+# except the symbols the caller is about to request.
+reassert_disable_requests() {
+    local sym
+    local -A wanted=()
+    for sym in "$@"; do
+        wanted["$sym"]=1
+    done
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    for sym in "${!_REQUESTED_VALUES[@]}"; do
+        [[ "${_REQUESTED_VALUES[$sym]}" == n && ! -v wanted[$sym] ]] || continue
+        [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" == n ]] && continue
+        disable_config_symbol "$sym"
+    done
 }
 
 # Fixed prune lists keep what an enabled feature selects: olddefconfig would
@@ -5047,6 +5065,24 @@ configure_application_profiles() {
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
+            rasdaemon)
+                # rasdaemon records memory (EDAC), PCIe AER and machine-check
+                # errors from tracefs events (ras:*, mce:mce_record), so it needs
+                # TRACING even when the observability prune drops the tracers:
+                # FTRACE plus ENABLE_DEFAULT_TRACERS provide the events without
+                # the function tracer. Its page offlining needs MEMORY_FAILURE.
+                # BRANCH_PROFILE_NONE is the default of the branch-profiling choice
+                # FTRACE exposes; the coverage prune may have requested it off.
+                for sym in RAS EDAC ACPI_APEI ACPI_APEI_GHES PCIEPORTBUS PCIEAER FTRACE ENABLE_DEFAULT_TRACERS TRACING TRACEPOINTS EVENT_TRACING BRANCH_PROFILE_NONE; do
+                    append_unique_item "$sym" enable_syms
+                done
+                if is_x86_config; then
+                    append_unique_item X86_MCE enable_syms
+                fi
+                if [[ "${_SYMBOL_VALUE_CACHE[ARCH_SUPPORTS_MEMORY_FAILURE]:-n}" == y ]]; then
+                    append_unique_item MEMORY_FAILURE enable_syms
+                fi
+                ;;
             python)
                 # The options dev-lang/python checks (PYTHON_KERNEL_CHECKS).
                 # Without CROSS_MEMORY_ATTACH, process_vm_readv/writev return
@@ -5064,6 +5100,7 @@ configure_application_profiles() {
 
     if ((${#enable_syms[@]} > 0)); then
         enable_parents_if_present "${enable_syms[@]}"
+        reassert_disable_requests "${enable_syms[@]}" "${!loadable_syms[@]}"
         if ((${#available_syms[@]} > 0)); then
             # Keep already modular hotplug/GPU drivers modular. Refresh after
             # making their parents available, then reapply child capabilities.

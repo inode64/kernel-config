@@ -1081,6 +1081,19 @@ config HID_LED
                                             "--enable-symbols=RT_GROUP_SCHED"))
         self.assert_symbol("RT_GROUP_SCHED", "y")
 
+    def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
+        wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
+                  "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
+                  "MEMORY_FAILURE")
+        self.add_symbols("X86", "ARCH_SUPPORTS_MEMORY_FAILURE", "FUNCTION_TRACER", *wanted)
+        self.set_baseline_symbols(X86="y", ARCH_SUPPORTS_MEMORY_FAILURE="y", FUNCTION_TRACER="y",
+                                  **dict.fromkeys(wanted, "n"))
+        self.assert_success(self.run_script("--strict", "--prune-observability",
+                                            "--applications=rasdaemon"))
+        for symbol in wanted:
+            self.assert_symbol(symbol, "y")
+        self.assert_symbol("FUNCTION_TRACER", "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

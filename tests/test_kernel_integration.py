@@ -210,6 +210,20 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(RT_GROUP_SCHED="n", CGROUP_SCHED="y", FAIR_GROUP_SCHED="y")
 
+    def test_real_rasdaemon_keeps_trace_events_under_all_optimizations(self):
+        # The pruned tracers come back at their default (y) once FTRACE returns,
+        # unless the earlier disable requests are applied again. TCP_CONG_ADVANCED=n
+        # makes the server profile refresh the config while FTRACE is still off,
+        # which drops their "is not set" lines.
+        self.prepare_baseline(MEMORY_FAILURE="n", PCIEAER="n", FTRACE="y", UPROBE_EVENTS="y",
+                              EPROBE_EVENTS="y", TCP_CONG_ADVANCED="n")
+        self.assert_success(self.run_script("--strict", "--all-optimizations", "--applications=rasdaemon"))
+        self.assert_values(TRACING="y", EVENT_TRACING="y", FTRACE="y", ENABLE_DEFAULT_TRACERS="y",
+                           FUNCTION_TRACER="n", DYNAMIC_FTRACE="n", KPROBES="n", DEBUG_FS="n",
+                           UPROBE_EVENTS="n", EPROBE_EVENTS="n",
+                           RAS="y", PCIEAER="y", ACPI_APEI_GHES="y", MEMORY_FAILURE="y", X86_MCE="y")
+        self.assert_enabled("EDAC")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():

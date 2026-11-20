@@ -431,7 +431,7 @@ These options change kernel build configuration and defaults. They do not create
   Enables kernel features commonly required by selected applications.
 
   Supported profiles:
-  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `iptables-legacy`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `python`
+  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `iptables-legacy`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `python`, `rasdaemon`
 
   - `desktop`: GNOME/Wayland interfaces, browser namespaces/seccomp, IDE file
     notifications, FUSE portals, input/HID and DRM synchronization. This enables
@@ -467,6 +467,15 @@ These options change kernel build configuration and defaults. They do not create
     "Source compiled." with an access violation on `/proc/<pid>/mem`.
     `DNOTIFY` only enables `test_fcntl`. Both default to `y` upstream and cost
     nothing until a program calls them.
+
+  - `rasdaemon`: rasdaemon records EDAC memory errors, PCIe AER and machine
+    checks from tracefs events (`ras:*`, `mce:mce_record`), so it needs
+    `TRACING` even when `--all-optimizations` prunes the tracers. The profile
+    requests `FTRACE` with `ENABLE_DEFAULT_TRACERS`, which provide the events
+    without the function tracer, kprobes or debugfs, plus `RAS`, `EDAC`,
+    `ACPI_APEI_GHES`, `PCIEAER`, `X86_MCE` and `MEMORY_FAILURE` for page
+    offlining. The vendor EDAC driver (`EDAC_AMD64`, `EDAC_IE31200`...)
+    comes from `--platform-drivers=auto`.
 
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy
@@ -936,6 +945,7 @@ longer saves about 28 KiB of `struct page` memory per 2 MB HugeTLB page.
 - Profiles preserve symbols that the baseline builds as modules (`=m`), including drivers that load firmware from the root filesystem (`amdgpu`, `iwlwifi`). Explicit built-in requests such as `--enable-symbols` or `--zram=builtin` take precedence.
 - The `firehol` and `iptables-legacy` profiles keep the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable; `firehol` adds the xtables targets and matches its generated rules use. `NETFILTER_XTABLES_LEGACY` depends on `!PREEMPT_RT`, so the legacy backend is unavailable on RT kernels.
 - When a profile enables a symbol that was off in the baseline (for example `ZSWAP` or `LRU_GEN`), the script runs an intermediate `make olddefconfig` so the symbols that depend on it become visible and can be configured in the same run.
+- An application profile that turns a pruned parent back on (`FTRACE` for `rasdaemon`) applies the earlier disable requests again to the children that reappear at their Kconfig default, such as `UPROBE_EVENTS=y`; the symbols the profile requests itself are exempt.
 - `PROTECTED_CONFIG_SYMBOLS` blocks direct script edits. Changes caused by `make olddefconfig` are reported; `--strict` prevents saving them.
 - Symbol availability is checked against Kconfig definitions, including symbols absent from the baseline `.config`. The final Kconfig result remains authoritative for architecture, visibility, and dependencies. Kconfig metadata covers the common files, the generic `arch/Kconfig` and the `arch/<target>/` tree resolved from `ARCH` or `uname -m`; other architectures are excluded.
 - `PLATFORM_DRIVERS=auto` only sees hardware the running kernel exposes; a board whose BMC is disabled in firmware, or a kernel without ACPI, produces no IPMI evidence.
