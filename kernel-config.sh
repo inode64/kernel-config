@@ -3084,6 +3084,7 @@ configure_extended_controls() {
         forget_control_requests TRANSPARENT_HUGEPAGE
         forget_control_requests PERSISTENT_HUGE_ZERO_FOLIO
         forget_control_requests NUMA_BALANCING
+        forget_control_requests DETECT_HUNG_TASK_BLOCKER
         disable_if_present TRANSPARENT_HUGEPAGE NUMA_BALANCING
     fi
     case "$PREEMPT_DYNAMIC" in
@@ -3912,6 +3913,28 @@ configure_optimization_profile() {
                     elif have_symbol RAS_CEC; then
                         echo "    (RAS_CEC needs DEBUG_FS; rasdaemon can soft-offline pages with repeated corrected errors instead)"
                     fi
+                fi
+            fi
+
+            # Soft-lockup and hung-task reports ("task blocked for more than 120
+            # seconds", with the lock holder) are the main evidence of a storage,
+            # NFS or Ceph hang, for one hrtimer per CPU and one kernel thread.
+            # Kconfig gates them behind DEBUG_KERNEL. When the profile turns that
+            # on, it keeps off what DEBUG_KERNEL would add by default (DEBUG_MISC,
+            # X86_DEBUG_FPU, RCU_TRACE) and keeps DEBUG_INFO_NONE, the member of
+            # the debug-info choice it exposes (the debug prune matches its
+            # prompt). A baseline that already had DEBUG_KERNEL keeps its choices.
+            # The hard-lockup detector is left alone; it takes a PMU counter per CPU.
+            if have_symbol SOFTLOCKUP_DETECTOR; then
+                local -a lockup_syms=(DEBUG_KERNEL LOCKUP_DETECTOR SOFTLOCKUP_DETECTOR DETECT_HUNG_TASK DETECT_HUNG_TASK_BLOCKER)
+                local debug_kernel_was="${_SYMBOL_VALUE_CACHE[DEBUG_KERNEL]:-n}"
+                [[ "$debug_kernel_was" == y ]] || lockup_syms+=(DEBUG_INFO_NONE)
+                # The refresh brings back pruned children of the detectors at their
+                # default (SOFTLOCKUP_DETECTOR_INTR_STORM); apply those disables again.
+                enable_parents_if_present "${lockup_syms[@]}"
+                reassert_disable_requests "${lockup_syms[@]}"
+                if [[ "$debug_kernel_was" != y ]]; then
+                    disable_if_present DEBUG_MISC X86_DEBUG_FPU RCU_TRACE
                 fi
             fi
 

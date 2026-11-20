@@ -1094,6 +1094,31 @@ config HID_LED
             self.assert_symbol(symbol, "y")
         self.assert_symbol("FUNCTION_TRACER", "n")
 
+    def test_server_profile_keeps_lockup_and_hung_task_detection(self):
+        detectors = ("DEBUG_KERNEL", "LOCKUP_DETECTOR", "SOFTLOCKUP_DETECTOR", "DETECT_HUNG_TASK",
+                     "DETECT_HUNG_TASK_BLOCKER")
+        side_effects = ("DEBUG_MISC", "X86_DEBUG_FPU", "RCU_TRACE")
+        self.add_symbols(*detectors, *side_effects)
+        self.set_baseline_symbols(**dict.fromkeys(detectors, "n"), **dict.fromkeys(side_effects, "y"))
+        # The debug/trace prune lists every one of them; the server profile runs later.
+        self.assert_success(self.run_script("--strict", "--prune-debug-trace", "--optimization-profile=server"))
+        for symbol in detectors:
+            self.assert_symbol(symbol, "y")
+        for symbol in side_effects:
+            self.assert_symbol(symbol, "n")
+        self.assert_success(self.run_script("--strict", "--prune-debug-trace"))
+        for symbol in detectors[:4]:  # the fixed list; the blocker dump is found by menu in real trees
+            self.assert_symbol(symbol, "n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--disable-symbols=SOFTLOCKUP_DETECTOR,DETECT_HUNG_TASK"))
+        self.assert_symbol("SOFTLOCKUP_DETECTOR", "n")
+        self.assert_symbol("DETECT_HUNG_TASK", "n")
+        # A baseline that already debugs keeps its own debug choices.
+        self.set_baseline_symbols(DEBUG_KERNEL="y", DEBUG_MISC="y", SOFTLOCKUP_DETECTOR="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("SOFTLOCKUP_DETECTOR", "y")
+        self.assert_symbol("DEBUG_MISC", "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

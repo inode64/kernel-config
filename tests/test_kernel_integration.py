@@ -224,6 +224,16 @@ class KernelIntegrationTests(unittest.TestCase):
                            RAS="y", PCIEAER="y", ACPI_APEI_GHES="y", MEMORY_FAILURE="y", X86_MCE="y")
         self.assert_enabled("EDAC")
 
+    def test_real_server_profile_keeps_lockup_and_hung_task_detection(self):
+        for option in ("--optimization-profile=server", "--all-optimizations"):
+            with self.subTest(option=option):
+                self.config.write_bytes(self.original)
+                self.prepare_baseline(DEBUG_KERNEL="n")
+                self.assert_success(self.run_script("--strict", option))
+                self.assert_values(DEBUG_KERNEL="y", SOFTLOCKUP_DETECTOR="y", DETECT_HUNG_TASK="y",
+                                   DETECT_HUNG_TASK_BLOCKER="y", HARDLOCKUP_DETECTOR="n",
+                                   DEBUG_MISC="n", X86_DEBUG_FPU="n", RCU_TRACE="n", DEBUG_PREEMPT="n")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():

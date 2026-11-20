@@ -196,6 +196,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     CPU time accounting switches to `TICK_CPU_ACCOUNTING` unless the selected tick mode uses `NO_HZ_FULL`.
     It makes `mq-deadline`, `kyber`, BBR (`TCP_CONG_BBR`), `NET_SCH_FQ` and `NET_SCH_FQ_CODEL` available without changing the `DEFAULT_*` choices; symbols already built as modules stay `=m`.
     It enables compressed firmware loading (`FW_LOADER_COMPRESS` with XZ and ZSTD) when the kernel has a firmware loader: `linux-firmware` built with `compress-zstd` or `compress-xz` installs `.zst`/`.xz` files, and without the decoders a driver such as `ice` cannot load them (the E810 then runs in safe mode). `--firmware-compression=off` overrides it.
+    It keeps soft-lockup and hung-task detection (`SOFTLOCKUP_DETECTOR`, `DETECT_HUNG_TASK` with its blocker dump), the main evidence of a storage, NFS or Ceph hang, even after `--prune-debug-trace`. Kconfig gates them behind `DEBUG_KERNEL`; when the profile turns that on it keeps off what `DEBUG_KERNEL` would add by default (`DEBUG_MISC`, `X86_DEBUG_FPU`, `RCU_TRACE`) and keeps `DEBUG_INFO_NONE`, while a baseline that already had `DEBUG_KERNEL` keeps its own choices. The hard-lockup detector, which takes a PMU counter per CPU, is left alone.
     It disables `NO_PAGE_MAPCOUNT`, still marked EXPERIMENTAL in 7.2, and `RT_GROUP_SCHED` (default `n`): with it, `SCHED_FIFO`/`SCHED_RR` tasks outside the root cgroup fail until each group is given an RT budget, which breaks systemd services and containers that request real-time priority. A host that budgets RT time per cgroup (`docker run --cpu-rt-runtime`) passes `--enable-symbols=RT_GROUP_SCHED`.
     Memory error recovery: `MEMORY_FAILURE` (and `ACPI_APEI_MEMORY_FAILURE` with APEI), so an uncorrectable error in a user page, such as a VM's RAM, kills its owner instead of panicking the host; `RAS_CEC` also soft-offlines pages with repeated corrected errors when `DEBUG_FS` is enabled, which Kconfig requires (`--all-optimizations` prunes it; rasdaemon can do that offlining instead).
     THP defaults to `madvise`: QEMU marks guest RAM with `MADV_HUGEPAGE`, so virtual machines keep huge pages, while databases that ask for THP off are not forced into them.
@@ -259,7 +260,7 @@ Overridden settings are skipped before applying their dependencies. RT and NUMA 
   Preserves `DRM_FBDEV_EMULATION`, whose legacy-labelled prompt still supplies the framebuffer console for DRM drivers.
 
 - `PRUNE_DEBUG_TRACE`
-  Disables debug and trace options discovered from Kconfig prompts, plus explicit exceptions such as `DAMON_DEBUG_SANITY`, `SLUB_STATS`, `ZRAM_MEMORY_TRACKING` and `DM_DEBUG_BLOCK_MANAGER_LOCKING` (prompt "Block manager locking": lock checks on every dm-thin and dm-cache metadata access). It also disables runtime verification. Prompts that only name tracing as one user are kept: `IP_NF_RAW` and `IP6_NF_RAW` ("required for NOTRACK/TRACE") hold the Docker 28+ raw-table rules, while the `TRACE` target itself is pruned.
+  Disables debug and trace options discovered from Kconfig prompts, plus explicit exceptions such as `DAMON_DEBUG_SANITY`, `SLUB_STATS`, `ZRAM_MEMORY_TRACKING` and `DM_DEBUG_BLOCK_MANAGER_LOCKING` (prompt "Block manager locking": lock checks on every dm-thin and dm-cache metadata access). It also disables runtime verification. Prompts that only name tracing as one user are kept: `IP_NF_RAW` and `IP6_NF_RAW` ("required for NOTRACK/TRACE") hold the Docker 28+ raw-table rules, while the `TRACE` target itself is pruned. The `server` profile, applied after the prunes, brings back the soft-lockup and hung-task detectors.
 
 - `PRUNE_RUNTIME_VERIFICATION`
   Disables `CONFIG_RV`, removing its dependent monitors after Kconfig normalization. Also included in observability/debug pruning, since RV can select tracing support.
@@ -967,6 +968,28 @@ longer saves about 28 KiB of `struct page` memory per 2 MB HugeTLB page.
 ./kernel-config.sh --dry-run --strict --thp=madvise --zram=module \
   --zram-compressor=lz4 --tcp-congestion=bbr /usr/src/linux
 ```
+
+## Download Kconfig reference snapshots
+
+`download-kconfig.py` queries [kernel.org release metadata](https://www.kernel.org/releases.json)
+for the latest stable releases in the 6.12.x and 6.18.x branches and the current
+mainline release (including release candidates). It needs Python 3.11.8+ with
+`tarfile` extraction filters and XZ support; no third-party Python packages are needed.
+
+```bash
+./download-kconfig.py                 # create linux-VERSION folders here
+./download-kconfig.py /path/to/copies  # use another parent directory
+```
+
+Each folder preserves every `Kconfig*` file at its original path and the complete
+`Documentation/` subtree, including hidden files, links and empty directories.
+Other files and empty directories outside `Documentation/` are omitted during
+extraction. These are reference snapshots, not buildable kernel source trees.
+
+Existing destination folders or links cause an error before downloading any
+archives; they are never replaced. Downloads and extraction use temporary storage
+that is cleaned up on failure. A completed snapshot remains available if a later
+download fails. Generated `linux-*` folders are already ignored by Git.
 
 ## Tests
 
