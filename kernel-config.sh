@@ -3399,6 +3399,15 @@ disable_discovered_and_fixed_symbols() {
     fi
 }
 
+# Fixed prune lists keep what an enabled feature selects: olddefconfig would
+# turn it back on and --strict reject the run (OPENVSWITCH selects MPLS).
+disable_unless_selected() {
+    # Not "targets": preserve_selected_prune_targets uses that name as its nameref.
+    local -a fixed_targets=("$@")
+    preserve_selected_prune_targets fixed_targets
+    ((${#fixed_targets[@]} == 0)) || disable_if_present "${fixed_targets[@]}"
+}
+
 enable_if_present() {
     local -a unique_syms=()
     local sym
@@ -4886,7 +4895,9 @@ configure_application_profiles() {
             openvswitch)
                 # NET_UDP_TUNNEL is a hidden tristate selected by VXLAN, GENEVE and
                 # WIREGUARD; pinning its old =m conflicts with a built-in consumer.
-                for sym in OPENVSWITCH NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX; do
+                # OPENVSWITCH selects MPLS; request it so an earlier
+                # PRUNE_UNUSED_NET disable does not contradict the result.
+                for sym in OPENVSWITCH MPLS NF_CONNTRACK NF_CONNTRACK_OVS NF_NAT_OVS NETFILTER VXLAN GENEVE NET_IPGRE_DEMUX; do
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
@@ -5684,7 +5695,7 @@ if is_enabled "$PRUNE_UNUSED_NET"; then
     echo
     echo "==> Disabling uncommon/legacy network protocols"
     # Version notes: IP_DCCP removed in 6.16; ATALK, CAIF removed in 7.1+.
-    disable_if_present \
+    disable_unless_selected \
         6LOWPAN \
         AF_RXRPC \
         ATALK \
@@ -5707,7 +5718,7 @@ fi
 if is_enabled "$PRUNE_OLD_HW"; then
     echo
     echo "==> Disabling legacy or uncommon hardware"
-    disable_if_present \
+    disable_unless_selected \
         BLK_DEV_FD \
         FIREWIRE \
         GAMEPORT \
@@ -5724,7 +5735,7 @@ if is_enabled "$PRUNE_X86_OLD_PLATFORMS"; then
     echo
     echo "==> Disabling special/old x86 platforms"
     # X86_RDC321X removed in 7.1+.
-    disable_if_present \
+    disable_unless_selected \
         X86_EXTENDED_PLATFORM \
         X86_GOLDFISH \
         X86_INTEL_CE \
@@ -5739,14 +5750,14 @@ fi
 if is_enabled "$PRUNE_LEGACY_ATA"; then
     echo
     echo "==> Disabling legacy ATA/PATA support"
-    disable_if_present ATA_SFF
+    disable_unless_selected ATA_SFF
 fi
 
 # Insecure or legacy protocols/compat
 if is_enabled "$PRUNE_INSECURE"; then
     echo
     echo "==> Disabling legacy or less secure protocols/compat"
-    disable_if_present \
+    disable_unless_selected \
         CIFS_ALLOW_INSECURE_LEGACY \
         NFS_V2 \
         NFSD_V2
@@ -5757,7 +5768,7 @@ if is_enabled "$PRUNE_RADIOS"; then
     echo
     echo "==> Disabling unused radio and proximity protocols"
     # HAMRADIO removed in 7.1+.
-    disable_if_present \
+    disable_unless_selected \
         NFC \
         IEEE802154 \
         6LOWPAN \
@@ -5768,7 +5779,7 @@ fi
 if is_enabled "$PRUNE_DMA_ATTACK_SURFACE"; then
     echo
     echo "==> Disabling buses and features with extra physical attack surface"
-    disable_if_present \
+    disable_unless_selected \
         FIREWIRE \
         FIREWIRE_OHCI \
         FIREWIRE_SBP2 \

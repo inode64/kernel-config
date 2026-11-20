@@ -159,6 +159,14 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--applications=docker,openvswitch,wireguard"))
         self.assert_values(VXLAN="y", NET_UDP_TUNNEL="y")
 
+    def test_real_all_optimizations_keep_mpls_for_open_vswitch(self):
+        self.prepare_baseline(OPENVSWITCH="m", MPLS="y")
+        result = self.run_script("--strict", "--all-optimizations",
+                                 "--applications=qemu,docker,openvswitch")
+        self.assert_success(result)
+        self.assertIn("Retaining CONFIG_MPLS: selected by enabled CONFIG_OPENVSWITCH", result.stdout)
+        self.assert_values(OPENVSWITCH="m", MPLS="y", TIPC="n")
+
     def test_real_docker_with_legacy_gated_iptables(self):
         if "config NETFILTER_XTABLES_LEGACY" not in (self.tree / "net/netfilter/Kconfig").read_text():
             self.skipTest("requires a 6.17+ tree with NETFILTER_XTABLES_LEGACY")

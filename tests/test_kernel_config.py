@@ -962,6 +962,29 @@ config HID_LED
         self.assertNotIn("CONFIG_NET_UDP_TUNNEL", result.stdout)
         self.assert_symbol("VXLAN", "m")
 
+    def test_fixed_prune_lists_keep_symbols_selected_by_enabled_features(self):
+        self.add_kconfig('''
+            config OPENVSWITCH
+            \ttristate "Open vSwitch"
+            \tselect MPLS
+            config MPLS
+            \tbool "MultiProtocol Label Switching"
+            config TIPC
+            \ttristate "The TIPC Protocol"
+        ''')
+        self.set_baseline_symbols(OPENVSWITCH="m", MPLS="y", TIPC="m")
+        result = self.run_script("--strict", "--prune-unused-net")
+        self.assert_success(result)
+        self.assertIn("Retaining CONFIG_MPLS: selected by enabled CONFIG_OPENVSWITCH", result.stdout)
+        self.assert_symbol("MPLS", "y")
+        self.assert_symbol("TIPC", "n")
+        # A profile that enables Open vSwitch also overrides the earlier prune.
+        self.set_baseline_symbols(OPENVSWITCH="n", MPLS="y")
+        self.assert_success(self.run_script("--strict", "--prune-unused-net",
+                                            "--applications=openvswitch"))
+        self.assert_symbol("OPENVSWITCH", "y")
+        self.assert_symbol("MPLS", "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

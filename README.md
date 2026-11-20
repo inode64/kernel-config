@@ -596,6 +596,10 @@ other machines. Keep machine names out of shared examples and report names.
 
 These are narrower switches for optional subsystems and aggressive cleanup.
 
+Their fixed lists keep any symbol that an enabled feature selects, as discovery-based
+pruning does (`Retaining CONFIG_MPLS: selected by enabled CONFIG_OPENVSWITCH`):
+`olddefconfig` would turn it back on and `--strict` would reject the run.
+
 `PRUNE_UNUSED_MODULES` is intentionally conservative: it requires root, the target tree's `kernelrelease` to match the running kernel, and only handles direct one-symbol/one-module `obj-$(CONFIG_FOO) += foo.o` mappings.
 
 ## Auto-Detection Behavior
