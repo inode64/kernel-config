@@ -1617,8 +1617,10 @@ discover_debug_trace_kconfig_symbols() {
     # PROC_MEM_FORCE_PTRACE only matches through "ptrace()": it is the hardened
     # /proc/pid/mem choice, and disabling it falls back to PROC_MEM_ALWAYS_FORCE.
     # IPV6_IOAM6_LWTUNNEL is IOAM in-band telemetry ("Trace insertion"), not debugging.
+    # IP_NF_RAW/IP6_NF_RAW only mention TRACE as one user ("raw table support
+    # (required for NOTRACK/TRACE)"); Docker 28+ writes its DROP rules there.
     discover_kconfig_symbols_by_pattern "(debug|tracing|tracer|trace|ftrace|kgdb|kdb|kprobe|uprobe|sanitizer|gcov|coverage|fault[- ]?injection|runtime testing|developer use only|debugging only|only be enabled for testing|intended for testing|testing purposes|test only|not suitable for production|not for use in production|not in production kernels|not be enabled in production|do not use (it )?on production|do not enable on production|production (systems?|kernels?|builds?))" \
-        | awk '$0 != "PROC_MEM_FORCE_PTRACE" && $0 != "IPV6_IOAM6_LWTUNNEL"'
+        | awk '$0 != "PROC_MEM_FORCE_PTRACE" && $0 != "IPV6_IOAM6_LWTUNNEL" && $0 != "IP_NF_RAW" && $0 != "IP6_NF_RAW"'
 }
 
 discover_hardening_kconfig_symbols() {

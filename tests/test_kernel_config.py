@@ -985,6 +985,18 @@ config HID_LED
         self.assert_symbol("OPENVSWITCH", "y")
         self.assert_symbol("MPLS", "y")
 
+    def test_debug_trace_pruning_keeps_the_iptables_raw_table(self):
+        self.add_kconfig('''
+            config IP_NF_RAW
+            \ttristate  'raw table support (required for NOTRACK/TRACE)'
+            config NETFILTER_XT_TARGET_TRACE
+            \ttristate  '"TRACE" target support'
+        ''')
+        self.set_baseline_symbols(IP_NF_RAW="m", NETFILTER_XT_TARGET_TRACE="m")
+        self.assert_success(self.run_script("--strict", "--prune-debug-trace"))
+        self.assert_symbol("IP_NF_RAW", "m")
+        self.assert_symbol("NETFILTER_XT_TARGET_TRACE", "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

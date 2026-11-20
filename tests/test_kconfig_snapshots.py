@@ -76,6 +76,14 @@ class SnapshotTests(unittest.TestCase):
                                   "DRM_AMD_DC", "SND_SOC_SOF_BAYTRAIL", "CRYPTO_USER_API_HASH",
                                   "CRYPTO_USER_API_ENABLE_OBSOLETE", "COMPAT_VDSO"} & legacy)
 
+    def test_debug_trace_keeps_the_iptables_raw_tables(self):
+        for snapshot in SNAPSHOTS:
+            with self.subTest(version=snapshot.name):
+                debug = self.discover(snapshot, "debug_trace")
+                self.assertFalse({"IP_NF_RAW", "IP6_NF_RAW"} & debug)
+                # The TRACE target itself is still a packet-tracing debug aid.
+                self.assertIn("NETFILTER_XT_TARGET_TRACE", debug)
+
     def test_new_72_controls_are_discovered(self):
         snapshot = SCRIPT.parent / "linux-7.2.0"
         if not snapshot.is_dir():
