@@ -425,7 +425,7 @@ These options change kernel build configuration and defaults. They do not create
   Enables kernel features commonly required by selected applications.
 
   Supported profiles:
-  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `python`
+  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `iptables-legacy`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `python`
 
   - `desktop`: GNOME/Wayland interfaces, browser namespaces/seccomp, IDE file
     notifications, FUSE portals, input/HID and DRM synchronization. This enables
@@ -465,6 +465,16 @@ These options change kernel build configuration and defaults. They do not create
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy
   settings are retained; `firehol` explicitly requests the legacy backend.
+  `docker` follows the same rule: on 6.17+ it requests what Docker's rules need
+  through iptables-nft (`NFT_COMPAT`, the `addrtype` and `conntrack` matches,
+  the `DNAT`/`MASQUERADE` targets) instead of the legacy nat table, so it no
+  longer conflicts with `PRUNE_LEGACY`. A host whose `iptables -V` reports
+  `legacy` also needs `iptables-legacy`, which requests the legacy filter,
+  mangle, raw and nat tables for IPv4 and IPv6. Docker 28+ writes its
+  direct-access `DROP` rules to the raw table. Those tables and Docker's
+  xtables extensions are loaded on demand, so they follow the
+  `PLATFORM_DRIVERS` rule: built-in stays built in, otherwise a module when
+  `MODULES=y`. A request therefore never exceeds a modular `NETFILTER_XTABLES`.
   `qemu` enables host drivers and lets Kconfig select internal VHOST dependencies
   at the required built-in/module level.
   `firehol` also requests the targets and matches that `firehol debug` emits for
@@ -879,7 +889,7 @@ longer saves about 28 KiB of `struct page` memory per 2 MB HugeTLB page.
 - Application profiles enable common requirements, not every optional kernel feature that a project can use.
 - `HOST_TYPE` and `APPLICATIONS` can re-enable symbols after broader pruning phases.
 - Profiles preserve symbols that the baseline builds as modules (`=m`), including drivers that load firmware from the root filesystem (`amdgpu`, `iwlwifi`). Explicit built-in requests such as `--enable-symbols` or `--zram=builtin` take precedence.
-- The `firehol` profile keeps the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable, plus the xtables targets and matches its generated rules use. `NETFILTER_XTABLES_LEGACY` depends on `!PREEMPT_RT`, so the legacy backend is unavailable on RT kernels.
+- The `firehol` and `iptables-legacy` profiles keep the iptables-legacy tables (`NETFILTER_XTABLES_LEGACY`, `IP_NF_IPTABLES_LEGACY`, `IP6_NF_IPTABLES_LEGACY` and the filter/mangle/raw/nat tables) that `PRUNE_LEGACY` would otherwise disable; `firehol` adds the xtables targets and matches its generated rules use. `NETFILTER_XTABLES_LEGACY` depends on `!PREEMPT_RT`, so the legacy backend is unavailable on RT kernels.
 - When a profile enables a symbol that was off in the baseline (for example `ZSWAP` or `LRU_GEN`), the script runs an intermediate `make olddefconfig` so the symbols that depend on it become visible and can be configured in the same run.
 - `PROTECTED_CONFIG_SYMBOLS` blocks direct script edits. Changes caused by `make olddefconfig` are reported; `--strict` prevents saving them.
 - Symbol availability is checked against Kconfig definitions, including symbols absent from the baseline `.config`. The final Kconfig result remains authoritative for architecture, visibility, and dependencies. Kconfig metadata covers the common files, the generic `arch/Kconfig` and the `arch/<target>/` tree resolved from `ARCH` or `uname -m`; other architectures are excluded.

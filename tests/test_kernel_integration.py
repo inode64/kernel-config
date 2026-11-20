@@ -148,6 +148,27 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_values(KVM_AMD="m", VHOST_NET="m", VHOST_VSOCK="y", VHOST="y",
                            VHOST_IOTLB="y", NF_TABLES="m", NFT_NAT="m")
 
+    def assert_enabled(self, *symbols):
+        config = dict(re.findall(r"^CONFIG_(\w+)=(.*)$", self.config.read_text(), re.M))
+        for symbol in symbols:
+            self.assertIn(config.get(symbol, "n"), ("y", "m"), symbol)
+
+    def test_real_docker_with_legacy_gated_iptables(self):
+        if "config NETFILTER_XTABLES_LEGACY" not in (self.tree / "net/netfilter/Kconfig").read_text():
+            self.skipTest("requires a 6.17+ tree with NETFILTER_XTABLES_LEGACY")
+        self.prepare_baseline(NETFILTER_XTABLES_LEGACY="y", IP_NF_IPTABLES_LEGACY="m",
+                              IP_NF_NAT="m", IP_NF_RAW="m", NFT_COMPAT="n")
+        self.assert_success(self.run_script("--strict", "--prune-legacy", "--applications=docker"))
+        self.assert_values(NETFILTER_XTABLES_LEGACY="n", IP_NF_NAT="n", IP_NF_RAW="n")
+        self.assert_enabled("NFT_COMPAT", "NFT_NAT", "NETFILTER_XT_MATCH_ADDRTYPE",
+                            "NETFILTER_XT_MATCH_CONNTRACK", "NETFILTER_XT_NAT",
+                            "NETFILTER_XT_TARGET_MASQUERADE")
+        self.assert_success(self.run_script("--strict", "--prune-legacy",
+                                            "--applications=docker,iptables-legacy"))
+        self.assert_values(NETFILTER_XTABLES_LEGACY="y")
+        self.assert_enabled("IP_NF_IPTABLES_LEGACY", "IP6_NF_IPTABLES_LEGACY", "IP_NF_FILTER",
+                            "IP_NF_NAT", "IP6_NF_NAT", "IP_NF_RAW", "IP6_NF_RAW")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():

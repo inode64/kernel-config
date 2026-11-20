@@ -85,7 +85,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
-#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python
+#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python
 #   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
 #   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
@@ -2357,7 +2357,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | python)
+            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | iptables-legacy | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | python)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -2366,7 +2366,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python" >&2
+                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python" >&2
                 exit 1
                 ;;
         esac
@@ -4577,7 +4577,7 @@ configure_nr_cpus_profile() {
 
 # --- Platform drivers (PLATFORM_DRIVERS=auto) ---------------------------------------
 # Evidence from the running host is turned into driver requests. Each request is
-# printed with its evidence; the value follows one rule (request_platform_driver).
+# printed with its evidence; the value follows one rule (request_module_or_builtin).
 
 declare -A _PLATFORM_REQUESTS=()
 declare -a _PLATFORM_REQUEST_ORDER=() _PLATFORM_PARENTS=()
@@ -4601,7 +4601,7 @@ add_platform_parents() {
 
 # Already built in stays built in; tristate with MODULES=y becomes a module; else built in.
 # A symbol missing from this tree is reported and skipped without failing --strict.
-request_platform_driver() {
+request_module_or_builtin() {
     local sym="$1" evidence="$2" current
     if ! have_symbol "$sym"; then
         echo "    $evidence -> CONFIG_$sym not available in this tree"
@@ -4769,7 +4769,7 @@ configure_platform_drivers_profile() {
     fi
     ((${#_PLATFORM_PARENTS[@]})) && enable_parents_if_present "${_PLATFORM_PARENTS[@]}"
     for sym in "${_PLATFORM_REQUEST_ORDER[@]}"; do
-        request_platform_driver "$sym" "${_PLATFORM_REQUESTS[$sym]}"
+        request_module_or_builtin "$sym" "${_PLATFORM_REQUESTS[$sym]}"
     done
     if [[ -v _PLATFORM_REQUESTS[HP_WATCHDOG] && -v _PLATFORM_REQUESTS[ITCO_WDT] ]]; then
         echo "    (hpwdt and iTCO_wdt can coexist; both are requested)"
@@ -4781,6 +4781,16 @@ configure_application_profiles() {
     local qemu_cpu_vendor=""
     local -a enable_syms=()
     local -a available_syms=()
+    # Extensions that userland loads on demand: modules when the kernel has
+    # MODULES, so a new request never exceeds a modular parent.
+    local -A loadable_syms=()
+    # Tables an iptables-legacy userland (`iptables -V` says "legacy") loads.
+    # 6.17+ gates them behind NETFILTER_XTABLES_LEGACY, which PRUNE_LEGACY disables.
+    local -a iptables_legacy_syms=(
+        NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NETFILTER_XTABLES_LEGACY NF_CONNTRACK NF_NAT
+        IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_IPTABLES_LEGACY IP6_NF_IPTABLES_LEGACY
+        IP_NF_FILTER IP6_NF_FILTER IP_NF_MANGLE IP6_NF_MANGLE IP_NF_RAW IP6_NF_RAW IP_NF_NAT IP6_NF_NAT
+    )
 
     echo
     echo "==> Enabling application profiles: $*"
@@ -4839,10 +4849,17 @@ configure_application_profiles() {
                     append_unique_item "$sym" enable_syms
                 done
                 ;;
+            iptables-legacy)
+                for sym in "${iptables_legacy_syms[@]}"; do
+                    loadable_syms["$sym"]="$profile"
+                done
+                ;;
             firehol)
-                # 6.17+ gates the iptables-legacy tables behind NETFILTER_XTABLES_LEGACY,
-                # which PRUNE_LEGACY disables; FireHOL still needs them with that backend.
-                for sym in NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NETFILTER_XTABLES_LEGACY NF_CONNTRACK NF_NAT NF_TABLES IP_SET IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_IPTABLES_LEGACY IP6_NF_IPTABLES_LEGACY IP_NF_FILTER IP6_NF_FILTER IP_NF_MANGLE IP6_NF_MANGLE IP_NF_RAW IP6_NF_RAW IP_NF_NAT IP6_NF_NAT NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
+                # FireHOL still drives the legacy tables with that backend.
+                for sym in "${iptables_legacy_syms[@]}"; do
+                    loadable_syms["$sym"]="$profile"
+                done
+                for sym in NF_TABLES IP_SET NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
                     append_unique_item "$sym" enable_syms
                 done
                 # Targets and matches that `firehol debug` emits for a plain
@@ -4907,9 +4924,24 @@ configure_application_profiles() {
                 done
                 ;;
             docker)
-                for sym in NAMESPACES UTS_NS IPC_NS USER_NS PID_NS NET_NS CGROUPS CGROUP_BPF CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_PIDS CGROUP_SCHED CFS_BANDWIDTH FAIR_GROUP_SCHED MEMCG BLK_CGROUP POSIX_MQUEUE VETH BRIDGE BRIDGE_NETFILTER OVERLAY_FS NF_CONNTRACK NF_NAT NF_TABLES NFT_CT NFT_NAT NFT_MASQ NETFILTER_XTABLES IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_NAT IP6_NF_NAT VXLAN; do
+                for sym in NAMESPACES UTS_NS IPC_NS USER_NS PID_NS NET_NS CGROUPS CGROUP_BPF CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_PIDS CGROUP_SCHED CFS_BANDWIDTH FAIR_GROUP_SCHED MEMCG BLK_CGROUP POSIX_MQUEUE VETH BRIDGE BRIDGE_NETFILTER OVERLAY_FS NF_CONNTRACK NF_NAT NF_TABLES NF_TABLES_IPV4 NF_TABLES_IPV6 NFT_CT NFT_NAT NFT_MASQ NETFILTER_XTABLES IP_NF_IPTABLES IP6_NF_IPTABLES VXLAN; do
                     append_unique_item "$sym" enable_syms
                 done
+                # Docker's rules (filter, nat and raw tables with -m addrtype,
+                # -m conntrack, -j DNAT and -j MASQUERADE) go through NFT_COMPAT
+                # when the userland is iptables-nft.
+                for sym in NFT_COMPAT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_NAT NETFILTER_XT_TARGET_MASQUERADE; do
+                    loadable_syms["$sym"]="$profile"
+                done
+                # 6.17+ only offers the iptables nat table behind
+                # NETFILTER_XTABLES_LEGACY; requesting it here would conflict
+                # with PRUNE_LEGACY on hosts that use iptables-nft.
+                if ! have_symbol NETFILTER_XTABLES_LEGACY; then
+                    append_unique_item IP_NF_NAT enable_syms
+                    append_unique_item IP6_NF_NAT enable_syms
+                elif [[ " $* " != *" iptables-legacy "* && " $* " != *" firehol "* ]]; then
+                    echo "    (docker: if \`iptables -V\` says legacy, add the iptables-legacy profile; iptables-nft needs nothing else)"
+                fi
                 ;;
             qemu)
                 qemu_cpu_vendor="$(resolve_cpu_vendor_or_detect)"
@@ -4988,6 +5020,11 @@ configure_application_profiles() {
             refresh_config_visibility
         fi
         enable_if_present "${enable_syms[@]}"
+    fi
+    if ((${#loadable_syms[@]} > 0)); then
+        while IFS= read -r sym; do
+            request_module_or_builtin "$sym" "${loadable_syms[$sym]}"
+        done < <(printf '%s\n' "${!loadable_syms[@]}" | sort)
     fi
 }
 

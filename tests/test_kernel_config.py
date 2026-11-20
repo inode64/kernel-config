@@ -930,6 +930,26 @@ config HID_LED
             self.assert_symbol(symbol, "n")
         self.assert_symbol("NFT_NAT", "y")
 
+    def test_docker_uses_nft_compat_unless_the_legacy_profile_is_added(self):
+        nft = ("NFT_COMPAT", "NETFILTER_XT_MATCH_ADDRTYPE", "NETFILTER_XT_MATCH_CONNTRACK",
+               "NETFILTER_XT_NAT", "NETFILTER_XT_TARGET_MASQUERADE")
+        legacy = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "IP6_NF_IPTABLES_LEGACY",
+                  "IP_NF_FILTER", "IP_NF_NAT", "IP6_NF_NAT", "IP_NF_RAW", "IP6_NF_RAW")
+        self.add_symbols(*nft, *legacy)
+        self.set_baseline_symbols(**dict.fromkeys(nft + legacy, "n"))
+        result = self.run_script("--strict", "--prune-legacy", "--applications=docker")
+        self.assert_success(result)
+        self.assertIn("add the iptables-legacy profile", result.stdout)
+        for symbol in nft:
+            self.assert_symbol(symbol, "y")
+        for symbol in legacy:
+            self.assert_symbol(symbol, "n")
+        result = self.run_script("--strict", "--prune-legacy", "--applications=docker,iptables-legacy")
+        self.assert_success(result)
+        self.assertNotIn("add the iptables-legacy profile", result.stdout)
+        for symbol in legacy:
+            self.assert_symbol(symbol, "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",
