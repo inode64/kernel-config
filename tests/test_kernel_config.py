@@ -1144,6 +1144,16 @@ config HID_LED
         self.assert_symbol("CONNECTOR", "y")
         self.assert_symbol("PROC_EVENTS", "y")
 
+    def test_desktop_enables_preempt_dynamic_on_7_4_lazy_targets(self):
+        # 7.4 dropped HAVE_PREEMPT_DYNAMIC; ARCH_HAS_PREEMPT_LAZY gates PREEMPT_DYNAMIC.
+        self.add_symbols("ARCH_HAS_PREEMPT_LAZY", "PREEMPT_DYNAMIC")
+        self.set_baseline_symbols(ARCH_HAS_PREEMPT_LAZY="y")
+        lines = [l for l in self.config.read_text().splitlines() if "PREEMPT_DYNAMIC" not in l]
+        self.baseline = "\n".join(lines) + "\n"
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
+        self.assert_symbol("PREEMPT_DYNAMIC", "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

@@ -2903,7 +2903,10 @@ configure_profile_scheduler() {
             elif config_has_symbol PREEMPT_NONE; then
                 model=none
             fi
-            if config_has_symbol PREEMPT_DYNAMIC || is_symbol_enabled_now HAVE_PREEMPT_DYNAMIC; then
+            # HAVE_PREEMPT_DYNAMIC gates it up to 7.3; it was removed in 7.4,
+            # where PREEMPT_DYNAMIC depends on ARCH_HAS_PREEMPT_LAZY instead.
+            if config_has_symbol PREEMPT_DYNAMIC || is_symbol_enabled_now HAVE_PREEMPT_DYNAMIC \
+                || is_symbol_enabled_now ARCH_HAS_PREEMPT_LAZY; then
                 enable_if_present PREEMPT_DYNAMIC
             fi
             ;;

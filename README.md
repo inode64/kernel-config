@@ -900,6 +900,7 @@ removed later, annotated in the script with the removal version:
 | `ATALK`, `CAIF`, `HAMRADIO`, `NF_CT_PROTO_UDPLITE`, `X86_RDC321X` | 7.0 | none (subsystems removed) |
 | `HYPERV_IOMMU` | 7.0 | built unconditionally with `HYPERV` |
 | `RANDOM_KMALLOC_CACHES` | 7.0 | `KMALLOC_PARTITION_CACHES` / `_RANDOM` / `_TYPED` |
+| `HAVE_PREEMPT_DYNAMIC` | 7.3 | `ARCH_HAS_PREEMPT_LAZY` gates `PREEMPT_DYNAMIC` from 7.4 |
 
 Symbols the script uses that only exist in newer trees (`NO_PAGE_MAPCOUNT` and
 `DETECT_HUNG_TASK_BLOCKER` 6.15+, `X86_NATIVE_CPU` 6.16+, `NETFILTER_XTABLES_LEGACY`
