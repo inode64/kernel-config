@@ -445,6 +445,17 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(CRC_OPTIMIZATIONS="y")
 
+    def test_real_profile_disables_base_small_and_enables_raid6_benchmark(self):
+        self.prepare_baseline(EXPERT="y", BASE_SMALL="y", BLK_DEV_MD="y",
+                              MD_RAID456="m", RAID6_PQ_BENCHMARK="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(BASE_SMALL="n", RAID6_PQ="m", RAID6_PQ_BENCHMARK="y")
+        # Without RAID6_PQ enabled, RAID6_PQ_BENCHMARK must not be requested.
+        self.config.write_bytes(self.original)
+        self.prepare_baseline(BLK_DEV_MD="n", BTRFS_FS="n", DM_RAID="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(RAID6_PQ="n", RAID6_PQ_BENCHMARK="n")
+
     def test_real_profile_enables_bpf_jit_and_always_on(self):
         self.prepare_baseline(BPF_SYSCALL="y", BPF_JIT="n", BPF_JIT_ALWAYS_ON="n")
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))

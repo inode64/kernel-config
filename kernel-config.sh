@@ -3951,6 +3951,15 @@ configure_fast_checksums() {
         enable_if_present CRC_OPTIMIZATIONS
     fi
 
+    # lib/raid/Kconfig (6.18+) / lib/Kconfig (6.12): benchmark available RAID6
+    # P+Q routines on init so the fastest SIMD implementation is selected when
+    # RAID6_PQ is enabled.
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[RAID6_PQ]:-}" != n ]] \
+        && [[ "${_EXPLICIT_SYMBOL_VALUES[RAID6_PQ_BENCHMARK]:-}" != n ]] \
+        && kconfig_depends_met RAID6_PQ_BENCHMARK; then
+        enable_if_present RAID6_PQ_BENCHMARK
+    fi
+
     # 6.12 lib/Kconfig: the CRC32 choice defaults to slice-by-8, "the fastest".
     # Slice-by-4, Sarwate and the bit implementation are the slower members.
     # The choice depends on CRC32, so leave it when CRC32 is off.
@@ -4068,6 +4077,13 @@ configure_optimization_profile() {
         CC_OPTIMIZE_FOR_SIZE \
         SLUB_TINY
 
+    # BASE_SMALL shrinks core kernel data structures at a performance cost
+    # (init/Kconfig; prompt requires EXPERT).
+    if is_symbol_enabled_now EXPERT && is_symbol_enabled_now BASE_SMALL \
+        && [[ "${_EXPLICIT_SYMBOL_VALUES[BASE_SMALL]:-}" != y ]]; then
+        disable_if_present BASE_SMALL
+    fi
+
     # Project C (BMQ/PDS, gentoo-sources USE=experimental) replaces EEVDF and
     # rules out PSI, SCHED_CACHE, SCHED_CORE, NUMA_BALANCING, UCLAMP_TASK,
     # PREEMPT_RT and sched_ext; it defaults to y when the Gentoo defaults patch
@@ -4153,6 +4169,13 @@ configure_optimization_profile() {
             disable_if_present RCU_NOCB_CPU_DEFAULT_ALL
 
             enable_if_unset "${server_available[@]}"
+
+            # 6.12-6.18 LTS (removed when slab sheaves replaced per-CPU partial
+            # slabs): keep per-CPU partial caches enabled for SMP throughput.
+            if [[ "${_EXPLICIT_SYMBOL_VALUES[SLUB_CPU_PARTIAL]:-}" != n ]] \
+                && kconfig_depends_met SLUB_CPU_PARTIAL; then
+                enable_if_present SLUB_CPU_PARTIAL
+            fi
 
             if have_symbol TRANSPARENT_HUGEPAGE_MADVISE; then
                 select_if_present TRANSPARENT_HUGEPAGE_MADVISE \
@@ -4272,6 +4295,13 @@ configure_optimization_profile() {
 
             configure_throughput_memory_defaults desktop
 
+            # 6.12-6.18 LTS (removed when slab sheaves replaced per-CPU partial
+            # slabs): keep per-CPU partial caches enabled for SMP throughput.
+            if [[ "${_EXPLICIT_SYMBOL_VALUES[SLUB_CPU_PARTIAL]:-}" != n ]] \
+                && kconfig_depends_met SLUB_CPU_PARTIAL; then
+                enable_if_present SLUB_CPU_PARTIAL
+            fi
+
             if is_enabled "$wants_observability"; then
                 enable_if_present PSI
                 disable_if_present PSI_DEFAULT_DISABLED
@@ -4313,6 +4343,12 @@ configure_optimization_profile() {
                 RCU_BOOST \
                 RCU_NOCB_CPU \
                 RCU_NOCB_CPU_CB_BOOST
+
+            # 6.12-6.18 LTS mm/Kconfig explicitly recommends disabling per-CPU
+            # partial caches on realtime systems to avoid overflow lock spikes.
+            if [[ "${_EXPLICIT_SYMBOL_VALUES[SLUB_CPU_PARTIAL]:-}" != y ]]; then
+                disable_if_present SLUB_CPU_PARTIAL
+            fi
 
             if [[ "$NUMA_BALANCING_MODE_EFFECTIVE" == "auto" ]]; then
                 disable_numa_balancing_support

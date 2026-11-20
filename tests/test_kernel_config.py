@@ -1694,6 +1694,71 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=amd"))
         self.assert_symbol("INTEL_IDLE", "n")
 
+    def test_profiles_tune_slub_cpu_partial_base_small_and_raid6_benchmark(self):
+        self.add_kconfig('''
+            config EXPERT
+            \tbool "Configure standard kernel features (expert users)"
+            config BASE_SMALL
+            \tbool "Enable smaller-sized data structures for core" if EXPERT
+            config SLUB_TINY
+            \tbool "Configure SLUB for minimal memory footprint"
+            config SLUB_CPU_PARTIAL
+            \tbool "Enable per cpu partial caches"
+            \tdepends on SMP && !SLUB_TINY
+            config RAID6_PQ
+            \ttristate
+            config RAID6_PQ_BENCHMARK
+            \tbool "Automatically choose fastest RAID6 PQ functions"
+            \tdepends on RAID6_PQ
+        ''')
+        # server and desktop enable SLUB_CPU_PARTIAL (6.12-6.18), disable BASE_SMALL,
+        # and enable RAID6_PQ_BENCHMARK when RAID6_PQ is enabled (y or m).
+        for profile in ("server", "desktop"):
+            with self.subTest(profile=profile):
+                self.set_baseline_symbols(
+                    SMP="y", EXPERT="y", BASE_SMALL="y", SLUB_TINY="y",
+                    SLUB_CPU_PARTIAL="n", RAID6_PQ="m", RAID6_PQ_BENCHMARK="n",
+                )
+                self.assert_success(self.run_script("--strict", f"--optimization-profile={profile}"))
+                self.assert_symbol("SLUB_TINY", "n")
+                self.assert_symbol("SLUB_CPU_PARTIAL", "y")
+                self.assert_symbol("BASE_SMALL", "n")
+                self.assert_symbol("RAID6_PQ_BENCHMARK", "y")
+        # realtime disables SLUB_CPU_PARTIAL, still disables BASE_SMALL and keeps RAID6 benchmark.
+        self.set_baseline_symbols(
+            SMP="y", EXPERT="y", BASE_SMALL="y", SLUB_TINY="n",
+            SLUB_CPU_PARTIAL="y", RAID6_PQ="y", RAID6_PQ_BENCHMARK="n",
+        )
+        self.assert_success(self.run_script("--strict", "--optimization-profile=realtime"))
+        self.assert_symbol("SLUB_CPU_PARTIAL", "n")
+        self.assert_symbol("BASE_SMALL", "n")
+        self.assert_symbol("RAID6_PQ_BENCHMARK", "y")
+        # Protected SLUB_TINY=y, EXPERT=n, RAID6_PQ=n, and explicit overrides are respected.
+        self.set_baseline_symbols(
+            SMP="y", EXPERT="n", BASE_SMALL="y", SLUB_TINY="y",
+            SLUB_CPU_PARTIAL="n", RAID6_PQ="n", RAID6_PQ_BENCHMARK="n",
+        )
+        self.assert_success(self.run_script(
+            "--strict", "--optimization-profile=server",
+            "--protected-config-symbols=SLUB_TINY",
+        ))
+        self.assert_symbol("SLUB_TINY", "y")
+        self.assert_symbol("SLUB_CPU_PARTIAL", "n")
+        self.assert_symbol("BASE_SMALL", "y")
+        self.assert_symbol("RAID6_PQ_BENCHMARK", "n")
+        self.set_baseline_symbols(
+            SMP="y", EXPERT="y", BASE_SMALL="y", SLUB_TINY="n",
+            SLUB_CPU_PARTIAL="n", RAID6_PQ="m", RAID6_PQ_BENCHMARK="n",
+        )
+        self.assert_success(self.run_script(
+            "--strict", "--optimization-profile=server",
+            "--enable-symbols=BASE_SMALL",
+            "--disable-symbols=SLUB_CPU_PARTIAL,RAID6_PQ_BENCHMARK",
+        ))
+        self.assert_symbol("BASE_SMALL", "y")
+        self.assert_symbol("SLUB_CPU_PARTIAL", "n")
+        self.assert_symbol("RAID6_PQ_BENCHMARK", "n")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
