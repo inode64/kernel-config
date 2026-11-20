@@ -155,6 +155,17 @@ class KernelIntegrationTests(unittest.TestCase):
         for symbol in symbols:
             self.assertIn(config.get(symbol, "n"), ("y", "m"), symbol)
 
+    def test_real_firehol_extensions_follow_a_modular_xtables(self):
+        if "config NETFILTER_XTABLES_LEGACY" not in (self.tree / "net/netfilter/Kconfig").read_text():
+            self.skipTest("requires a 6.17+ tree with NETFILTER_XTABLES_LEGACY")
+        self.prepare_baseline(NETFILTER_XTABLES="m", NETFILTER_XTABLES_LEGACY="n", NFT_COMPAT="n",
+                              NETFILTER_XT_TARGET_TCPMSS="n", NETFILTER_XT_MATCH_PHYSDEV="n")
+        self.assert_success(self.run_script("--strict", "--prune-legacy", "--applications=firehol"))
+        self.assert_values(NETFILTER_XTABLES_LEGACY="y", NETFILTER_XT_TARGET_TCPMSS="m",
+                           NETFILTER_XT_MATCH_PHYSDEV="m")
+        self.assert_enabled("IP_NF_TARGET_NETMAP", "IP_NF_TARGET_REDIRECT", "IP_NF_TARGET_TTL",
+                            "IP6_NF_TARGET_HL", "IP_NF_FILTER", "IP_NF_NAT", "IP_NF_RAW")
+
     def test_real_tunnel_profiles_leave_udp_tunnel_to_its_selectors(self):
         # GENEVE=m leaves NET_UDP_TUNNEL=m; docker then builds VXLAN in.
         self.prepare_baseline(VXLAN="n", GENEVE="m", OPENVSWITCH="m", NET_UDP_TUNNEL="m")

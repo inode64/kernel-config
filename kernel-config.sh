@@ -4946,16 +4946,18 @@ configure_application_profiles() {
                 for sym in "${iptables_legacy_syms[@]}"; do
                     loadable_syms["$sym"]="$profile"
                 done
-                for sym in NF_TABLES IP_SET NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG; do
+                for sym in NF_TABLES IP_SET; do
                     append_unique_item "$sym" enable_syms
                 done
                 # Targets and matches that `firehol debug` emits for a plain
                 # version 5/6 configuration (interface/router with physdev,
                 # dnat/snat/redirect, `tcpmss auto`, `tosfix`, mark/connmark,
                 # limit/connlimit/hashlimit/recent, owner/mac/iprange/pkttype,
-                # CT --helper and the FTP helper). Missing symbols are skipped.
-                for sym in NETFILTER_XT_TARGET_CT NETFILTER_XT_TARGET_TCPMSS NETFILTER_XT_TARGET_DSCP NETFILTER_XT_TARGET_NETMAP NETFILTER_XT_TARGET_NFLOG NETFILTER_XT_MARK NETFILTER_XT_CONNMARK NETFILTER_XT_MATCH_MULTIPORT NETFILTER_XT_MATCH_LIMIT NETFILTER_XT_MATCH_STATE NETFILTER_XT_MATCH_OWNER NETFILTER_XT_MATCH_PHYSDEV NETFILTER_XT_MATCH_MAC NETFILTER_XT_MATCH_IPRANGE NETFILTER_XT_MATCH_RECENT NETFILTER_XT_MATCH_HASHLIMIT NETFILTER_XT_MATCH_CONNLIMIT NETFILTER_XT_MATCH_HELPER NETFILTER_XT_MATCH_PKTTYPE NF_CONNTRACK_FTP NF_NAT_FTP IP_NF_TARGET_NETMAP IP_NF_TARGET_REDIRECT IP_NF_TARGET_TTL IP6_NF_TARGET_HL; do
-                    append_unique_item "$sym" enable_syms
+                # CT --helper and the FTP helper). Missing symbols are skipped;
+                # iptables loads them on demand, so they are modules when possible.
+                for sym in NFT_CT NFT_NAT NFT_MASQ NFT_REDIR NETFILTER_XT_MATCH_CONNTRACK NETFILTER_XT_MATCH_COMMENT NETFILTER_XT_MATCH_ADDRTYPE NETFILTER_XT_SET NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_REDIRECT NETFILTER_XT_TARGET_LOG \
+                    NETFILTER_XT_TARGET_CT NETFILTER_XT_TARGET_TCPMSS NETFILTER_XT_TARGET_DSCP NETFILTER_XT_TARGET_NETMAP NETFILTER_XT_TARGET_NFLOG NETFILTER_XT_MARK NETFILTER_XT_CONNMARK NETFILTER_XT_MATCH_MULTIPORT NETFILTER_XT_MATCH_LIMIT NETFILTER_XT_MATCH_STATE NETFILTER_XT_MATCH_OWNER NETFILTER_XT_MATCH_PHYSDEV NETFILTER_XT_MATCH_MAC NETFILTER_XT_MATCH_IPRANGE NETFILTER_XT_MATCH_RECENT NETFILTER_XT_MATCH_HASHLIMIT NETFILTER_XT_MATCH_CONNLIMIT NETFILTER_XT_MATCH_HELPER NETFILTER_XT_MATCH_PKTTYPE NF_CONNTRACK_FTP NF_NAT_FTP IP_NF_TARGET_NETMAP IP_NF_TARGET_REDIRECT IP_NF_TARGET_TTL IP6_NF_TARGET_HL; do
+                    loadable_syms["$sym"]="$profile"
                 done
                 ;;
             firewalld)

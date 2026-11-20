@@ -487,8 +487,8 @@ These options change kernel build configuration and defaults. They do not create
   longer conflicts with `PRUNE_LEGACY`. A host whose `iptables -V` reports
   `legacy` also needs `iptables-legacy`, which requests the legacy filter,
   mangle, raw and nat tables for IPv4 and IPv6. Docker 28+ writes its
-  direct-access `DROP` rules to the raw table. Those tables and Docker's
-  xtables extensions are loaded on demand, so they follow the
+  direct-access `DROP` rules to the raw table. Those tables and the xtables
+  extensions of `docker` and `firehol` are loaded on demand, so they follow the
   `PLATFORM_DRIVERS` rule: built-in stays built in, otherwise a module when
   `MODULES=y`. A request therefore never exceeds a modular `NETFILTER_XTABLES`.
   `qemu` enables host drivers and lets Kconfig select internal VHOST dependencies
