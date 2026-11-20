@@ -47,7 +47,9 @@ class SnapshotTests(unittest.TestCase):
                 self.assertTrue({"TRANSPARENT_HUGEPAGE_NEVER", "LRU_GEN_ENABLED",
                                  "ZSWAP_COMPRESSOR_DEFAULT_ZSTD", "ZRAM_BACKEND_LZO",
                                  "ZRAM_DEF_COMP_LZORLE", "NUMA_BALANCING_DEFAULT_ENABLED",
-                                 "TCP_CONG_BBR", "DEFAULT_RENO", "IO_URING", "RV"} <= symbols)
+                                 "TCP_CONG_BBR", "DEFAULT_RENO", "NET_SCH_DEFAULT",
+                                 "DEFAULT_FQ", "DEFAULT_FQ_CODEL", "DEFAULT_PFIFO_FAST",
+                                 "IO_URING", "RV"} <= symbols)
                 if snapshot.name == "linux-7.2.0":
                     self.assertTrue({"KMALLOC_PARTITION_CACHES", "KMALLOC_PARTITION_RANDOM",
                                      "KMALLOC_PARTITION_TYPED", "NUMA_MIGRATION",

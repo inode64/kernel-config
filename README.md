@@ -364,6 +364,7 @@ All controls in this table default to `keep`: they add no request of their own, 
 | `--numa-balancing` | `keep`, `on`, `off` | `on` requests NUMA, page migration, automatic balancing support, and default activation. |
 | `--kmalloc-partition` | `keep`, `off`, `random`, `typed` | Controls slab-cache partitioning, using the legacy random-cache option on older kernels. |
 | `--tcp-congestion` | `keep`, `cubic`, `bbr`, `reno` | Sets the default TCP congestion algorithm and builds in the selected implementation. BBR also enables FQ support. |
+| `--default-qdisc` | `keep`, `pfifo_fast`, `fq`, `fq_codel`, `fq_pie`, `codel`, `sfq` | Enables `NET_SCH_DEFAULT`, builds in the selected queuing discipline (plus `NET_SCH_PIE` for `fq_pie`), and sets the compiled-in default (`DEFAULT_NET_SCH`). Useful on non-systemd/OpenRC hosts without a `sysctl.d` override for `pfifo_fast`, or paired with `--tcp-congestion=bbr` (`fq`). |
 | `--io-uring` | `keep`, `on`, `off` | Controls io_uring support. Disabling it requires `CONFIG_EXPERT=y` in the input configuration. |
 
 An explicit unsupported request is reported; `--strict` prevents saving it. Kconfig remains responsible for architecture and compiler capabilities. The script does not force capability symbols such as `CC_HAS_ALLOC_TOKEN`; `typed` partitioning requires compiler support. On 7.2 it uses `KMALLOC_PARTITION_CACHES` and its mode choice rather than the transitional `RANDOM_KMALLOC_CACHES` symbol. NUMA balancing uses `NUMA_MIGRATION` where available and `MIGRATION` on older trees.

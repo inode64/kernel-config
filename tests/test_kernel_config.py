@@ -229,7 +229,7 @@ class ScriptTests(unittest.TestCase):
     def test_invalid_extended_options_and_conflicts_are_read_only(self):
         options = ["preemption", "preempt-dynamic", "tick-mode", "thp", "lru-gen", "zswap",
                    "zswap-compressor", "zram", "zram-compressor", "numa-balancing",
-                   "kmalloc-partition", "tcp-congestion", "io-uring"]
+                   "kmalloc-partition", "tcp-congestion", "default-qdisc", "io-uring"]
         cases = [[f"--{option}=bad"] for option in options] + [
             ["--zswap=keep|on"], ["--prune-runtime-verification=bad"],
             ["--zswap=off", "--zswap-compressor=zstd"],
@@ -519,7 +519,7 @@ class ScriptTests(unittest.TestCase):
                                   NUMA_BALANCING="n", RANDOM_KMALLOC_CACHES="y", IO_URING="y")
         controls = ["preemption", "preempt-dynamic", "tick-mode", "thp", "lru-gen", "zswap",
                     "zswap-compressor", "zram", "zram-compressor", "numa-balancing",
-                    "kmalloc-partition", "tcp-congestion", "io-uring"]
+                    "kmalloc-partition", "tcp-congestion", "default-qdisc", "io-uring"]
         self.assert_success(self.run_script("--strict", *(f"--{name}=keep" for name in controls)))
         self.assertEqual(self.config.read_text(), self.baseline)
 
@@ -620,6 +620,39 @@ class ScriptTests(unittest.TestCase):
                 if algorithm == "bbr":
                     self.assert_symbol("NET_SCH_FQ", "y")
                     self.assert_symbol("TCP_CONG_BBR", "y")
+
+    def test_default_qdisc_control_and_dependencies(self):
+        qdiscs = ["pfifo_fast", "fq", "fq_codel", "fq_pie", "codel", "sfq"]
+        self.add_symbols(
+            "NET", "NET_SCHED", "NET_SCH_DEFAULT", "NET_SCH_PIE",
+            *(f"NET_SCH_{q.upper()}" for q in qdiscs if q != "pfifo_fast"),
+            *(f"DEFAULT_{q.upper()}" for q in qdiscs),
+        )
+        for qdisc in qdiscs:
+            with self.subTest(qdisc=qdisc):
+                self.config.write_text(self.baseline)
+                self.assert_success(self.run_script("--strict", f"--default-qdisc={qdisc}"))
+                self.assert_symbol("NET", "y")
+                self.assert_symbol("NET_SCHED", "y")
+                self.assert_symbol("NET_SCH_DEFAULT", "y")
+                for other in qdiscs:
+                    self.assert_symbol(f"DEFAULT_{other.upper()}", "y" if other == qdisc else "n")
+                if qdisc != "pfifo_fast":
+                    self.assert_symbol(f"NET_SCH_{qdisc.upper()}", "y")
+                if qdisc == "fq_pie":
+                    self.assert_symbol("NET_SCH_PIE", "y")
+        # Protected sibling choice blocks switching under --strict.
+        self.set_baseline_symbols(DEFAULT_PFIFO_FAST="y")
+        before = self.config.read_bytes()
+        backups = sorted(self.tree.glob(".config.bak.*"))
+        result = self.run_script(
+            "--strict", "--default-qdisc=fq_codel",
+            "--protected-config-symbols=DEFAULT_PFIFO_FAST",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicts with protected CONFIG_DEFAULT_PFIFO_FAST", result.stderr)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(sorted(self.tree.glob(".config.bak.*")), backups)
 
     def test_io_uring_off_requires_expert(self):
         self.add_symbols("IO_URING")

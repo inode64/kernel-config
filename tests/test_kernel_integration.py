@@ -77,7 +77,8 @@ class KernelIntegrationTests(unittest.TestCase):
         args = ("--strict", "--preemption=lazy", "--preempt-dynamic=on", "--tick-mode=full",
                 "--thp=madvise", "--lru-gen=on", "--zswap=on", "--zswap-compressor=zstd",
                 "--zram=module", "--zram-compressor=lz4", "--numa-balancing=on",
-                "--kmalloc-partition=random", "--tcp-congestion=bbr", "--io-uring=on")
+                "--kmalloc-partition=random", "--tcp-congestion=bbr", "--default-qdisc=fq",
+                "--io-uring=on")
         self.assert_success(self.run_script(*args))
         self.assert_values(PREEMPT_LAZY="y", PREEMPT="n", PREEMPT_RT="n", PREEMPT_DYNAMIC="y",
                            NO_HZ_FULL="y", NO_HZ_IDLE="n", HZ_PERIODIC="n",
@@ -87,10 +88,26 @@ class KernelIntegrationTests(unittest.TestCase):
                            ZRAM_DEF_COMP='"lz4"', NUMA="y", NUMA_MIGRATION="y",
                            NUMA_BALANCING="y", NUMA_BALANCING_DEFAULT_ENABLED="y",
                            KMALLOC_PARTITION_CACHES="y", KMALLOC_PARTITION_RANDOM="y",
-                           TCP_CONG_BBR="y", DEFAULT_TCP_CONG='"bbr"', NET_SCH_FQ="y", IO_URING="y")
+                           TCP_CONG_BBR="y", DEFAULT_TCP_CONG='"bbr"', NET_SCH_FQ="y",
+                           NET_SCH_DEFAULT="y", DEFAULT_FQ="y", DEFAULT_NET_SCH='"fq"',
+                           IO_URING="y")
         before = self.config.read_bytes()
         self.assert_success(self.run_script(*args))
         self.assertEqual(self.config.read_bytes(), before)
+
+    def test_real_default_qdisc_from_disabled_net_sched_and_fq_pie(self):
+        self.prepare_baseline(NET_SCHED="n")
+        self.assert_success(self.run_script("--strict", "--default-qdisc=fq_codel"))
+        self.assert_values(NET_SCHED="y", NET_SCH_DEFAULT="y", NET_SCH_FQ_CODEL="y",
+                           DEFAULT_FQ_CODEL="y", DEFAULT_PFIFO_FAST="n",
+                           DEFAULT_NET_SCH='"fq_codel"')
+        self.prepare_baseline(NET_SCH_PIE="n")
+        self.assert_success(self.run_script("--strict", "--default-qdisc=fq_pie"))
+        self.assert_values(NET_SCH_PIE="y", NET_SCH_FQ_PIE="y", DEFAULT_FQ_PIE="y",
+                           DEFAULT_FQ_CODEL="n", DEFAULT_NET_SCH='"fq_pie"')
+        self.assert_success(self.run_script("--strict", "--default-qdisc=pfifo_fast"))
+        self.assert_values(DEFAULT_PFIFO_FAST="y", DEFAULT_FQ_PIE="n",
+                           DEFAULT_NET_SCH='"pfifo_fast"')
 
     def test_real_rt_model_and_io_uring_off(self):
         self.prepare_baseline(EXPERT="y")

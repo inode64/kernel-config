@@ -55,6 +55,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   NUMA_BALANCING=keep       -> keep, on, off; NUMA memory placement and its default activation
 #   KMALLOC_PARTITION=keep       -> keep, off, random, typed; slab cache partitioning
 #   TCP_CONGESTION=keep       -> keep, cubic, bbr, reno; default TCP congestion control
+#   DEFAULT_QDISC=keep        -> keep, pfifo_fast, fq, fq_codel, fq_pie, codel, sfq; default queuing discipline
 #   IO_URING=keep       -> keep, on, off; io_uring support
 #   PRUNE_RUNTIME_VERIFICATION -> disable Runtime Verification and its monitors
 #   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
@@ -152,6 +153,7 @@ Options:
   --numa-balancing VALUE
   --kmalloc-partition VALUE
   --tcp-congestion VALUE
+  --default-qdisc VALUE
   --io-uring VALUE
   --prune-runtime-verification
   --disable-symbols LIST
@@ -236,6 +238,7 @@ Notes:
   --numa-balancing accepts: keep, on, off (default: keep).
   --kmalloc-partition accepts: keep, off, random, typed (default: keep).
   --tcp-congestion accepts: keep, cubic, bbr, reno (default: keep).
+  --default-qdisc accepts: keep, pfifo_fast, fq, fq_codel, fq_pie, codel, sfq (default: keep).
   --io-uring accepts: keep, on, off (default: keep).
   Symbol lists are comma-separated, case-sensitive Kconfig names (optional CONFIG_ prefix).
   --disable-symbols, --module-symbols and --enable-symbols apply last; module requires MODULES=y.
@@ -360,7 +363,7 @@ set_tunable() {
             echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
             exit 1
             ;;
-        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PLATFORM_DRIVERS | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
+        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PLATFORM_DRIVERS | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | DEFAULT_QDISC | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -421,6 +424,7 @@ init_tunable ZRAM_COMPRESSOR keep
 init_tunable NUMA_BALANCING keep
 init_tunable KMALLOC_PARTITION keep
 init_tunable TCP_CONGESTION keep
+init_tunable DEFAULT_QDISC keep
 init_tunable IO_URING keep
 init_tunable PRUNE_RUNTIME_VERIFICATION false
 init_tunable KERNEL_COMPRESSION keep
@@ -3128,6 +3132,29 @@ configure_tcp_congestion_control() {
         DEFAULT_HYBLA DEFAULT_VEGAS DEFAULT_VENO DEFAULT_WESTWOOD DEFAULT_DCTCP DEFAULT_CDG DEFAULT_BBR DEFAULT_RENO
 }
 
+configure_default_qdisc_control() {
+    [[ "$DEFAULT_QDISC" != keep ]] || return 0
+    local selected="DEFAULT_${DEFAULT_QDISC@U}"
+    require_control_symbols NET_SCH_DEFAULT "$selected" || return 0
+    if [[ "$DEFAULT_QDISC" != pfifo_fast ]]; then
+        require_control_symbols "NET_SCH_${DEFAULT_QDISC@U}" || return 0
+    fi
+    if [[ "$DEFAULT_QDISC" == fq_pie ]]; then
+        require_control_symbols NET_SCH_PIE || return 0
+    fi
+    request_explicit_symbol NET y
+    request_explicit_symbol NET_SCHED y
+    if [[ "$DEFAULT_QDISC" == fq_pie ]]; then
+        request_explicit_symbol NET_SCH_PIE y
+    fi
+    if [[ "$DEFAULT_QDISC" != pfifo_fast ]]; then
+        request_explicit_symbol "NET_SCH_${DEFAULT_QDISC@U}" y
+    fi
+    request_explicit_symbol NET_SCH_DEFAULT y
+    request_choice "$selected" DEFAULT_FQ DEFAULT_CODEL DEFAULT_FQ_CODEL \
+        DEFAULT_FQ_PIE DEFAULT_SFQ DEFAULT_PFIFO_FAST
+}
+
 configure_extended_controls() {
     configure_risk_controls
     case "$UCLAMP" in
@@ -3172,6 +3199,7 @@ configure_extended_controls() {
     configure_numa_balancing_control
     configure_kmalloc_partition_control
     configure_tcp_congestion_control
+    configure_default_qdisc_control
     case "$IO_URING" in
         on) request_explicit_symbol IO_URING y ;;
         off)
@@ -5597,6 +5625,7 @@ validate_tunables() {
     validate_enum NUMA_BALANCING 'keep|on|off'
     validate_enum KMALLOC_PARTITION 'keep|off|random|typed'
     validate_enum TCP_CONGESTION 'keep|cubic|bbr|reno'
+    validate_enum DEFAULT_QDISC 'keep|pfifo_fast|fq|fq_codel|fq_pie|codel|sfq'
     validate_enum IO_URING 'keep|on|off'
     validate_enum UCLAMP 'keep|on|off'
     validate_enum AUTOGROUP 'keep|on|off'
