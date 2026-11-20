@@ -5098,6 +5098,10 @@ configure_application_profiles() {
                 for sym in TASKSTATS TASK_DELAY_ACCT PSI SCHEDSTATS PROC_EVENTS; do
                     append_unique_item "$sym" enable_syms
                 done
+                # PROC_EVENTS depends on CONNECTOR=y: a modular connector hides it.
+                if have_symbol CONNECTOR; then
+                    request_explicit_symbol CONNECTOR y
+                fi
                 ;;
             bmon)
                 for sym in PACKET PACKET_DIAG NETLINK_DIAG INET_DIAG UNIX_DIAG; do

@@ -1136,6 +1136,14 @@ config HID_LED
         self.assert_symbol("SUNRPC", "m")
         self.assert_symbol("NFSD", "y")
 
+    def test_atop_builds_the_connector_in_for_proc_events(self):
+        self.add_symbols("MODULES", "TASKSTATS", "PROC_EVENTS")
+        self.add_symbols("CONNECTOR", kind="tristate")
+        self.set_baseline_symbols(MODULES="y", CONNECTOR="m", PROC_EVENTS="n")
+        self.assert_success(self.run_script("--strict", "--applications=atop"))
+        self.assert_symbol("CONNECTOR", "y")
+        self.assert_symbol("PROC_EVENTS", "y")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",

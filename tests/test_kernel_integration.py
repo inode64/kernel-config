@@ -178,6 +178,11 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_values(OPENVSWITCH="m", MPLS="y")
         self.assert_enabled("VXLAN", "GENEVE", "NET_IPGRE_DEMUX", "NF_CONNTRACK_OVS")
 
+    def test_real_atop_next_to_a_modular_connector(self):
+        self.prepare_baseline(CONNECTOR="m")
+        self.assert_success(self.run_script("--strict", "--applications=atop"))
+        self.assert_values(CONNECTOR="y", PROC_EVENTS="y", TASKSTATS="y", TASK_DELAY_ACCT="y")
+
     def test_real_tunnel_profiles_leave_udp_tunnel_to_its_selectors(self):
         # GENEVE=m leaves NET_UDP_TUNNEL=m; docker then builds VXLAN in.
         self.prepare_baseline(VXLAN="n", GENEVE="m", OPENVSWITCH="m", NET_UDP_TUNNEL="m")

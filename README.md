@@ -491,6 +491,7 @@ These options change kernel build configuration and defaults. They do not create
   extensions of `docker` and `firehol` are loaded on demand, so they follow the
   `PLATFORM_DRIVERS` rule: built-in stays built in, otherwise a module when
   `MODULES=y`. A request therefore never exceeds a modular `NETFILTER_XTABLES`.
+  `atop` builds `CONNECTOR` in, because `PROC_EVENTS` depends on `CONNECTOR=y`.
   `qemu` enables host drivers and lets Kconfig select internal VHOST dependencies
   at the required built-in/module level.
   `firehol` also requests the targets and matches that `firehol debug` emits for
