@@ -3805,6 +3805,9 @@ configure_optimization_profile() {
 
             # NO_PAGE_MAPCOUNT (6.15+) is still EXPERIMENTAL in 7.2; none of
             # the distribution kernels compared enable it.
+            # RT_GROUP_SCHED (default n) makes SCHED_FIFO/RR tasks outside the
+            # root cgroup fail until each group gets an RT budget, which breaks
+            # systemd services and containers that ask for real-time priority.
             disable_if_present \
                 CPU_FREQ_DEFAULT_GOV_CONSERVATIVE \
                 CPU_FREQ_DEFAULT_GOV_ONDEMAND \
@@ -3812,6 +3815,7 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
                 CPU_FREQ_DEFAULT_GOV_USERSPACE \
                 NO_PAGE_MAPCOUNT \
+                RT_GROUP_SCHED \
                 SCHED_AUTOGROUP \
                 WQ_POWER_EFFICIENT_DEFAULT
 

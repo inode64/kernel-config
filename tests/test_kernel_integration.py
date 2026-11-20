@@ -205,6 +205,11 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(NO_PAGE_MAPCOUNT="n")
 
+    def test_real_server_profile_disables_rt_group_scheduling(self):
+        self.prepare_baseline(CGROUP_SCHED="y", RT_GROUP_SCHED="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(RT_GROUP_SCHED="n", CGROUP_SCHED="y", FAIR_GROUP_SCHED="y")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():
