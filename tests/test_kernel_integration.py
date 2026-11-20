@@ -437,6 +437,15 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(CRC_OPTIMIZATIONS="y")
 
+    def test_real_profile_enables_bpf_jit_and_always_on(self):
+        self.prepare_baseline(BPF_SYSCALL="y", BPF_JIT="n", BPF_JIT_ALWAYS_ON="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="y", BPF_JIT_DEFAULT_ON="y")
+        # Explicit opt-out of BPF_JIT_ALWAYS_ON still keeps BPF_JIT enabled.
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--disable-symbols=BPF_JIT_ALWAYS_ON"))
+        self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
+
     def test_real_profile_selects_crc32_slice_by_8(self):
         kconfig = self.tree / "lib/Kconfig"
         if not kconfig.is_file() or "config CRC32_SLICEBY8" not in kconfig.read_text():

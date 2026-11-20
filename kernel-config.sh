@@ -3969,6 +3969,26 @@ configure_fast_checksums() {
     done
 }
 
+configure_bpf_jit() {
+    # kernel/bpf/Kconfig: BPF_JIT compiles classic BPF (seccomp-bpf, socket
+    # filters) and eBPF programs to native machine code instead of running the
+    # software interpreter; architectures with ARCH_WANT_DEFAULT_BPF_JIT
+    # (x86_64, arm64, powerpc, s390, loongarch, parisc) also default JIT on at
+    # boot. When BPF_SYSCALL and HAVE_EBPF_JIT are enabled, Fedora, RHEL, Arch,
+    # Ubuntu and Gentoo dist-kernel also enable BPF_JIT_ALWAYS_ON to remove the
+    # interpreter and its speculative-execution gadgets.
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[BPF_JIT]:-}" == n ]]; then
+        return 0
+    fi
+    if kconfig_depends_met BPF_JIT; then
+        enable_if_present BPF_JIT
+    fi
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[BPF_JIT_ALWAYS_ON]:-}" != n ]] \
+        && kconfig_depends_met BPF_JIT_ALWAYS_ON; then
+        enable_if_present BPF_JIT_ALWAYS_ON
+    fi
+}
+
 configure_optimization_profile() {
     local profile="$1"
 
@@ -4015,6 +4035,7 @@ configure_optimization_profile() {
 
     configure_orc_unwinder
     configure_fast_checksums
+    configure_bpf_jit
     configure_profile_scheduler "$profile"
     case "$profile" in
         server)

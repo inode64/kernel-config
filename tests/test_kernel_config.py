@@ -1431,6 +1431,56 @@ config HID_LED
         ))
         self.assert_symbol("SCHED_ALT", "y")
 
+    def test_profiles_enable_bpf_jit_when_dependencies_are_met(self):
+        self.add_kconfig('''
+            config BPF
+            \tbool
+            config HAVE_CBPF_JIT
+            \tbool
+            config HAVE_EBPF_JIT
+            \tbool
+            config BPF_SYSCALL
+            \tbool "Enable bpf() system call"
+            config BPF_JIT
+            \tbool "Enable BPF Just In Time compiler"
+            \tdepends on BPF
+            \tdepends on HAVE_CBPF_JIT || HAVE_EBPF_JIT
+            config BPF_JIT_ALWAYS_ON
+            \tbool "Permanently enable BPF JIT and remove BPF interpreter"
+            \tdepends on BPF_SYSCALL && HAVE_EBPF_JIT && BPF_JIT
+        ''')
+        self.set_baseline_symbols(BPF="y", HAVE_EBPF_JIT="y", BPF_SYSCALL="y",
+                                  BPF_JIT="n", BPF_JIT_ALWAYS_ON="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("BPF_JIT", "y")
+        self.assert_symbol("BPF_JIT_ALWAYS_ON", "y")
+        # Without BPF_SYSCALL, classic BPF JIT is still enabled without BPF_JIT_ALWAYS_ON.
+        self.set_baseline_symbols(BPF="y", HAVE_EBPF_JIT="y", BPF_SYSCALL="n",
+                                  BPF_JIT="n", BPF_JIT_ALWAYS_ON="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
+        self.assert_symbol("BPF_JIT", "y")
+        self.assert_symbol("BPF_JIT_ALWAYS_ON", "n")
+        # Explicit --disable-symbols=BPF_JIT suppresses both without strict conflict.
+        self.set_baseline_symbols(BPF="y", HAVE_EBPF_JIT="y", BPF_SYSCALL="y",
+                                  BPF_JIT="y", BPF_JIT_ALWAYS_ON="y")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--disable-symbols=BPF_JIT"))
+        self.assert_symbol("BPF_JIT", "n")
+        # Explicit --disable-symbols=BPF_JIT_ALWAYS_ON keeps BPF_JIT on.
+        self.set_baseline_symbols(BPF="y", HAVE_EBPF_JIT="y", BPF_SYSCALL="y",
+                                  BPF_JIT="n", BPF_JIT_ALWAYS_ON="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--disable-symbols=BPF_JIT_ALWAYS_ON"))
+        self.assert_symbol("BPF_JIT", "y")
+        self.assert_symbol("BPF_JIT_ALWAYS_ON", "n")
+        # Protected BPF_JIT=n prevents enabling BPF_JIT_ALWAYS_ON.
+        self.set_baseline_symbols(BPF="y", HAVE_EBPF_JIT="y", BPF_SYSCALL="y",
+                                  BPF_JIT="n", BPF_JIT_ALWAYS_ON="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--protected-config-symbols=BPF_JIT"))
+        self.assert_symbol("BPF_JIT", "n")
+        self.assert_symbol("BPF_JIT_ALWAYS_ON", "n")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
