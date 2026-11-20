@@ -737,6 +737,30 @@ endmenu
         self.assert_success(self.run_script("--strict", "--prune-debug-trace", env={"ARCH": "x86"}))
         self.assert_symbol("EARLY_PRINTK", "n")
 
+    def test_pattern_discovery_ignores_foreign_architecture_prompts(self):
+        self.add_kconfig('''
+            config EARLY_PRINTK
+            \tbool "Early printk" if EXPERT
+        ''', path="arch/x86/Kconfig.debug")
+        self.add_kconfig('''
+            config EARLY_PRINTK
+            \tbool "Activate early kernel debugging"
+        ''', path="arch/nios2/Kconfig.debug")
+        self.add_kconfig('''
+            config CPU_BIG_ENDIAN
+            \tbool "Build big-endian kernel (DEPRECATED)"
+        ''', path="arch/arm/mm/Kconfig")
+        self.add_kconfig('''
+            config CPU_BIG_ENDIAN
+            \tbool "Build big endian kernel"
+        ''', path="arch/powerpc/Kconfig")
+        self.set_baseline_symbols(EARLY_PRINTK="y", EXPERT="y")
+        self.assert_success(self.run_script("--strict", "--prune-debug-trace", env={"ARCH": "x86"}))
+        self.assert_symbol("EARLY_PRINTK", "y")
+        self.set_baseline_symbols(CPU_BIG_ENDIAN="y")
+        self.assert_success(self.run_script("--strict", "--prune-legacy", env={"ARCH": "powerpc"}))
+        self.assert_symbol("CPU_BIG_ENDIAN", "y")
+
     def test_legacy_pruning_preserves_af_alg_application_abi(self):
         with (self.tree / "Kconfig").open("a") as stream:
             stream.write('''

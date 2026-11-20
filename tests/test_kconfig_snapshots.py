@@ -15,7 +15,7 @@ class SnapshotTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         source = SCRIPT.read_text()
-        names = ["find_kconfig_files", "discover_kconfig_symbols_by_pattern",
+        names = ["resolve_kconfig_srcarch", "find_kconfig_files", "discover_kconfig_symbols_by_pattern",
                  "discover_debug_trace_kconfig_symbols", "discover_selftest_kconfig_symbols",
                  "discover_coverage_kconfig_symbols", "discover_fault_injection_kconfig_symbols",
                  "discover_legacy_kconfig_symbols", "discover_dangerous_kconfig_symbols",
@@ -23,10 +23,11 @@ class SnapshotTests(unittest.TestCase):
         cls.functions = "\n".join(re.search(r"^" + name + r"\(\) \{\n.*?^\}", source,
                                             re.M | re.S)[0] for name in names)
 
-    def discover(self, snapshot, category):
+    def discover(self, snapshot, category, arch="x86"):
         result = subprocess.run(
             ["bash", "-c", self.functions + '\nKSRCDIR="$1"\n'
              + f"discover_{category}_kconfig_symbols", "_", str(snapshot)],
+            env={"PATH": "/usr/bin:/bin", "ARCH": arch},
             text=True, capture_output=True, timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -82,9 +83,15 @@ class SnapshotTests(unittest.TestCase):
         for snapshot in SNAPSHOTS:
             with self.subTest(version=snapshot.name):
                 debug = self.discover(snapshot, "debug_trace")
-                self.assertFalse({"IP_NF_RAW", "IP6_NF_RAW"} & debug)
+                self.assertFalse({"IP_NF_RAW", "IP6_NF_RAW", "EARLY_PRINTK"} & debug)
                 # The TRACE target itself is still a packet-tracing debug aid.
                 self.assertIn("NETFILTER_XT_TARGET_TRACE", debug)
+
+    def test_discovery_ignores_other_architecture_prompts(self):
+        for snapshot in SNAPSHOTS:
+            with self.subTest(version=snapshot.name):
+                self.assertNotIn("EARLY_PRINTK", self.discover(snapshot, "debug_trace", arch="x86"))
+                self.assertNotIn("CPU_BIG_ENDIAN", self.discover(snapshot, "legacy", arch="powerpc"))
 
     def test_new_72_controls_are_discovered(self):
         snapshot = SCRIPT.parent / "linux-7.2.0"

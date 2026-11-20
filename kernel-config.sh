@@ -783,8 +783,8 @@ load_defined_symbols() {
     done <<<"$symbols"
 }
 
-load_kconfig_metadata() {
-    local srcarch="${ARCH:-$(uname -m)}" entries sym kind guard
+resolve_kconfig_srcarch() {
+    local srcarch="${ARCH:-$(uname -m)}"
     case "$srcarch" in
         x86_64 | i?86) srcarch=x86 ;;
         aarch64) srcarch=arm64 ;;
@@ -792,6 +792,12 @@ load_kconfig_metadata() {
         riscv*) srcarch=riscv ;;
         s390x) srcarch=s390 ;;
     esac
+    printf '%s\n' "$srcarch"
+}
+
+load_kconfig_metadata() {
+    local srcarch entries sym kind guard
+    srcarch="$(resolve_kconfig_srcarch)"
     # This is conservative metadata, not a replacement for Kconfig evaluation.
     # Other architectures must not turn a target's hidden symbol into a prompt, so
     # arch/<other>/ is skipped; the generic arch/Kconfig (SCHED_MC, JUMP_LABEL, SECCOMP...)
@@ -1438,11 +1444,16 @@ probe_and_prune_unused_module_symbols() {
 }
 
 discover_kconfig_symbols_by_pattern() {
-    local pattern="$1"
+    local pattern="$1" srcarch
+    srcarch="$(resolve_kconfig_srcarch)"
 
+    # Other architectures can give a shared symbol a different prompt (for
+    # example, nios2 calls EARLY_PRINTK "Activate early kernel debugging" and
+    # arm marks CPU_BIG_ENDIAN "(DEPRECATED)"), so skip arch/<other>/... just
+    # like load_kconfig_metadata does.
     # shellcheck disable=SC2016
     find_kconfig_files \
-        | xargs -0 -r awk -v pattern="$pattern" '
+        | xargs -0 -r awk -v pattern="$pattern" -v root="$KSRCDIR/arch/" -v arch="$srcarch/" '
             BEGIN {
                 IGNORECASE = 1
             }
@@ -1453,7 +1464,13 @@ discover_kconfig_symbols_by_pattern() {
                 menu_depth = 0; if_depth = 0
                 last_menuconfig_sym = ""; menuconfig_pattern_match = 0
                 delete menu_matches; delete if_matches
+                IGNORECASE = 0
+                rest = (index(FILENAME, root) == 1) ? substr(FILENAME, length(root) + 1) : ""
+                skip = rest != "" && index(rest, "/") > 0 && index(rest, arch) != 1
+                IGNORECASE = 1
             }
+
+            skip { next }
 
             /\\[[:space:]]*$/ {
                 in_continuation = 1
