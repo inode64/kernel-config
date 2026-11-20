@@ -446,6 +446,11 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_profile_enables_network_scaling(self):
+        self.prepare_baseline(PCPU_DEV_REFCNT="n", BQL="n", RPS="n", RFS_ACCEL="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(PCPU_DEV_REFCNT="y", BQL="y", RPS="y", RFS_ACCEL="y")
+
     def test_real_profile_selects_crc32_slice_by_8(self):
         kconfig = self.tree / "lib/Kconfig"
         if not kconfig.is_file() or "config CRC32_SLICEBY8" not in kconfig.read_text():

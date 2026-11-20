@@ -1481,6 +1481,46 @@ config HID_LED
         self.assert_symbol("BPF_JIT", "n")
         self.assert_symbol("BPF_JIT_ALWAYS_ON", "n")
 
+    def test_profiles_enable_network_scaling_when_net_and_deps_are_met(self):
+        self.add_kconfig('''
+            config NET
+            \tbool "Networking support"
+            config SYSFS
+            \tbool "sysfs file system support"
+            config PCPU_DEV_REFCNT
+            \tbool "Use percpu variables to maintain network device refcount"
+            \tdepends on SMP
+            config BQL
+            \tbool "Enable Byte Queue Limits"
+            \tdepends on SYSFS
+            config RPS
+            \tbool "Receive packet steering"
+            \tdepends on SMP && SYSFS
+            config RFS_ACCEL
+            \tbool "Hardware acceleration of RFS"
+            \tdepends on RPS
+        ''')
+        self.set_baseline_symbols(NET="y", SMP="y", SYSFS="y",
+                                  PCPU_DEV_REFCNT="n", BQL="n", RPS="n", RFS_ACCEL="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for sym in ("PCPU_DEV_REFCNT", "BQL", "RPS", "RFS_ACCEL"):
+            self.assert_symbol(sym, "y")
+        # NET=n skips all four.
+        self.set_baseline_symbols(NET="n", SMP="y", SYSFS="y",
+                                  PCPU_DEV_REFCNT="n", BQL="n", RPS="n", RFS_ACCEL="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        for sym in ("PCPU_DEV_REFCNT", "BQL", "RPS", "RFS_ACCEL"):
+            self.assert_symbol(sym, "n")
+        # Disabling or protecting RPS off skips RFS_ACCEL too.
+        self.set_baseline_symbols(NET="y", SMP="y", SYSFS="y",
+                                  PCPU_DEV_REFCNT="n", BQL="n", RPS="n", RFS_ACCEL="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop",
+                                            "--disable-symbols=RPS"))
+        self.assert_symbol("PCPU_DEV_REFCNT", "y")
+        self.assert_symbol("BQL", "y")
+        self.assert_symbol("RPS", "n")
+        self.assert_symbol("RFS_ACCEL", "n")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",

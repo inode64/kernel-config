@@ -3989,6 +3989,34 @@ configure_bpf_jit() {
     fi
 }
 
+configure_network_scaling() {
+    # net/Kconfig (all four live inside `if NET` and default y upstream and on
+    # Fedora, RHEL, Ubuntu, Debian, Arch and Gentoo dist-kernel):
+    # - PCPU_DEV_REFCNT avoids global atomic refcount contention on SMP.
+    # - RPS and RFS_ACCEL steer receive processing across CPUs (opt-in via sysfs).
+    # - BQL prevents TX ring bufferbloat without reducing throughput.
+    if have_symbol NET && ! is_symbol_enabled_now NET; then
+        return 0
+    fi
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[PCPU_DEV_REFCNT]:-}" != n ]] \
+        && kconfig_depends_met PCPU_DEV_REFCNT; then
+        enable_if_present PCPU_DEV_REFCNT
+    fi
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[BQL]:-}" != n ]] \
+        && kconfig_depends_met BQL; then
+        enable_if_present BQL
+    fi
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[RPS]:-}" != n ]] \
+        && kconfig_depends_met RPS; then
+        enable_if_present RPS
+    fi
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[RPS]:-}" != n ]] \
+        && [[ "${_EXPLICIT_SYMBOL_VALUES[RFS_ACCEL]:-}" != n ]] \
+        && kconfig_depends_met RFS_ACCEL; then
+        enable_if_present RFS_ACCEL
+    fi
+}
+
 configure_optimization_profile() {
     local profile="$1"
 
@@ -4036,6 +4064,7 @@ configure_optimization_profile() {
     configure_orc_unwinder
     configure_fast_checksums
     configure_bpf_jit
+    configure_network_scaling
     configure_profile_scheduler "$profile"
     case "$profile" in
         server)
