@@ -288,6 +288,59 @@ class ScriptTests(unittest.TestCase):
                 self.assert_symbol("PREEMPT_DYNAMIC", "y" if profile == "desktop" else "n")
                 self.assert_symbol("PREEMPT_RT", "y" if profile == "realtime" else "n")
 
+    def test_server_profile_skips_preemption_models_with_unmet_dependencies(self):
+        # Linux 7.4 gates PREEMPT_NONE on ARCH_NO_PREEMPT and drops voluntary
+        # preemption where the lazy model exists. A migrated config still lists
+        # the old symbols as "is not set".
+        self.add_kconfig('''
+            config ARCH_NO_PREEMPT
+            \tbool
+
+            config ARCH_HAS_PREEMPT_LAZY
+            \tbool
+
+            config PREEMPT_NONE
+            \tbool "No Forced Preemption (Server)"
+            \tdepends on !PREEMPT_RT
+            \tdepends on ARCH_NO_PREEMPT
+
+            config PREEMPT_VOLUNTARY
+            \tbool "Voluntary Kernel Preemption (Desktop)"
+            \tdepends on !ARCH_HAS_PREEMPT_LAZY
+            \tdepends on !ARCH_NO_PREEMPT
+
+            config PREEMPT_LAZY
+            \tbool "Scheduler controlled preemption model"
+            \tdepends on !ARCH_NO_PREEMPT
+            \tdepends on ARCH_HAS_PREEMPT_LAZY
+
+            config PREEMPT
+            \tbool "Preemptible Kernel (Low-Latency Desktop)"
+            \tdepends on !ARCH_NO_PREEMPT
+
+            config PREEMPT_RT
+            \tbool "Fully Preemptible Kernel (Real-Time)"
+            \tdepends on EXPERT
+        ''')
+        self.add_symbols("PREEMPT_DYNAMIC")
+        self.set_baseline_symbols(
+            ARCH_HAS_PREEMPT_LAZY="y", PREEMPT="y", PREEMPT_NONE="n",
+            PREEMPT_VOLUNTARY="n", PREEMPT_LAZY="n", PREEMPT_DYNAMIC="y", EXPERT="n",
+        )
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("PREEMPT_LAZY", "y")
+        self.assert_symbol("PREEMPT_NONE", "n")
+        self.assert_symbol("PREEMPT_VOLUNTARY", "n")
+        self.assert_symbol("PREEMPT", "n")
+        self.assert_symbol("PREEMPT_DYNAMIC", "n")
+
+        # An architecture that cannot preempt still gets the throughput model.
+        self.config.write_text(self.baseline)
+        self.set_baseline_symbols(ARCH_NO_PREEMPT="y", ARCH_HAS_PREEMPT_LAZY="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("PREEMPT_NONE", "y")
+        self.assert_symbol("PREEMPT_LAZY", "n")
+
     def test_explicit_controls_override_profile_in_strict_mode(self):
         self.add_symbols("PREEMPT_NONE", "PREEMPT_VOLUNTARY", "PREEMPT", "PREEMPT_LAZY",
                          "PREEMPT_DYNAMIC", "PREEMPT_RT", "NO_HZ_FULL", "NO_HZ_IDLE", "HZ_PERIODIC",

@@ -1065,6 +1065,22 @@ describe_unmet_dependencies() {
     done <<<"${_KCONFIG_DEPENDS[$sym]:-}"
 }
 
+# True when the symbol exists and every direct "depends on" line holds.
+# Terms this parser cannot evaluate are not treated as unmet. Prompt guards
+# and conditions inherited from if/menu blocks are not visible here.
+kconfig_depends_met() {
+    local sym="$1" expr
+    local -a unmet=()
+    have_symbol "$sym" || return 1
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    while IFS= read -r expr; do
+        [[ -n "$expr" ]] || continue
+        mapfile -t unmet < <(_collect_unmet_terms "$expr")
+        ((${#unmet[@]} == 0)) || return 1
+    done <<<"${_KCONFIG_DEPENDS[$sym]:-}"
+    return 0
+}
+
 # Prints "selected by: FOO=y, BAR=m" for the enabled selectors of CONFIG_$1.
 describe_active_selectors() {
     local sym="$1" selector value
@@ -2891,13 +2907,20 @@ configure_profile_scheduler() {
     fi
     case "$profile" in
         server)
-            if config_has_symbol PREEMPT_NONE; then
+            # 7.4 (7dadeaa6, "sched: Further restrict the preemption modes")
+            # limits PREEMPT_NONE to ARCH_NO_PREEMPT and PREEMPT_VOLUNTARY to
+            # architectures without PREEMPT_LAZY. x86, arm64 and the other
+            # lazy-preemption targets then only have full and lazy; lazy is the
+            # one that recovers the throughput of the old voluntary model.
+            # config_has_symbol is the wrong test: a config migrated from 6.18
+            # still lists PREEMPT_NONE, and requesting it fails strict mode.
+            if kconfig_depends_met PREEMPT_NONE; then
                 model=none
-            elif is_symbol_enabled_now ARCH_HAS_PREEMPT_LAZY && have_symbol PREEMPT_LAZY; then
+            elif kconfig_depends_met PREEMPT_LAZY; then
                 model=lazy
-            elif config_has_symbol PREEMPT_VOLUNTARY; then
+            elif kconfig_depends_met PREEMPT_VOLUNTARY; then
                 model=voluntary
-            elif have_symbol PREEMPT; then
+            elif kconfig_depends_met PREEMPT; then
                 model=full
             fi
             disable_if_present PREEMPT_DYNAMIC

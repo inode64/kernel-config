@@ -179,7 +179,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   This setting is flag-only and must be enabled with `--all-optimizations`. To keep the existing kernel image compression, pass `--kernel-compression=keep` after this flag.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
-  Adjusts scheduler, preemption, and HZ defaults. Desktop and server select THP `madvise` rather than applying hugepages to every eligible mapping; desktop also requests full preemption with dynamic switching. Server prefers non-preemptible operation where available, then lazy, voluntary, or full preemption. Realtime requests RT only when its prerequisites are already enabled; otherwise it reports the fallback. Each profile selects a single tick mode. Explicit controls below override profile defaults.
+  Adjusts scheduler, preemption, and HZ defaults. Desktop and server select THP `madvise` rather than applying hugepages to every eligible mapping; desktop also requests full preemption with dynamic switching. Server prefers non-preemptible operation where that model's dependencies are met, then lazy, voluntary, or full preemption. Realtime requests RT only when its prerequisites are already enabled; otherwise it reports the fallback. Each profile selects a single tick mode. Explicit controls below override profile defaults.
 
   Server/desktop NUMA balancing is requested only when NUMA is already enabled or explicitly requested, using the kernel version's migration dependencies. Explicit `--numa-balancing=off` suppresses this default.
 
@@ -189,7 +189,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
   - `server`
     Prioritizes throughput and stable background behavior:
-    Preemption preference is `PREEMPT_NONE`, then `PREEMPT_LAZY`, `PREEMPT_VOLUNTARY`, or full preemption as supported. It requests `NO_HZ_FULL` when the baseline enables SMP and the required accounting capabilities, otherwise `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
+    Preemption preference is `PREEMPT_NONE`, then `PREEMPT_LAZY`, `PREEMPT_VOLUNTARY`, or full preemption, skipping a model whose direct dependencies are unmet. From Linux 7.4 (`7dadeaa6`, "sched: Further restrict the preemption modes") `PREEMPT_NONE` depends on `ARCH_NO_PREEMPT` and `PREEMPT_VOLUNTARY` depends on `!ARCH_HAS_PREEMPT_LAZY`. x86, arm64 and the other lazy-preemption architectures therefore get `PREEMPT_LAZY`, the model upstream left in place of the old server and voluntary choices. A config migrated from 6.18 still lists `PREEMPT_NONE`; the profile does not request it once the dependency is unmet, because strict mode would reject the run. It requests `NO_HZ_FULL` when the baseline enables SMP and the required accounting capabilities, otherwise `NO_HZ_IDLE`, and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`).
     It also enables `SCHED_CACHE` and Multi-Gen LRU when those symbols are available.
     It disables the Project C alternative scheduler (`SCHED_ALT`, BMQ/PDS from gentoo-sources `USE=experimental`), which replaces EEVDF and rules out PSI, `SCHED_CACHE`, `SCHED_CORE`, NUMA balancing and sched_ext.
     Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.

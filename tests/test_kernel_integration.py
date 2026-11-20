@@ -262,6 +262,15 @@ class KernelIntegrationTests(unittest.TestCase):
                                    DETECT_HUNG_TASK_BLOCKER="y", HARDLOCKUP_DETECTOR="n",
                                    DEBUG_MISC="n", X86_DEBUG_FPU="n", RCU_TRACE="n", DEBUG_PREEMPT="n")
 
+    def test_real_server_profile_uses_lazy_preemption_when_none_is_arch_gated(self):
+        preempt = (self.tree / "kernel/Kconfig.preempt").read_text()
+        none = preempt.split("config PREEMPT_VOLUNTARY", 1)[0]
+        if "config PREEMPT_NONE" not in none or "ARCH_NO_PREEMPT" not in none:
+            self.skipTest("PREEMPT_NONE is not gated on ARCH_NO_PREEMPT")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_values(PREEMPT_LAZY="y", PREEMPT_NONE="n", PREEMPT_VOLUNTARY="n", PREEMPT="n",
+                           PREEMPT_DYNAMIC="n")
+
     def test_real_unavailable_preemption_is_rejected_without_commit(self):
         # Lazy-capable targets in 7.2 hide NONE and VOLUNTARY from the model choice.
         if "CONFIG_ARCH_HAS_PREEMPT_LAZY=y" not in self.config.read_text():
