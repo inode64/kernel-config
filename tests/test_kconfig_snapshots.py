@@ -73,8 +73,9 @@ class SnapshotTests(unittest.TestCase):
                 else:
                     self.assertIn("NETFILTER_XT_MATCH_DCCP", legacy)
                 self.assertFalse({"NETFILTER_XT_TARGET_NFQUEUE", "NETFILTER_NETLINK_LOG", "TCM_USER2",
-                                  "DRM_AMD_DC", "SND_SOC_SOF_BAYTRAIL", "CRYPTO_USER_API_HASH",
-                                  "CRYPTO_USER_API_ENABLE_OBSOLETE", "COMPAT_VDSO"} & legacy)
+                                  "DRM_AMD_DC", "DRM_AMD_DC_DCE", "SND_SOC_SOF_BAYTRAIL",
+                                  "CRYPTO_USER_API_HASH", "CRYPTO_USER_API_ENABLE_OBSOLETE",
+                                  "COMPAT_VDSO"} & legacy)
 
     def test_debug_trace_keeps_the_iptables_raw_tables(self):
         for snapshot in SNAPSHOTS:

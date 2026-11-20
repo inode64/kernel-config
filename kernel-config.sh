@@ -1609,8 +1609,10 @@ discover_kconfig_symbols_by_pattern() {
 
 discover_legacy_kconfig_symbols() {
     # AF_ALG remains an application ABI even when its prompts say deprecated.
+    # DRM_AMD_DC_DCE (7.4+, "AMD DC support for legacy DCE ASICs") is the display
+    # support of DCE 8-12 GPUs such as Polaris and Vega, unconditional before 7.4.
     discover_kconfig_symbols_by_pattern "(legacy|deprecated|obsolete|obsolet[oa]s?|backward[[:space:]-]?compat(ibility)?|backwards[[:space:]-]?compat(ibility)?|compatibility layer|provided only for backwards compatibility|provided only for backward compatibility|here only for backward compatibility|here only for backwards compatibility|(^|[^[:alpha:]])old([^[:alpha:]]|$))" \
-        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION"'
+        | awk '!/^CRYPTO_USER_API($|_)/ && $0 != "DRM_FBDEV_EMULATION" && $0 != "DRM_AMD_DC_DCE"'
 }
 
 discover_debug_trace_kconfig_symbols() {

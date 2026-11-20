@@ -259,6 +259,8 @@ Overridden settings are skipped before applying their dependencies. RT and NUMA 
 
   Preserves `DRM_FBDEV_EMULATION`, whose legacy-labelled prompt still supplies the framebuffer console for DRM drivers.
 
+  Preserves `DRM_AMD_DC_DCE` (7.4+, "AMD DC support for legacy DCE ASICs"): it is the display support of DCE 8-12 GPUs such as Polaris and Vega, unconditional before 7.4.
+
 - `PRUNE_DEBUG_TRACE`
   Disables debug and trace options discovered from Kconfig prompts, plus explicit exceptions such as `DAMON_DEBUG_SANITY`, `SLUB_STATS`, `ZRAM_MEMORY_TRACKING` and `DM_DEBUG_BLOCK_MANAGER_LOCKING` (prompt "Block manager locking": lock checks on every dm-thin and dm-cache metadata access). It also disables runtime verification. Prompts that only name tracing as one user are kept: `IP_NF_RAW` and `IP6_NF_RAW` ("required for NOTRACK/TRACE") hold the Docker 28+ raw-table rules, while the `TRACE` target itself is pruned. The `server` profile, applied after the prunes, brings back the soft-lockup and hung-task detectors.
 
