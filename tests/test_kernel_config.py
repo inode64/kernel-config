@@ -1617,6 +1617,41 @@ config HID_LED
         self.assert_symbol("SCSI_LOWLEVEL", "y")
         self.assert_symbol("VIRT_DRIVERS", "y")
 
+    def test_qemu_guest_enables_haltpoll_cpuidle_when_cpu_idle_and_x86(self):
+        self.add_kconfig('''
+            config X86
+            \tbool
+            config CPU_IDLE
+            \tbool "CPU idle PM support"
+            config HYPERVISOR_GUEST
+            \tbool "Linux guest support"
+            config PARAVIRT
+            \tbool "Enable paravirtualization code"
+            config KVM_GUEST
+            \tbool "KVM Guest support"
+            config CPU_IDLE_GOV_HALTPOLL
+            \tbool "Haltpoll governor (for virtualized systems)"
+            \tdepends on KVM_GUEST
+            config HALTPOLL_CPUIDLE
+            \ttristate "Halt poll cpuidle driver"
+            \tdepends on X86 && KVM_GUEST
+        ''')
+        self.set_baseline_symbols(
+            X86="y", CPU_IDLE="y", HYPERVISOR_GUEST="n", PARAVIRT="n",
+            KVM_GUEST="n", HALTPOLL_CPUIDLE="n", CPU_IDLE_GOV_HALTPOLL="n",
+        )
+        self.assert_success(self.run_script("--strict", "--host-type=qemu"))
+        self.assert_symbol("HALTPOLL_CPUIDLE", "y")
+        # CPU_IDLE=n leaves HALTPOLL_CPUIDLE untouched without failing strict mode.
+        self.set_baseline_symbols(CPU_IDLE="n", HALTPOLL_CPUIDLE="n")
+        self.assert_success(self.run_script("--strict", "--host-type=qemu"))
+        self.assert_symbol("HALTPOLL_CPUIDLE", "n")
+        # Baremetal prunes both haltpoll options.
+        self.set_baseline_symbols(CPU_IDLE="y", HALTPOLL_CPUIDLE="y", CPU_IDLE_GOV_HALTPOLL="y")
+        self.assert_success(self.run_script("--strict", "--host-type=baremetal"))
+        self.assert_symbol("HALTPOLL_CPUIDLE", "n")
+        self.assert_symbol("CPU_IDLE_GOV_HALTPOLL", "n")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",

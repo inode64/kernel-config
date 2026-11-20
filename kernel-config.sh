@@ -4370,6 +4370,8 @@ configure_host_type_profile() {
         FW_CFG_SYSFS_CMDLINE
     )
     local -a qemu_optional_syms=(
+        CPU_IDLE_GOV_HALTPOLL
+        HALTPOLL_CPUIDLE
         VIRTIO_FS
     )
     local -a vmware_syms=(
@@ -4489,12 +4491,25 @@ configure_host_type_profile() {
                 disable_if_present "${disable_syms[@]}"
             fi
 
-            if [[ "$host_type" == "qemu" ]] && have_symbol VIRTIO_FS; then
+            if [[ "$host_type" == "qemu" ]]; then
                 ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
-                if ! have_symbol FUSE_FS || [[ "${_SYMBOL_VALUE_CACHE[FUSE_FS]:-n}" == "y" ]]; then
-                    enable_if_present VIRTIO_FS
-                elif [[ "${_SYMBOL_VALUE_CACHE[FUSE_FS]:-n}" == "m" ]]; then
-                    module_config_symbol VIRTIO_FS
+                if have_symbol VIRTIO_FS; then
+                    if ! have_symbol FUSE_FS || [[ "${_SYMBOL_VALUE_CACHE[FUSE_FS]:-n}" == "y" ]]; then
+                        enable_if_present VIRTIO_FS
+                    elif [[ "${_SYMBOL_VALUE_CACHE[FUSE_FS]:-n}" == "m" ]]; then
+                        module_config_symbol VIRTIO_FS
+                    fi
+                fi
+                # drivers/cpuidle/Kconfig (inside `if CPU_IDLE`): guest-side halt
+                # polling avoids VM-exits and remote vCPU wakeup IPIs during short
+                # idle periods (Documentation/virt/guest-halt-polling.rst). It
+                # selects CPU_IDLE_GOV_HALTPOLL automatically.
+                if have_symbol HALTPOLL_CPUIDLE \
+                    && [[ "${_EXPLICIT_SYMBOL_VALUES[HALTPOLL_CPUIDLE]:-}" != n ]] \
+                    && is_x86_config \
+                    && (! have_symbol CPU_IDLE || is_symbol_enabled_now CPU_IDLE) \
+                    && kconfig_depends_met HALTPOLL_CPUIDLE; then
+                    enable_if_present HALTPOLL_CPUIDLE
                 fi
             fi
 

@@ -431,6 +431,7 @@ These options change kernel build configuration and defaults. They do not create
 
 - `HOST_TYPE=none|baremetal|qemu|vmware|hyperv|virtualbox`
   Tunes guest/virtualization drivers for the selected host type. `kvm` is accepted as an alias for `qemu`, and `native` as an alias for `baremetal`.
+  On x86 with `CPU_IDLE=y`, `qemu` also enables `HALTPOLL_CPUIDLE` (which selects `CPU_IDLE_GOV_HALTPOLL`) so KVM guests poll briefly before halting instead of triggering unnecessary VM-exits and remote vCPU wakeup IPIs (`Documentation/virt/guest-halt-polling.rst`); other host types prune it.
   `hyperv` also keeps the synthetic keyboard, mouse and video drivers: `DRM_HYPERV` when the baseline has DRM, otherwise `FB_HYPERV` (re-enabled even if `PRUNE_LEGACY` disabled it as deprecated).
 
 - `APPLICATIONS=<comma-separated-list>`

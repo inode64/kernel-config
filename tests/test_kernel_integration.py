@@ -469,13 +469,14 @@ class KernelIntegrationTests(unittest.TestCase):
     def test_real_guest_host_types_pass_strict_mode(self):
         for host_type, expected in [
             ("qemu", {"KVM_GUEST": "y", "VIRTIO_MENU": "y", "VIRTIO_PCI": "y",
-                      "SCSI_VIRTIO": "y", "X86_X2APIC": "y"}),
+                      "SCSI_VIRTIO": "y", "HALTPOLL_CPUIDLE": "y",
+                      "CPU_IDLE_GOV_HALTPOLL": "y", "X86_X2APIC": "y"}),
             ("vmware", {"VMWARE_VMCI": "y", "VMWARE_PVSCSI": "y", "VMXNET3": "y",
-                        "X86_X2APIC": "y"}),
+                        "HALTPOLL_CPUIDLE": "n", "X86_X2APIC": "y"}),
             ("hyperv", {"HYPERV": "y", "HYPERV_VMBUS": "y", "HYPERV_STORAGE": "y",
-                        "HYPERV_KEYBOARD": "y", "X86_X2APIC": "y"}),
+                        "HYPERV_KEYBOARD": "y", "HALTPOLL_CPUIDLE": "n", "X86_X2APIC": "y"}),
             ("virtualbox", {"VIRT_DRIVERS": "y", "VBOXGUEST": "y", "VBOXSF_FS": "y",
-                            "X86_X2APIC": "y"}),
+                            "HALTPOLL_CPUIDLE": "n", "X86_X2APIC": "y"}),
         ]:
             with self.subTest(host_type=host_type):
                 self.config.write_bytes(self.original)
