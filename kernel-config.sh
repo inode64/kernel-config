@@ -4340,12 +4340,14 @@ configure_host_type_profile() {
         PARAVIRT_SPINLOCKS
         PARAVIRT_TIME_ACCOUNTING
     )
-    # PARAVIRT_CLOCK is promptless and only selected by KVM_GUEST/XEN.
-    # VIRTIO_VSOCKETS_COMMON is promptless too and also selected by
-    # VSOCKETS_LOOPBACK, so it is left to Kconfig.
+    # Promptless symbols (PARAVIRT_XXL, PARAVIRT_CLOCK, VIRTIO, VIRTIO_PCI_LIB,
+    # VIRTIO_PCI_LIB_LEGACY, HYPERV_TIMER) stay in the lists for baremetal/cross
+    # pruning, while drop_hidden_toggle_requests keeps guest profiles from
+    # pinning them directly. VIRTIO_FS follows FUSE_FS (y/m/n) separately below.
     local -a qemu_syms=(
         KVM_GUEST
         PARAVIRT_CLOCK
+        VIRTIO_MENU
         VIRTIO
         VIRTIO_PCI
         VIRTIO_PCI_LIB
@@ -4356,7 +4358,6 @@ configure_host_type_profile() {
         VIRTIO_NET
         VIRTIO_CONSOLE
         VIRTIO_BALLOON
-        VIRTIO_FS
         SCSI_VIRTIO
         HW_RANDOM_VIRTIO
         VSOCKETS
@@ -4367,6 +4368,9 @@ configure_host_type_profile() {
         PVPANIC_PCI
         FW_CFG_SYSFS
         FW_CFG_SYSFS_CMDLINE
+    )
+    local -a qemu_optional_syms=(
+        VIRTIO_FS
     )
     local -a vmware_syms=(
         VMWARE_VMCI
@@ -4380,7 +4384,6 @@ configure_host_type_profile() {
     local -a hyperv_syms=(
         HYPERV
         HYPERV_TIMER
-        HYPERV_UTILS
         HYPERV_BALLOON
         HYPERV_VMBUS
         HYPERV_NET
@@ -4393,6 +4396,9 @@ configure_host_type_profile() {
         HYPERV_VSOCKETS
         HYPERV_KEYBOARD
         HID_HYPERV_MOUSE
+    )
+    local -a hyperv_optional_syms=(
+        HYPERV_UTILS
     )
     # Synthetic video: DRM_HYPERV replaces FB_HYPERV, which Kconfig marks as
     # deprecated (so PRUNE_LEGACY disables it) but is the only console driver
@@ -4409,8 +4415,10 @@ configure_host_type_profile() {
     local -a all_guest_syms=(
         "${common_guest_syms[@]}"
         "${qemu_syms[@]}"
+        "${qemu_optional_syms[@]}"
         "${vmware_syms[@]}"
         "${hyperv_syms[@]}"
+        "${hyperv_optional_syms[@]}"
         "${hyperv_video_syms[@]}"
         "${virtualbox_syms[@]}"
     )
@@ -4424,20 +4432,27 @@ configure_host_type_profile() {
             disable_if_present "${all_guest_syms[@]}"
             ;;
         qemu | vmware | hyperv | virtualbox)
+            # Subsystem menus required by each guest stack stay out of
+            # all_guest_syms so baremetal never disables shared parents.
+            local -a parent_syms=()
             case "$host_type" in
                 qemu)
+                    parent_syms=(SCSI SCSI_LOWLEVEL)
                     type_syms=("${qemu_syms[@]}")
                     desc="enabling KVM/QEMU guest drivers and disabling other guest stacks"
                     ;;
                 vmware)
+                    parent_syms=(SCSI SCSI_LOWLEVEL)
                     type_syms=("${vmware_syms[@]}")
                     desc="enabling VMware guest drivers and disabling other guest stacks"
                     ;;
                 hyperv)
+                    parent_syms=(SCSI SCSI_LOWLEVEL SERIO)
                     type_syms=("${hyperv_syms[@]}")
                     desc="enabling Hyper-V guest drivers and disabling other guest stacks"
                     ;;
                 virtualbox)
+                    parent_syms=(VIRT_DRIVERS)
                     type_syms=("${virtualbox_syms[@]}")
                     desc="enabling VirtualBox guest drivers and disabling other guest stacks"
                     ;;
@@ -4448,6 +4463,15 @@ configure_host_type_profile() {
             for sym in "${common_guest_syms[@]}" "${type_syms[@]}"; do
                 enable_set["$sym"]=1
             done
+            if [[ "$host_type" == "qemu" ]]; then
+                for sym in "${qemu_optional_syms[@]}"; do
+                    enable_set["$sym"]=1
+                done
+            elif [[ "$host_type" == "hyperv" ]]; then
+                for sym in "${hyperv_optional_syms[@]}"; do
+                    enable_set["$sym"]=1
+                done
+            fi
 
             for sym in "${all_guest_syms[@]}"; do
                 if ! [[ -v enable_set[$sym] ]]; then
@@ -4455,16 +4479,38 @@ configure_host_type_profile() {
                 fi
             done
 
-            enable_parents_if_present "${common_guest_syms[@]}" "${type_syms[@]}"
+            local -a enable_syms=("${parent_syms[@]}" "${common_guest_syms[@]}" "${type_syms[@]}")
+            drop_hidden_toggle_requests enable_syms
+            drop_hidden_toggle_requests type_syms
+
+            enable_parents_if_present "${enable_syms[@]}"
             enable_if_present "${type_syms[@]}"
             if ((${#disable_syms[@]} > 0)); then
                 disable_if_present "${disable_syms[@]}"
             fi
 
+            if [[ "$host_type" == "qemu" ]] && have_symbol VIRTIO_FS; then
+                ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+                if ! have_symbol FUSE_FS || [[ "${_SYMBOL_VALUE_CACHE[FUSE_FS]:-n}" == "y" ]]; then
+                    enable_if_present VIRTIO_FS
+                elif [[ "${_SYMBOL_VALUE_CACHE[FUSE_FS]:-n}" == "m" ]]; then
+                    module_config_symbol VIRTIO_FS
+                fi
+            fi
+
             if [[ "$host_type" == "hyperv" ]]; then
                 ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
-                if [[ "${_SYMBOL_VALUE_CACHE[DRM]:-n}" != "n" ]] && have_symbol DRM_HYPERV; then
+                if have_symbol HYPERV_UTILS; then
+                    if ! have_symbol CONNECTOR || [[ "${_SYMBOL_VALUE_CACHE[CONNECTOR]:-n}" == "y" ]]; then
+                        enable_if_present HYPERV_UTILS
+                    elif [[ "${_SYMBOL_VALUE_CACHE[CONNECTOR]:-n}" == "m" ]]; then
+                        module_config_symbol HYPERV_UTILS
+                    fi
+                fi
+                if [[ "${_SYMBOL_VALUE_CACHE[DRM]:-n}" == "y" ]] && have_symbol DRM_HYPERV; then
                     enable_if_present DRM_HYPERV
+                elif [[ "${_SYMBOL_VALUE_CACHE[DRM]:-n}" == "m" ]] && have_symbol DRM_HYPERV; then
+                    module_config_symbol DRM_HYPERV
                 else
                     echo "    (DRM_HYPERV is unavailable; keeping FB_HYPERV for the console)"
                     enable_if_present FB_HYPERV

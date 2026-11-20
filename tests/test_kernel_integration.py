@@ -466,6 +466,22 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--iommu-support=off"))
         self.assert_values(HYPERVISOR_GUEST="y", IOMMU_SUPPORT="n", X86_X2APIC="y")
 
+    def test_real_guest_host_types_pass_strict_mode(self):
+        for host_type, expected in [
+            ("qemu", {"KVM_GUEST": "y", "VIRTIO_MENU": "y", "VIRTIO_PCI": "y",
+                      "SCSI_VIRTIO": "y", "X86_X2APIC": "y"}),
+            ("vmware", {"VMWARE_VMCI": "y", "VMWARE_PVSCSI": "y", "VMXNET3": "y",
+                        "X86_X2APIC": "y"}),
+            ("hyperv", {"HYPERV": "y", "HYPERV_VMBUS": "y", "HYPERV_STORAGE": "y",
+                        "HYPERV_KEYBOARD": "y", "X86_X2APIC": "y"}),
+            ("virtualbox", {"VIRT_DRIVERS": "y", "VBOXGUEST": "y", "VBOXSF_FS": "y",
+                            "X86_X2APIC": "y"}),
+        ]:
+            with self.subTest(host_type=host_type):
+                self.config.write_bytes(self.original)
+                self.assert_success(self.run_script("--strict", f"--host-type={host_type}"))
+                self.assert_values(**expected)
+
     def test_real_profile_selects_crc32_slice_by_8(self):
         kconfig = self.tree / "lib/Kconfig"
         if not kconfig.is_file() or "config CRC32_SLICEBY8" not in kconfig.read_text():

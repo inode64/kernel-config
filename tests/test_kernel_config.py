@@ -1559,6 +1559,64 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--host-type=qemu", "--iommu-support=off"))
         self.assert_symbol("X86_X2APIC", "y")
 
+    def test_guest_host_types_enable_parents_drop_hidden_and_follow_modular_deps(self):
+        self.add_kconfig('''
+            config HYPERVISOR_GUEST
+            \tbool "Linux guest support"
+            config PARAVIRT
+            \tbool "Enable paravirtualization code"
+            config PARAVIRT_XXL
+            \tbool
+            config KVM_GUEST
+            \tbool "KVM Guest support"
+            config VIRTIO_MENU
+            \tbool "Virtio drivers"
+            config VIRTIO
+            \ttristate
+            config VIRTIO_PCI
+            \ttristate "PCI driver for virtio devices"
+            config SCSI
+            \ttristate "SCSI device support"
+            config SCSI_LOWLEVEL
+            \tbool "SCSI low-level drivers"
+            config SCSI_VIRTIO
+            \ttristate "virtio-scsi support"
+            config FUSE_FS
+            \ttristate "FUSE support"
+            config VIRTIO_FS
+            \ttristate "Virtio Filesystem"
+            config VIRT_DRIVERS
+            \tbool "Virtualization drivers"
+            config VBOXGUEST
+            \ttristate "Virtual Box Guest integration support"
+            config VBOXSF_FS
+            \ttristate "VirtualBox guest shared folder support"
+        ''')
+        self.set_baseline_symbols(
+            HYPERVISOR_GUEST="n", PARAVIRT="n", PARAVIRT_XXL="n", KVM_GUEST="n",
+            VIRTIO_MENU="n", VIRTIO="n", VIRTIO_PCI="n", SCSI="y", SCSI_LOWLEVEL="n",
+            SCSI_VIRTIO="n", FUSE_FS="m", VIRTIO_FS="n", VIRT_DRIVERS="n",
+            VBOXGUEST="n", VBOXSF_FS="n",
+        )
+        result = self.run_script("--strict", "--host-type=qemu")
+        self.assert_success(result)
+        self.assertNotIn("Enabling: CONFIG_PARAVIRT_XXL", result.stdout)
+        self.assertNotIn("Enabling: CONFIG_VIRTIO\n", result.stdout)
+        self.assert_symbol("VIRTIO_MENU", "y")
+        self.assert_symbol("SCSI_LOWLEVEL", "y")
+        self.assert_symbol("SCSI_VIRTIO", "y")
+        self.assert_symbol("VIRTIO_FS", "m")
+        # VirtualBox enables VIRT_DRIVERS; baremetal leaves shared parents untouched.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--host-type=virtualbox"))
+        self.assert_symbol("VIRT_DRIVERS", "y")
+        self.assert_symbol("VBOXGUEST", "y")
+        self.assert_symbol("VBOXSF_FS", "y")
+        self.set_baseline_symbols(SCSI_LOWLEVEL="y", VIRT_DRIVERS="y")
+        self.assert_success(self.run_script("--strict", "--host-type=baremetal"))
+        self.assert_symbol("SCSI_LOWLEVEL", "y")
+        self.assert_symbol("VIRT_DRIVERS", "y")
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
