@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Reusable bare-metal KVM/Docker server example: server scheduling profile, host
 # virtualization and container capabilities, hardware filters resolved on the
-# target host, and the pruning that is safe on any production server.
+# target host, and the --all-optimizations pruning set (every toggle except
+# hardening and unused-module probing; turn one off again with, for example,
+# --prune-compat32=false).
 # Defaults to a preview. Pass --dry-run=false to save to the specified config.
 # All trailing kernel-config.sh options override these defaults.
 #
 # Left to the caller because they depend on the target: the firewall backend
-# (`firehol` or `firewalld`), file servers (`nfs-server`, `nfs-client`, `samba`),
+# (`firehol` or `firewalld`, plus `iptables-legacy` when Docker runs on
+# iptables-legacy), file servers (`nfs-server`, `nfs-client`, `samba`),
 # `cryptsetup`, VPNs, the vendor/UEFI/NUMA auto-detection results (run it on the
-# target, or pass explicit values), NR_CPUS, the host-specific pruning
-# (`--prune-legacy`, `--prune-old-hw`, `--prune-compat32`, `--prune-insecure`),
-# and `--initrd-compression=auto` on hosts with an installed initramfs generator
-# (it errors when no generator or image can be inspected).
+# target, or pass explicit values), NR_CPUS, and `--initrd-compression=auto` on
+# hosts with an installed initramfs generator (it errors when no generator or
+# image can be inspected).
 #
 # Set explicitly, so a baseline left by an earlier run converges too: the server
 # profile enables RCU_NOCB_CPU_DEFAULT_ALL, which offloads RCU callbacks on every
@@ -30,8 +32,6 @@ exec "$project_dir/kernel-config.sh" \
     --uefi-support=auto --tpm-support=auto --dma-engine-support=auto \
     --iommu-support=auto --numa-support=auto \
     --applications=qemu,docker \
-    --prune-selftest --prune-sanitizers --prune-coverage \
-    --prune-fault-injection --prune-dangerous --prune-radios \
     --module-force-load=off --module-force-unload=off \
     --enable-symbols=MAGIC_SYSRQ \
     --disable-symbols=MAGIC_SYSRQ_SERIAL,RCU_NOCB_CPU_DEFAULT_ALL \

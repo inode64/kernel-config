@@ -174,12 +174,12 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   Preserves firmware decoding by default. `on` requests compressed firmware support with XZ and ZSTD; `off` explicitly disables compressed firmware support.
 
 - `ALL_OPTIMIZATIONS`
-  Enables the script's optimization preset, including kernel `ZSTD` compression and server profile zswap tuning (`zstd`, falling back to `lz4`; the initial compression preset uses LZO). It preserves existing initramfs and firmware decompression support and does not disable shared compression libraries.
-  It does not enable hardening pruning.
+  Enables the script's optimization preset: `OPTIMIZATION_PROFILE=server`, kernel `ZSTD` compression and server profile zswap tuning (`zstd`, falling back to `lz4`; the initial compression preset uses LZO). It preserves existing initramfs and firmware decompression support and does not disable shared compression libraries.
+  It also turns on every pruning toggle except `PRUNE_HARDENING` and `PRUNE_UNUSED_MODULES`: observability, legacy, debug/trace, selftests, sanitizers, coverage, fault injection, dangerous options, BPF, 32-bit compatibility, unused network protocols, old hardware, old x86 platforms, legacy ATA, insecure protocols, radios and DMA attack surface. The result has no debugfs, ftrace, kprobes or BTF (bpftrace and `perf probe` stop working), no `IA32_EMULATION`, and on 6.17+ no iptables-legacy tables unless `iptables-legacy` or `firehol` is among the applications. A toggle can be turned off again after the flag, for example `--prune-compat32=false`.
   This setting is flag-only and must be enabled with `--all-optimizations`. To keep the existing kernel image compression, pass `--kernel-compression=keep` after this flag.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
-  Adjusts scheduler, preemption, and HZ defaults. Desktop requests full preemption with dynamic switching and THP `madvise`, rather than applying hugepages to every eligible mapping. Server prefers non-preemptible operation where available, then lazy, voluntary, or full preemption. Realtime requests RT only when its prerequisites are already enabled; otherwise it reports the fallback. Each profile selects a single tick mode. Explicit controls below override profile defaults.
+  Adjusts scheduler, preemption, and HZ defaults. Desktop and server select THP `madvise` rather than applying hugepages to every eligible mapping; desktop also requests full preemption with dynamic switching. Server prefers non-preemptible operation where available, then lazy, voluntary, or full preemption. Realtime requests RT only when its prerequisites are already enabled; otherwise it reports the fallback. Each profile selects a single tick mode. Explicit controls below override profile defaults.
 
   Server/desktop NUMA balancing is requested only when NUMA is already enabled or explicitly requested, using the kernel version's migration dependencies. Explicit `--numa-balancing=off` suppresses this default.
 
@@ -195,6 +195,8 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     Memory: zswap on with the `zstd` default compressor (falls back to `lz4`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, and `RSEQ_SLICE_EXTENSION` when present.
     CPU time accounting switches to `TICK_CPU_ACCOUNTING` unless the selected tick mode uses `NO_HZ_FULL`.
     It makes `mq-deadline`, `kyber`, BBR (`TCP_CONG_BBR`), `NET_SCH_FQ` and `NET_SCH_FQ_CODEL` available without changing the `DEFAULT_*` choices; symbols already built as modules stay `=m`.
+    THP defaults to `madvise`: QEMU marks guest RAM with `MADV_HUGEPAGE`, so virtual machines keep huge pages, while databases that ask for THP off are not forced into them.
+    It enables `RCU_NOCB_CPU` and `RCU_NOCB_CPU_DEFAULT_ALL`, which offloads RCU callbacks on every CPU at boot; `profiles/server-kvm-host.sh` turns the latter off for VM hosts.
 
   - `desktop`
     Prioritizes interactivity:
@@ -524,10 +526,9 @@ must be validated on the resulting kernel.
 ### Reusable KVM server example
 
 `profiles/server-kvm-host.sh` combines the server scheduling profile with
-`--all-optimizations`, the `qemu,docker` application profiles, bare-metal host
-type, the hardware filters in `auto` mode and the pruning that is safe on any
-production server (selftests, sanitizers, coverage, fault injection, dangerous
-options, radios). It also defaults to a **strict dry run** and accepts trailing
+`--all-optimizations` (and therefore its full pruning set, see
+`ALL_OPTIMIZATIONS`), the `qemu,docker` application profiles, bare-metal host
+type and the hardware filters in `auto` mode. It also defaults to a **strict dry run** and accepts trailing
 overrides. Run it on the target host so the `auto` detections see the real CPU,
 firmware, NUMA and DMA engines. It enables `MAGIC_SYSRQ` (kept for console
 emergencies, with `MAGIC_SYSRQ_SERIAL` off) and disables
@@ -541,10 +542,11 @@ your own.
 
 ```bash
 ./profiles/server-kvm-host.sh /usr/src/linux
-# Add the firewall backend, file services and host-specific pruning:
+# Add the firewall backend and file services; Docker on iptables-legacy also
+# needs iptables-legacy. Keep 32-bit binaries running:
 ./profiles/server-kvm-host.sh /usr/src/linux \
-  --applications=qemu,docker,firehol,nfs-server,nfs-client,cryptsetup \
-  --prune-legacy --prune-old-hw --prune-compat32 --initrd-compression=auto
+  --applications=qemu,docker,iptables-legacy,firewalld,nfs-server,nfs-client,cryptsetup \
+  --prune-compat32=false --initrd-compression=auto
 ./profiles/server-kvm-host.sh /usr/src/linux --dry-run=false
 ```
 
