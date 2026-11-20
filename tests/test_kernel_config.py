@@ -997,6 +997,16 @@ config HID_LED
         self.assert_symbol("IP_NF_RAW", "m")
         self.assert_symbol("NETFILTER_XT_TARGET_TRACE", "n")
 
+    def test_debug_trace_pruning_removes_dm_block_manager_locking(self):
+        # Its prompt ("Block manager locking") does not say debug; the fixed list catches it.
+        self.add_kconfig('''
+            config DM_DEBUG_BLOCK_MANAGER_LOCKING
+            \tbool "Block manager locking"
+        ''')
+        self.set_baseline_symbols(DM_DEBUG_BLOCK_MANAGER_LOCKING="y")
+        self.assert_success(self.run_script("--strict", "--prune-debug-trace"))
+        self.assert_symbol("DM_DEBUG_BLOCK_MANAGER_LOCKING", "n")
+
     def test_firehol_requests_the_xtables_its_rules_use(self):
         syms = ("NETFILTER_XTABLES_LEGACY", "IP_NF_IPTABLES_LEGACY", "NETFILTER_XT_TARGET_TCPMSS",
                 "NETFILTER_XT_TARGET_NETMAP", "NETFILTER_XT_TARGET_CT", "NETFILTER_XT_MATCH_PHYSDEV",
