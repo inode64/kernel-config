@@ -207,7 +207,13 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     For THP defaults, it selects `TRANSPARENT_HUGEPAGE_MADVISE` when available.
     It also enables `SCHED_CACHE` and Multi-Gen LRU when supported.
     Memory: zswap on with the `lz4` default compressor (falls back to `zstd`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, `RSEQ_SLICE_EXTENSION`, and `TICK_CPU_ACCOUNTING` (same rule as `server`).
-    It makes BFQ (`IOSCHED_BFQ`, `BFQ_GROUP_IOSCHED`) and `mq-deadline` available.
+    It makes BFQ (`IOSCHED_BFQ`, `BFQ_GROUP_IOSCHED`) and `mq-deadline` available,
+    enabling `BLK_CGROUP` so BFQ can distribute I/O bandwidth by cgroup weight.
+    All optimization profiles enable `CGROUPS` for their CPU/IO controllers,
+    including when the baseline has cgroups disabled. Existing modular I/O
+    schedulers stay modular; selecting the active scheduler remains a runtime
+    choice. See [BFQ group scheduling](https://docs.kernel.org/block/bfq-iosched.html#group-scheduling-with-bfq)
+    and [Red Hat's scheduler guidance](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/monitoring_and_managing_system_status_and_performance/setting-the-disk-scheduler).
 
   - `realtime`
     Prioritizes deterministic low-latency execution:

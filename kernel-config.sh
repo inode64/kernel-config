@@ -4086,10 +4086,11 @@ configure_optimization_profile() {
         wants_observability=false
     fi
 
-    # common: compiler optimizations, topology-aware scheduling, and the
-    # tickless-friendly TEO cpuidle governor for all profiles
+    # CGROUPS is the parent of the CPU/IO controllers requested by the profiles;
+    # configs built without cgroups otherwise lose those requests in olddefconfig.
     enable_if_present \
         CC_OPTIMIZE_FOR_PERFORMANCE \
+        CGROUPS \
         CPU_IDLE \
         CPU_IDLE_GOV_TEO \
         CPU_ISOLATION \
@@ -4289,6 +4290,7 @@ configure_optimization_profile() {
                 PREEMPT_RT
 
             enable_parents_if_present \
+                BLK_CGROUP \
                 CGROUP_SCHED \
                 TRANSPARENT_HUGEPAGE \
                 ZSWAP

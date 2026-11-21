@@ -417,6 +417,27 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--uclamp=on", "--autogroup=on"))
         self.assert_values(UCLAMP_TASK="y", SCHED_AUTOGROUP="y", CPU_FREQ_GOV_SCHEDUTIL="y")
 
+    def test_real_profiles_restore_cgroup_dependencies(self):
+        for profile in ("server", "desktop", "realtime"):
+            with self.subTest(profile=profile):
+                self.config.write_bytes(self.original)
+                # These selectors otherwise keep CGROUPS on in Gentoo/desktop baselines.
+                self.prepare_baseline(EXPERT="y", GENTOO_LINUX="n", SCHED_AUTOGROUP="n",
+                                      CGROUPS="n", IOSCHED_BFQ="m")
+                args = ("--strict", f"--optimization-profile={profile}")
+                self.assert_success(self.run_script(*args))
+                self.assert_values(CGROUPS="y", CGROUP_SCHED="y", FAIR_GROUP_SCHED="y")
+                if profile == "desktop":
+                    self.assert_values(BLK_CGROUP="y", IOSCHED_BFQ="m", BFQ_GROUP_IOSCHED="y")
+                before = self.config.read_bytes()
+                self.assert_success(self.run_script(*args))
+                self.assertEqual(self.config.read_bytes(), before)
+
+    def test_real_desktop_restores_bfq_io_controller(self):
+        self.prepare_baseline(BLK_CGROUP="n", IOSCHED_BFQ="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
+        self.assert_values(BLK_CGROUP="y", IOSCHED_BFQ="y", BFQ_GROUP_IOSCHED="y")
+
     def test_real_risk_controls_nfs_profile_and_explicit_override(self):
         self.prepare_baseline(MODULE_FORCE_UNLOAD="y", NFSD_FLEXFILELAYOUT="y", NFS_DISABLE_UDP_SUPPORT="n")
         self.assert_success(self.run_script("--strict", "--prune-dangerous", "--applications=nfs-server",
