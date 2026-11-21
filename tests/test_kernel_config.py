@@ -2052,6 +2052,41 @@ config HID_LED
         self.assert_symbol("UCLAMP_TASK", "y")
         self.assert_symbol("SCHED_AUTOGROUP", "y")
 
+    def test_profiles_enable_aes_acceleration_for_supported_trees(self):
+        self.add_symbols("X86", "MODULES", "KMSAN")
+        self.add_symbols("CRYPTO", "CRYPTO_AES", kind="tristate")
+        self.add_kconfig('''
+            config CRYPTO_AES_NI_INTEL
+            \ttristate "AES-NI/VAES"
+            \tdepends on X86
+        ''', path="arch/x86/crypto/Kconfig")
+        cases = (
+            ((), {}, "m"),
+            ((), {"CRYPTO": "m", "CRYPTO_AES": "m"}, "m"),
+            ((), {"MODULES": "n"}, "y"),
+            ((), {"CRYPTO_AES_NI_INTEL": "y"}, "y"),
+            ((), {"CRYPTO_AES_NI_INTEL": "m"}, "m"),
+            (("--enable-symbols=CRYPTO_AES_NI_INTEL",), {"CRYPTO_AES_NI_INTEL": "m"}, "y"),
+            (("--disable-symbols=CRYPTO_AES_NI_INTEL",), {}, "n"),
+            (("--protected-config-symbols=CRYPTO_AES_NI_INTEL",), {}, "n"),
+            (("--optimization-profile=none",), {}, "n"),
+            ((), {"X86": "n"}, "n"),
+            ((), {"KMSAN": "y"}, "n"),
+            ((), {"CRYPTO": "n", "CRYPTO_AES": "n"}, "n"),
+            ((), {"CRYPTO_AES": "n"}, "n"),
+        )
+        for args, overrides, expected in cases:
+            with self.subTest(args=args, overrides=overrides):
+                self.set_baseline_symbols(**dict(X86="y", MODULES="y", KMSAN="n", CRYPTO="y",
+                                                CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n") | overrides)
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server", *args))
+                self.assert_symbol("CRYPTO_AES_NI_INTEL", expected)
+        self.add_symbols("CRYPTO_LIB_AES_XTS", kind="tristate")
+        self.set_baseline_symbols(X86="y", MODULES="y", CRYPTO="y", CRYPTO_AES="y",
+                                  CRYPTO_AES_NI_INTEL="n")
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_symbol("CRYPTO_AES_NI_INTEL", "n")
+
     def test_uclamp_groups_follow_profile_dependencies_and_overrides(self):
         self.add_symbols("CPU_FREQ", "CPU_FREQ_GOV_SCHEDUTIL", "CGROUP_SCHED")
         self.add_kconfig('''

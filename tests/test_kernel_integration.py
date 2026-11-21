@@ -614,6 +614,26 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_profile_aes_acceleration_and_overrides(self):
+        modern = "config CRYPTO_LIB_AES_XTS" in (self.tree / "lib/crypto/Kconfig").read_text()
+        self.prepare_baseline(MODULES="y", CRYPTO="y", CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n",
+                              DM_CRYPT="n")
+        args = ("--strict", "--optimization-profile=server", "--applications=cryptsetup")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args, "--dry-run"))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args))
+        self.assert_values(CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n" if modern else "m", DM_CRYPT="y")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args, "--enable-symbols=CRYPTO_AES_NI_INTEL"))
+        self.assert_values(CRYPTO_AES_NI_INTEL="y")
+        self.assert_success(self.run_script(*args, "--disable-symbols=CRYPTO_AES_NI_INTEL"))
+        self.assert_values(CRYPTO_AES_NI_INTEL="n")
+        self.assert_success(self.run_script(*args, "--protected-config-symbols=CRYPTO_AES_NI_INTEL"))
+        self.assert_values(CRYPTO_AES_NI_INTEL="n")
+
     def test_real_profile_enables_network_scaling(self):
         self.prepare_baseline(PCPU_DEV_REFCNT="n", BQL="n", RPS="n", RFS_ACCEL="n")
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))

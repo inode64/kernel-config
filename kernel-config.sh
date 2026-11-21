@@ -6368,6 +6368,19 @@ configure_extended_controls
 configure_symbol_overrides
 configure_hugetlb_vmemmap_default
 
+# Older x86 kernels need aesni-intel for accelerated bulk AES modes. Once
+# libaes provides XTS, CRYPTO_AES supplies those modes with arch acceleration.
+# The accelerated menu inherits CRYPTO, X86 and !KMSAN from crypto/Kconfig.
+if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" != none ]] \
+    && is_x86_config && ! is_symbol_enabled_now KMSAN \
+    && ! have_symbol CRYPTO_LIB_AES_XTS \
+    && [[ "${_SYMBOL_VALUE_CACHE[CRYPTO]:-n}" != n ]] \
+    && [[ "${_SYMBOL_VALUE_CACHE[CRYPTO_AES]:-n}" != n ]] \
+    && [[ "${_EXPLICIT_SYMBOL_VALUES[CRYPTO_AES_NI_INTEL]:-}" != n ]] \
+    && kconfig_depends_met CRYPTO_AES_NI_INTEL; then
+    request_module_or_builtin CRYPTO_AES_NI_INTEL "AES-NI/VAES acceleration"
+fi
+
 # Cgroup utilization hints need both the CPU controller and per-task uclamp.
 # Apply this after overrides so --uclamp=off and disabled parents still win.
 if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == desktop || "$UCLAMP" == on ]] \
