@@ -367,7 +367,7 @@ All controls in this table default to `keep`: they add no request of their own, 
 | --- | --- | --- |
 | `--preemption` | `keep`, `none`, `voluntary`, `full`, `lazy`, `rt` | Selects the preemption model. Availability depends on architecture and kernel version. |
 | `--preempt-dynamic` | `keep`, `on`, `off` | Controls dynamic preemption independently of the model. |
-| `--uclamp` | `keep`, `on`, `off` | Controls `UCLAMP_TASK`; `on` also requests its schedutil build dependency. Does not change the running governor or set utilization policies. |
+| `--uclamp` | `keep`, `on`, `off` | Controls `UCLAMP_TASK`; `on` also enables `CPU_FREQ` and its schedutil build dependency, including on baselines without CPU frequency scaling. Does not change the running governor or set utilization policies. |
 | `--autogroup` | `keep`, `on`, `off` | Controls `SCHED_AUTOGROUP`, overriding profile defaults. |
 | `--tick-mode` | `keep`, `periodic`, `idle`, `full` | Selects exactly one of `HZ_PERIODIC`, `NO_HZ_IDLE`, or `NO_HZ_FULL`. |
 | `--thp` | `keep`, `off`, `always`, `madvise`, `never` | Controls transparent huge pages and their default policy. `off` removes support; `never` retains support with a disabled default. |

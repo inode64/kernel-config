@@ -3159,6 +3159,8 @@ configure_extended_controls() {
     configure_risk_controls
     case "$UCLAMP" in
         on)
+            # Schedutil lives inside `if CPU_FREQ`; UCLAMP_TASK requires it.
+            request_explicit_symbol CPU_FREQ y
             request_explicit_symbol CPU_FREQ_GOV_SCHEDUTIL y
             request_explicit_symbol UCLAMP_TASK y
             ;;

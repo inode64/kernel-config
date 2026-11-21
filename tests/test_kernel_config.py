@@ -2039,12 +2039,13 @@ config HID_LED
         self.assert_untouched()
 
     def test_uclamp_autogroup_override_desktop_and_keep(self):
-        self.add_symbols("UCLAMP_TASK", "SCHED_AUTOGROUP", "CPU_FREQ_GOV_SCHEDUTIL")
+        self.add_symbols("UCLAMP_TASK", "SCHED_AUTOGROUP", "CPU_FREQ", "CPU_FREQ_GOV_SCHEDUTIL")
         self.assert_success(self.run_script("--strict", "--optimization-profile=desktop", "--uclamp=off", "--autogroup=off"))
         self.assert_symbol("UCLAMP_TASK", "n")
         self.assert_symbol("SCHED_AUTOGROUP", "n")
         self.assert_success(self.run_script("--strict", "--uclamp=on", "--autogroup=on"))
         self.assert_symbol("UCLAMP_TASK", "y")
+        self.assert_symbol("CPU_FREQ", "y")
         self.assert_symbol("CPU_FREQ_GOV_SCHEDUTIL", "y")
         self.assert_symbol("SCHED_AUTOGROUP", "y")
         self.assert_success(self.run_script("--strict", "--uclamp=keep", "--autogroup=keep"))

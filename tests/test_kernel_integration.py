@@ -417,6 +417,24 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--uclamp=on", "--autogroup=on"))
         self.assert_values(UCLAMP_TASK="y", SCHED_AUTOGROUP="y", CPU_FREQ_GOV_SCHEDUTIL="y")
 
+    def test_real_uclamp_enables_cpufreq_and_respects_protection(self):
+        # SCHED_MC_PRIO selects CPU_FREQ on x86, hiding the missing parent.
+        self.prepare_baseline(SCHED_MC_PRIO="n", CPU_FREQ="n")
+        before = self.config.read_bytes()
+        args = ("--strict", "--uclamp=on")
+        result = self.run_script(*args, "--protected-config-symbols=CPU_FREQ")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONFIG_CPU_FREQ requested=y final=n", result.stderr)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args, "--dry-run"))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args))
+        self.assert_values(CPU_FREQ="y", CPU_FREQ_GOV_SCHEDUTIL="y", UCLAMP_TASK="y",
+                           SCHED_MC_PRIO="n")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), before)
+
     def test_real_profiles_restore_cgroup_dependencies(self):
         for profile in ("server", "desktop", "realtime"):
             with self.subTest(profile=profile):
