@@ -639,6 +639,28 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(PCPU_DEV_REFCNT="y", BQL="y", RPS="y", RFS_ACCEL="y")
 
+    def test_real_posted_msi_profiles_and_iommu_overrides(self):
+        # AMD_IOMMU selects PCI_MSI, which would prevent testing its removal.
+        self.prepare_baseline(IOMMU_SUPPORT="y", INTEL_IOMMU="y", IRQ_REMAP="y",
+                              HYPERVISOR_GUEST="y", X86_POSTED_MSI="n", AMD_IOMMU="n")
+        baseline = self.config.read_bytes()
+        for profile in ("server", "desktop"):
+            with self.subTest(profile=profile):
+                self.config.write_bytes(baseline)
+                args = ("--strict", f"--optimization-profile={profile}")
+                self.assert_success(self.run_script(*args))
+                self.assert_values(X86_POSTED_MSI="y")
+                before = self.config.read_bytes()
+                self.assert_success(self.run_script(*args))
+                self.assertEqual(self.config.read_bytes(), before)
+        for override in ("--iommu-support=off", "--disable-symbols=IRQ_REMAP",
+                         "--disable-symbols=X86_POSTED_MSI", "--protected-config-symbols=X86_POSTED_MSI",
+                         "--disable-symbols=INTEL_IOMMU", "--disable-symbols=PCI_MSI"):
+            with self.subTest(override=override):
+                self.config.write_bytes(baseline)
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server", override))
+                self.assert_values(X86_POSTED_MSI="n")
+
     def test_real_x86_x2apic_respects_iommu_and_baremetal_or_guest(self):
         self.prepare_baseline(IOMMU_SUPPORT="y", IRQ_REMAP="y", X86_X2APIC="n")
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))

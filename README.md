@@ -199,6 +199,17 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   `CRYPTO_LIB_AES_XTS`, `CRYPTO_AES` already supplies accelerated bulk modes;
   no extra AES-NI driver is requested. See the [upstream migration notes](https://github.com/torvalds/linux/blob/master/arch/x86/crypto/Kconfig).
 
+  Server and desktop also enable `X86_POSTED_MSI` when x86_64, the Intel IOMMU
+  driver and interrupt remapping are enabled. This makes coalesced interrupt
+  notifications available for bursts of MSI/MSI-X traffic, as in
+  [CachyOS](https://github.com/CachyOS/linux-cachyos/blob/master/linux-cachyos/config)
+  and [Qubes' Fedora-based configuration](https://github.com/QubesOS/qubes-linux-kernel/blob/main/config-base).
+  Actual use requires compatible interrupt-posting hardware and the
+  [`intremap=posted_msi` boot parameter](https://docs.kernel.org/admin-guide/kernel-parameters.html).
+  The script does not change the boot command line. The realtime profile leaves
+  this option unchanged; `--iommu-support=off`, disabled dependencies, protected
+  values and `--disable-symbols=X86_POSTED_MSI` suppress the default.
+
   - `server`
     Prioritizes throughput and stable background behavior:
     Preemption preference is `PREEMPT_NONE`, then `PREEMPT_LAZY`, `PREEMPT_VOLUNTARY`, or full preemption, skipping a model whose direct dependencies are unmet. From Linux 7.4 (`7dadeaa6`, "sched: Further restrict the preemption modes") `PREEMPT_NONE` depends on `ARCH_NO_PREEMPT` and `PREEMPT_VOLUNTARY` depends on `!ARCH_HAS_PREEMPT_LAZY`. x86, arm64 and the other lazy-preemption architectures therefore get `PREEMPT_LAZY`, the model upstream left in place of the old server and voluntary choices. A config migrated from 6.18 still lists `PREEMPT_NONE`; the profile does not request it once the dependency is unmet, because strict mode would reject the run. It requests `NO_HZ_IDLE` and a low timer rate preference (`HZ_100`, then `HZ_250`, `HZ_300`, `HZ_1000`). `NO_HZ_FULL` is left to the realtime profile and to `--tick-mode=full`: `Documentation/timers/no_hz.rst` says adaptive ticks should not be enabled by default, and selecting it removes `TICK_CPU_ACCOUNTING` (`VIRT_CPU_ACCOUNTING_GEN`, which it forces, is documented as a significant cost and "only useful if you are working on the full dynticks subsystem"). The `HAVE_CONTEXT_TRACKING_USER` and `HAVE_VIRT_CPU_ACCOUNTING_GEN` symbols are architecture capabilities, enabled on every 64-bit x86 build, so they are not evidence that the baseline wanted full dynticks.

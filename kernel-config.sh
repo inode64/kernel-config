@@ -6381,6 +6381,17 @@ if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" != none ]] \
     request_module_or_builtin CRYPTO_AES_NI_INTEL "AES-NI/VAES acceleration"
 fi
 
+# Only the Intel remapper implements posted MSI delivery. Check after IOMMU
+# and symbol overrides: IRQ_REMAP can remain stale after disabling IOMMU or MSI.
+# Runtime coalescing still requires the opt-in intremap=posted_msi boot option.
+if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == server || "$OPTIMIZATION_PROFILE_EFFECTIVE" == desktop ]] \
+    && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_POSTED_MSI]:-}" != n ]] \
+    && is_symbol_enabled_now IOMMU_SUPPORT && is_symbol_enabled_now INTEL_IOMMU \
+    && kconfig_depends_met IRQ_REMAP \
+    && kconfig_depends_met X86_POSTED_MSI; then
+    enable_if_present X86_POSTED_MSI
+fi
+
 # Cgroup utilization hints need both the CPU controller and per-task uclamp.
 # Apply this after overrides so --uclamp=off and disabled parents still win.
 if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == desktop || "$UCLAMP" == on ]] \

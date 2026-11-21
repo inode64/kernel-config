@@ -2087,6 +2087,42 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_symbol("CRYPTO_AES_NI_INTEL", "n")
 
+    def test_posted_msi_follows_profiles_and_final_iommu_settings(self):
+        self.add_symbols("X86", "X86_64", "IOMMU_SUPPORT", "INTEL_IOMMU", "PCI_MSI", "ACPI", "X86_IO_APIC")
+        self.add_kconfig('''
+            config IRQ_REMAP
+            \tbool "Interrupt remapping"
+            \tdepends on X86_64 && X86_IO_APIC && PCI_MSI && ACPI
+        ''', path="drivers/iommu/Kconfig")
+        self.add_kconfig('''
+            config X86_POSTED_MSI
+            \tbool "MSI delivery by posted interrupts"
+            \tdepends on X86_64 && IRQ_REMAP
+        ''', path="arch/x86/Kconfig")
+        cases = (
+            ("server", (), {}, "y"),
+            ("desktop", (), {}, "y"),
+            ("none", (), {}, "n"),
+            ("realtime", (), {}, "n"),
+            ("realtime", (), {"X86_POSTED_MSI": "y"}, "y"),
+            ("server", ("--iommu-support=off",), {}, "n"),
+            ("server", ("--disable-symbols=IRQ_REMAP",), {}, "n"),
+            ("server", ("--disable-symbols=PCI_MSI",), {}, "n"),
+            ("server", ("--disable-symbols=ACPI",), {}, "n"),
+            ("server", ("--disable-symbols=X86_POSTED_MSI",), {}, "n"),
+            ("server", ("--protected-config-symbols=X86_POSTED_MSI",), {}, "n"),
+            ("server", (), {"INTEL_IOMMU": "n"}, "n"),
+            ("server", (), {"X86_64": "n"}, "n"),
+            ("server", (), {"IOMMU_SUPPORT": "n"}, "n"),
+        )
+        for profile, args, overrides, expected in cases:
+            with self.subTest(profile=profile, args=args, overrides=overrides):
+                self.set_baseline_symbols(**dict(X86="y", X86_64="y", IOMMU_SUPPORT="y",
+                                                PCI_MSI="y", ACPI="y", X86_IO_APIC="y",
+                                                INTEL_IOMMU="y", IRQ_REMAP="y", X86_POSTED_MSI="n") | overrides)
+                self.assert_success(self.run_script("--strict", f"--optimization-profile={profile}", *args))
+                self.assert_symbol("X86_POSTED_MSI", expected)
+
     def test_uclamp_groups_follow_profile_dependencies_and_overrides(self):
         self.add_symbols("CPU_FREQ", "CPU_FREQ_GOV_SCHEDUTIL", "CGROUP_SCHED")
         self.add_kconfig('''
