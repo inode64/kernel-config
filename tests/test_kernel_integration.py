@@ -690,6 +690,48 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script(*args, "--disable-symbols=IGB,USB_SUPPORT", "--tpm-support=off"))
         self.assert_values(IGB="n", USB_SUPPORT="n", USB_XHCI_PCI="n", TCG_TPM="n", TCG_CRB="n")
 
+    def test_real_native_ahci_requires_attached_devices_and_honors_overrides(self):
+        host = self.use_native_host()
+        shutil.rmtree(host / "sys/class/iommu")
+        path = "/sys/devices/pci0000:00/0000:00:17.0"
+        device = host / path.lstrip("/")
+        device.mkdir(parents=True)
+        (device / "class").write_text("0x010601\n")
+        bus = host / "sys/bus/pci/devices"
+        bus.mkdir(parents=True)
+        (bus / "0000:00:17.0").symlink_to(path)
+        driver = host / "sys/bus/pci/drivers/ahci"
+        driver.mkdir(parents=True)
+        (driver / "module").symlink_to("/sys/module/ahci")
+        (device / "driver").symlink_to("/sys/bus/pci/drivers/ahci")
+        args = ("--strict", "--native-arch", "--native-cpu=none", "--platform-drivers=none")
+        self.prepare_baseline(ATA="y", SATA_AHCI="n")
+        result = self.run_script(*args)
+        self.assert_success(result)
+        self.assertIn("ahci-no-attached-device", result.stdout)
+        self.assert_values(SATA_AHCI="n")
+        self.assert_success(self.run_script(*args, "--enable-symbols=SATA_AHCI"))
+        self.assert_values(SATA_AHCI="y", SATA_HOST="y")
+        for mode in ("y", "m"):
+            with self.subTest(baseline=mode):
+                self.prepare_baseline(SATA_AHCI=mode)
+                self.assert_success(self.run_script(*args))
+                self.assert_values(SATA_AHCI=mode)
+
+        scsi = device / "ata1/host0/target0:0:0/0:0:0:0"
+        scsi.mkdir(parents=True)
+        (scsi / "type").write_text("0\n")
+        scsi_bus = host / "sys/bus/scsi/devices"
+        scsi_bus.mkdir(parents=True)
+        (scsi_bus / "0:0:0:0").symlink_to("/" + str(scsi.relative_to(host)))
+        self.prepare_baseline(SATA_AHCI="n")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(SATA_AHCI="y", SATA_HOST="y")
+        self.assert_success(self.run_script(*args, "--disable-symbols=SATA_AHCI"))
+        self.assert_values(SATA_AHCI="n")
+        self.assert_success(self.run_script(*args, "--protected-config-symbols=SATA_AHCI"))
+        self.assert_values(SATA_AHCI="n")
+
     def test_real_native_cpu_features(self):
         host = self.use_native_host()
         (host / "proc/cpuinfo").write_text("processor : 0\nvendor_id : GenuineIntel\nflags : x2apic fred mce mca\n")

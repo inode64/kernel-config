@@ -347,8 +347,17 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   module metadata, then reuses the target tree's Kbuild module-to-symbol map.
   This covers PCI/USB, SATA/NVMe/SCSI, network and wireless devices, TPM
   transports, graphics, sound, input, sensors and other registered drivers.
-  Known standard controller classes also identify NVMe, AHCI and USB host
-  controllers without a loaded driver. Active SCSI disks, USB storage/UAS,
+  Known standard controller classes also identify NVMe and USB host
+  controllers without a loaded driver. PCI AHCI additionally requires a block,
+  SCSI or identified ATA device below that controller in sysfs; an empty
+  controller's bound driver or modalias alone does not add SATA support.
+  Unmounted disks, optical drives without media and devices awaiting a block
+  driver count as attached. An unbound controller or incomplete sysfs cannot
+  prove that its ports are empty: the script reports the missing evidence,
+  keeps baseline settings and honors `--enable-symbols=SATA_AHCI` for hotplug
+  or recovery. To remove previously enabled AHCI after verifying it is unused,
+  pass `--disable-symbols=SATA_AHCI`; Kconfig derives `SATA_HOST` from the
+  remaining drivers. Active SCSI disks, USB storage/UAS,
   md RAID levels and dm/LVM/LUKS layers add their required support.
   `PCI_MSI` requires allocated interrupts in a detected PCI device's
   `msi_irqs`; posted MSI has the stronger `NATIVE_CPU` checks above.

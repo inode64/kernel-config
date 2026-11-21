@@ -83,6 +83,83 @@ class HardwareTests(unittest.TestCase):
         self.write("sys/class/drm/version", "drm 1.1.0\n")
         self.assertEqual(discover(self.host), [])
 
+    def ahci(self, name="0000:00:17.0", *, bound=True):
+        path = f"/sys/devices/pci0000:00/{name}"
+        self.link(f"/sys/bus/pci/devices/{name}", path)
+        self.write(path + "/class", "0x010601\n")
+        self.write(path + "/modalias", "pci:ahci\n")
+        if bound:
+            self.link(path + "/driver", "/sys/bus/pci/drivers/ahci")
+            if not (self.root / "sys/bus/pci/drivers/ahci/module").is_symlink():
+                self.link("/sys/bus/pci/drivers/ahci/module", "/sys/module/ahci")
+        return path
+
+    def test_ahci_without_devices_is_not_added_by_class_driver_or_alias(self):
+        self.write("proc/sys/kernel/osrelease", "test-kernel\n")
+        self.write("lib/modules/test-kernel/modules.alias", "alias pci:ahci ahci\n")
+        self.write("lib/modules/test-kernel/modules.builtin", "kernel/drivers/ata/ahci.ko\n")
+        for bound in (False, True):
+            with self.subTest(bound=bound):
+                path = self.ahci(f"0000:00:{17 + int(bound)}.0", bound=bound)
+                self.write(path + "/msi_irqs/32", "msi\n")
+                for port, value in enumerate(("none", "unknown")):
+                    device = path + f"/ata{port}/link{port}/dev{port}.0"
+                    self.write(device + "/class", value)
+                    self.link(f"/sys/class/ata_device/{int(bound)}-dev{port}.0", device)
+                facts = self.facts()
+                self.assertIn(("symbol", "PCI"), facts)
+                self.assertIn(("symbol", "PCI_MSI"), facts)
+                self.assertIn(("notice", "ahci-no-attached-device"), facts)
+                for kind, name in (("symbol", "SATA_AHCI"), ("module", "ahci"),
+                                   ("builtin", "ahci"), ("symbol", "ATA")):
+                    self.assertNotIn((kind, name), facts)
+
+    def test_ahci_with_unmounted_block_device_is_required(self):
+        path = self.ahci()
+        device = path + "/ata1/host0/target0:0:0/0:0:0:0/block/sda"
+        self.write(device + "/dev", "8:0\n")
+        self.link("/sys/class/block/sda", device)
+        self.link("/sys/block/sda", device)
+        for symbol in ("SATA_AHCI", "ATA", "SCSI", "BLOCK"):
+            self.assertIn(("symbol", symbol), self.facts())
+        self.assertIn(("module", "ahci"), self.facts())
+
+    def test_ahci_with_scsi_device_does_not_require_a_block_driver(self):
+        path = self.ahci()
+        device = path + "/ata1/host0/target0:0:0/0:0:0:0"
+        self.link("/sys/bus/scsi/devices/0:0:0:0", device)
+        for scsi_type in ("0", "5"):
+            with self.subTest(scsi_type=scsi_type):
+                self.write(device + "/type", scsi_type)
+                self.assertIn(("symbol", "SATA_AHCI"), self.facts())
+
+    def test_ahci_with_identified_ata_device_does_not_require_scsi(self):
+        path = self.ahci()
+        device = path + "/ata1/link1/dev1.0"
+        self.link("/sys/class/ata_device/dev1.0", device)
+        for ata_class in ("ata", "atapi", "pmp", "semb", "zac"):
+            with self.subTest(ata_class=ata_class):
+                self.write(device + "/class", ata_class)
+                self.assertIn(("symbol", "SATA_AHCI"), self.facts())
+
+    def test_devices_on_other_controllers_do_not_enable_empty_ahci(self):
+        path = self.ahci()
+        device = path + "1/host0/target0:0:0/0:0:0:0/block/sda"
+        self.write(device + "/dev", "8:0\n")
+        self.link("/sys/class/block/sda", device)
+        self.assertNotIn(("symbol", "SATA_AHCI"), self.facts())
+
+    def test_multiple_ahci_controllers_keep_the_required_driver(self):
+        empty = self.ahci()
+        used = self.ahci("0000:01:00.0")
+        device = used + "/ata1/host0/target0:0:0/0:0:0:0/block/sda"
+        self.write(device + "/dev", "8:0\n")
+        self.link("/sys/class/block/sda", device)
+        facts = discover(self.host)
+        evidence = [e for kind, name, e in facts if name in ("SATA_AHCI", "ahci")]
+        self.assertTrue(evidence)
+        self.assertTrue(all(used in e and empty not in e for e in evidence))
+
 
 if __name__ == "__main__":
     unittest.main()

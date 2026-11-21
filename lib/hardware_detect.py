@@ -156,7 +156,34 @@ def discover(host):
                 resolved["/" + str(device.relative_to(host.root))].update(subsystems)
         except OSError:
             add("notice", "unreadable", path)
+    # Empty AHCI ports still have a bound driver and matching module aliases.
+    # Require a device below this controller, not merely an AHCI PCI function.
+    # SCSI/ATA evidence also covers optical drives without media and devices
+    # whose block driver is missing. Mount state does not determine necessity.
+    storage_paths = {
+        path for path, subsystems in resolved.items()
+        if "block" in subsystems
+        or ("scsi" in subsystems and host.read(path + "/type").isdigit())
+        or ("ata_device" in subsystems and host.read(path + "/class")
+            in {"ata", "atapi", "pmp", "semb", "zac"})
+    }
+    ahci_without_devices = {
+        path for path, subsystems in resolved.items()
+        if "pci" in subsystems and host.read(path + "/class").lower() == "0x010601"
+        and not any(device.startswith(path + "/") for device in storage_paths)
+    }
     for path, subsystems in sorted(resolved.items()):
+        if any(path == controller or path.startswith(controller + "/")
+               for controller in ahci_without_devices):
+            if path in ahci_without_devices:
+                symbols(BUS_PARENTS["pci"], path)
+                if host.children(path + "/msi_irqs"):
+                    symbols(("PCI_MSI",), path + "/msi_irqs (allocated interrupts)")
+                add("notice", "ahci-no-attached-device",
+                    f"{path}: no attached block/SCSI/ATA device observed; AHCI not added. "
+                    "Unbound or incomplete sysfs cannot prove empty ports; use "
+                    "--enable-symbols=SATA_AHCI for hotplug/recovery support")
+            continue
         for subsystem in sorted(subsystems):
             symbols(BUS_PARENTS.get(subsystem, ()), path)
             symbols(CLASS_PARENTS.get(subsystem, ()), path)
