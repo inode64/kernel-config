@@ -1829,7 +1829,7 @@ config HID_LED
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
-                  "MEMORY_FAILURE", "DEBUG_FS", "DEBUG_FS_ALLOW_ALL", "TRACEFS_AUTOMOUNT_DEPRECATED")
+                  "MEMORY_FAILURE", "MEMORY_HOTPLUG", "DEBUG_FS", "DEBUG_FS_ALLOW_ALL", "TRACEFS_AUTOMOUNT_DEPRECATED")
         self.add_symbols("X86", "ARCH_SUPPORTS_MEMORY_FAILURE", "FUNCTION_TRACER", *wanted)
         self.set_baseline_symbols(X86="y", ARCH_SUPPORTS_MEMORY_FAILURE="y", FUNCTION_TRACER="y",
                                   **dict.fromkeys(wanted, "n"))
@@ -1844,6 +1844,25 @@ config HID_LED
                                             "--disable-symbols=TRACEFS_AUTOMOUNT_DEPRECATED"))
         for symbol in wanted:
             self.assert_symbol(symbol, "n" if symbol == "TRACEFS_AUTOMOUNT_DEPRECATED" else "y")
+
+    def test_rasdaemon_page_offlining_respects_architecture_and_overrides(self):
+        self.add_symbols("ARCH_SUPPORTS_MEMORY_FAILURE", "MEMORY_FAILURE", "MEMORY_HOTPLUG",
+                         "MEMORY_HOTREMOVE")
+        self.set_baseline_symbols(ARCH_SUPPORTS_MEMORY_FAILURE="n", MEMORY_FAILURE="n",
+                                  MEMORY_HOTPLUG="n", MEMORY_HOTREMOVE="n")
+        self.assert_success(self.run_script("--strict", "--applications=rasdaemon"))
+        self.assert_symbol("MEMORY_FAILURE", "n")
+        self.assert_symbol("MEMORY_HOTPLUG", "n")
+        self.set_baseline_symbols(ARCH_SUPPORTS_MEMORY_FAILURE="y")
+        for override in ("--disable-symbols=MEMORY_HOTPLUG", "--protected-config-symbols=MEMORY_HOTPLUG"):
+            with self.subTest(override=override):
+                self.assert_success(self.run_script("--strict", "--applications=rasdaemon", override))
+                self.assert_symbol("MEMORY_FAILURE", "y")
+                self.assert_symbol("MEMORY_HOTPLUG", "n")
+                self.assert_symbol("MEMORY_HOTREMOVE", "n")
+        self.assert_success(self.run_script("--strict", "--applications=rasdaemon"))
+        self.assert_symbol("MEMORY_HOTPLUG", "y")
+        self.assert_symbol("MEMORY_HOTREMOVE", "n")
 
     def test_server_profile_keeps_lockup_and_hung_task_detection(self):
         detectors = ("DEBUG_KERNEL", "LOCKUP_DETECTOR", "SOFTLOCKUP_DETECTOR", "DETECT_HUNG_TASK",

@@ -5942,7 +5942,8 @@ configure_application_profiles() {
                 # automount must remain available despite the pruning presets.
                 # Version 1.0 can use standalone tracefs, but ACPI EXTLOG still
                 # needs debugfs/ras/daemon_active to request userspace events.
-                # Its page offlining needs MEMORY_FAILURE.
+                # Userspace page offlining needs MEMORY_FAILURE and the sysfs
+                # interface in drivers/base/memory.c, built with MEMORY_HOTPLUG.
                 # BRANCH_PROFILE_NONE is the default of the branch-profiling choice
                 # FTRACE exposes; the coverage prune may have requested it off.
                 for sym in RAS EDAC ACPI_APEI ACPI_APEI_GHES PCIEPORTBUS PCIEAER FTRACE ENABLE_DEFAULT_TRACERS TRACING TRACEPOINTS EVENT_TRACING BRANCH_PROFILE_NONE DEBUG_FS DEBUG_FS_ALLOW_ALL TRACEFS_AUTOMOUNT_DEPRECATED; do
@@ -5953,6 +5954,7 @@ configure_application_profiles() {
                 fi
                 if [[ "${_SYMBOL_VALUE_CACHE[ARCH_SUPPORTS_MEMORY_FAILURE]:-n}" == y ]]; then
                     append_unique_item MEMORY_FAILURE enable_syms
+                    append_unique_item MEMORY_HOTPLUG enable_syms
                 fi
                 ;;
             python)

@@ -625,8 +625,11 @@ These options change kernel build configuration and defaults. They do not create
     `TRACING` even when `--all-optimizations` prunes the tracers. The profile
     requests `FTRACE` with `ENABLE_DEFAULT_TRACERS`, which provide the events
     without the function tracer or kprobes, plus `RAS`, `EDAC`,
-    `ACPI_APEI_GHES`, `PCIEAER`, `X86_MCE` and `MEMORY_FAILURE` for page
-    offlining. The vendor EDAC driver (`EDAC_AMD64`, `EDAC_IE31200`...)
+    `ACPI_APEI_GHES`, `PCIEAER`, `X86_MCE`, `MEMORY_FAILURE` and
+    `MEMORY_HOTPLUG` for page offlining. The latter builds the sysfs interface
+    `/sys/devices/system/memory/{soft,hard}_offline_page`; without it,
+    rasdaemon falls back to accounting even when `PAGE_CE_ACTION=soft`.
+    `MEMORY_HOTREMOVE` is not required or requested. The vendor EDAC driver (`EDAC_AMD64`, `EDAC_IE31200`...)
     comes from `--platform-drivers=auto`. The profile also keeps `DEBUG_FS`
     and `DEBUG_FS_ALLOW_ALL`, together with `TRACEFS_AUTOMOUNT_DEPRECATED`
     where available: rasdaemon 0.8.4 discovers its tracing interface through
