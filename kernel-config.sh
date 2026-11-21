@@ -87,7 +87,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
-#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python, rasdaemon
+#   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, multipath, python, rasdaemon
 #   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
 #   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
@@ -2428,7 +2428,7 @@ resolve_application_profiles() {
             none | off | 0)
                 saw_none=1
                 ;;
-            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | iptables-legacy | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | python | rasdaemon)
+            desktop | multimedia | rocm | nebula | warp | samba | firehol | firewalld | iptables-legacy | openvswitch | ceph | nfs-client | nfs-server | openvpn | wireguard | docker | qemu | atop | bmon | btop | htop | iotop-c | cryptsetup | multipath | python | rasdaemon)
                 if [[ "$saw_none" == "1" ]]; then
                     echo "Invalid APPLICATIONS: cannot combine 'none' with app profiles" >&2
                     exit 1
@@ -2437,7 +2437,7 @@ resolve_application_profiles() {
                 ;;
             *)
                 echo "Invalid APPLICATIONS entry: $token" >&2
-                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, python, rasdaemon" >&2
+                echo "Use: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, multipath, python, rasdaemon" >&2
                 exit 1
                 ;;
         esac
@@ -5930,6 +5930,16 @@ configure_application_profiles() {
             cryptsetup)
                 for sym in BLK_DEV_DM DM_CRYPT CRYPTO CRYPTO_USER_API CRYPTO_USER_API_AEAD CRYPTO_USER_API_SKCIPHER CRYPTO_USER_API_HASH CRYPTO_AES CRYPTO_XTS CRYPTO_SHA256; do
                     append_unique_item "$sym" enable_syms
+                done
+                ;;
+            multipath)
+                for sym in BLOCK MD; do
+                    append_unique_item "$sym" enable_syms
+                done
+                # Path selectors are software policies, independent of the
+                # attached storage vendor. multipath-tools defaults to service-time.
+                for sym in BLK_DEV_DM DM_MULTIPATH DM_MULTIPATH_QL DM_MULTIPATH_ST DM_MULTIPATH_HST DM_MULTIPATH_IOA DM_UEVENT; do
+                    loadable_syms["$sym"]="$profile"
                 done
                 ;;
             rasdaemon)

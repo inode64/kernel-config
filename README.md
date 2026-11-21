@@ -583,7 +583,7 @@ These options change kernel build configuration and defaults. They do not create
   Enables kernel features commonly required by selected applications.
 
   Supported profiles:
-  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `iptables-legacy`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `python`, `rasdaemon`
+  `desktop`, `multimedia`, `rocm`, `nebula`, `warp`, `samba`, `firehol`, `firewalld`, `iptables-legacy`, `openvswitch`, `ceph`, `nfs-client`, `nfs-server`, `openvpn`, `wireguard`, `docker`, `qemu`, `atop`, `bmon`, `btop`, `htop`, `iotop-c`, `cryptsetup`, `multipath`, `python`, `rasdaemon`
 
   - `desktop`: GNOME/Wayland interfaces, browser namespaces/seccomp, IDE file
     notifications, FUSE portals, input/HID and DRM synchronization. This enables
@@ -619,6 +619,15 @@ These options change kernel build configuration and defaults. They do not create
     "Source compiled." with an access violation on `/proc/<pid>/mem`.
     `DNOTIFY` only enables `test_fcntl`. Both default to `y` upstream and cost
     nothing until a program calls them.
+
+  - `multipath`: device-mapper multipath, uevents and the queue-length,
+    service-time, historical-service-time and I/O-affinity path selectors
+    (`DM_MULTIPATH_QL/ST/HST/IOA`, where available). These are software policies,
+    not drivers tied to a storage vendor. New tristate requests use modules
+    when `MODULES=y`; existing built-in support is preserved. With modules
+    disabled, they are built in. The profile does not create maps, start
+    multipathd or require currently active paths. Vendor-specific SCSI handlers
+    remain a separate hardware requirement.
 
   - `rasdaemon`: rasdaemon records EDAC memory errors, PCIe AER and machine
     checks from tracefs events (`ras:*`, `mce:mce_record`), so it needs

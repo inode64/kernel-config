@@ -1826,6 +1826,45 @@ config HID_LED
         self.assert_symbol("SLUB_CPU_PARTIAL", "n")
         self.assert_symbol("RAID6_PQ_BENCHMARK", "n")
 
+    def test_multipath_profile_keeps_selectors_without_active_paths(self):
+        selectors = ("DM_MULTIPATH_QL", "DM_MULTIPATH_ST", "DM_MULTIPATH_HST", "DM_MULTIPATH_IOA")
+        self.add_symbols("MODULES", "BLOCK", "MD", "DM_UEVENT")
+        self.add_symbols("BLK_DEV_DM", "DM_MULTIPATH", *selectors, kind="tristate")
+        for modules, existing in (("y", "n"), ("y", "m"), ("y", "y"), ("n", "n")):
+            with self.subTest(modules=modules, existing=existing):
+                self.set_baseline_symbols(MODULES=modules, BLOCK="y", MD="n", DM_UEVENT="n",
+                                          BLK_DEV_DM=existing, DM_MULTIPATH=existing,
+                                          **dict.fromkeys(selectors, "n"))
+                self.assert_success(self.run_script("--strict", "--applications=multipath"))
+                for symbol in ("MD", "DM_UEVENT"):
+                    self.assert_symbol(symbol, "y")
+                wanted = "m" if modules == "y" else "y"
+                for symbol in selectors:
+                    self.assert_symbol(symbol, wanted)
+                for symbol in ("BLK_DEV_DM", "DM_MULTIPATH"):
+                    self.assert_symbol(symbol, existing if existing != "n" else wanted)
+                before = self.config.read_bytes()
+                self.assert_success(self.run_script("--strict", "--applications=multipath"))
+                self.assertEqual(self.config.read_bytes(), before)
+
+        self.set_baseline_symbols(MODULES="y", DM_MULTIPATH_ST="y", DM_MULTIPATH_QL="n")
+        self.assert_success(self.run_script("--strict", "--applications=multipath",
+                                            "--protected-config-symbols=DM_MULTIPATH_QL",
+                                            "--disable-symbols=DM_MULTIPATH_IOA"))
+        self.assert_symbol("DM_MULTIPATH_ST", "y")
+        self.assert_symbol("DM_MULTIPATH_QL", "n")
+        self.assert_symbol("DM_MULTIPATH_IOA", "n")
+
+    def test_multipath_profile_skips_unavailable_selectors(self):
+        self.add_symbols("MODULES", "BLOCK", "MD", "DM_UEVENT")
+        self.add_symbols("BLK_DEV_DM", "DM_MULTIPATH", "DM_MULTIPATH_QL", "DM_MULTIPATH_ST", kind="tristate")
+        self.set_baseline_symbols(MODULES="y")
+        result = self.run_script("--strict", "--applications=multipath")
+        self.assert_success(result)
+        self.assert_symbol("DM_MULTIPATH_ST", "m")
+        self.assertIn("CONFIG_DM_MULTIPATH_HST not available", result.stdout)
+        self.assertIn("CONFIG_DM_MULTIPATH_IOA not available", result.stdout)
+
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",

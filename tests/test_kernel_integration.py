@@ -333,6 +333,26 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(NET_SCHED="y", NET_SCH_FQ="y", NET_SCH_FQ_CODEL="y")
 
+    def test_real_multipath_profile_restores_selectors(self):
+        self.prepare_baseline(MODULES="y", MD="y", BLK_DEV_DM="y", DM_MULTIPATH="y",
+                              DM_MULTIPATH_QL="n", DM_MULTIPATH_ST="n",
+                              DM_MULTIPATH_HST="n", DM_MULTIPATH_IOA="n", DM_UEVENT="n")
+        args = ("--strict", "--all-optimizations", "--applications=multipath,rasdaemon")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(BLK_DEV_DM="y", DM_MULTIPATH="y", DM_UEVENT="y",
+                           DM_MULTIPATH_QL="m", DM_MULTIPATH_ST="m",
+                           DM_MULTIPATH_HST="m", DM_MULTIPATH_IOA="m")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_real_multipath_profile_enables_modular_stack(self):
+        self.prepare_baseline(MODULES="y", MD="n")
+        self.assert_success(self.run_script("--strict", "--applications=multipath"))
+        self.assert_values(MD="y", BLK_DEV_DM="m", DM_MULTIPATH="m", DM_UEVENT="y",
+                           DM_MULTIPATH_QL="m", DM_MULTIPATH_ST="m",
+                           DM_MULTIPATH_HST="m", DM_MULTIPATH_IOA="m")
+
     def test_real_rasdaemon_keeps_trace_events_under_all_optimizations(self):
         # The pruned tracers come back at their default (y) once FTRACE returns,
         # unless the earlier disable requests are applied again. TCP_CONG_ADVANCED=n
