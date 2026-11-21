@@ -636,7 +636,12 @@ These options change kernel build configuration and defaults. They do not create
   the `DNAT`/`MASQUERADE` targets) instead of the legacy nat table, so it no
   longer conflicts with `PRUNE_LEGACY`. A host whose `iptables -V` reports
   `legacy` also needs `iptables-legacy`, which requests the legacy filter,
-  mangle, raw and nat tables for IPv4 and IPv6. Docker 28+ writes its
+  mangle, raw and nat tables for IPv4 and IPv6, and the shared
+  `NETFILTER_XT_TARGET_MASQUERADE` / `NETFILTER_XT_TARGET_HL` targets. These
+  keep IPv4 MASQUERADE and TTL rules available even when `PRUNE_LEGACY`
+  disables the `IP_NF_TARGET_MASQUERADE` / `IP_NF_TARGET_TTL` compatibility
+  wrappers. The shared modules also provide the `ipt_MASQUERADE` / `ipt_TTL`
+  aliases used for automatic loading. Docker 28+ writes its
   direct-access `DROP` rules to the raw table. Those tables and the xtables
   extensions of `docker` and `firehol` are loaded on demand, so they follow the
   `PLATFORM_DRIVERS` rule: built-in stays built in, otherwise a module when

@@ -1321,6 +1321,22 @@ config HID_LED
         for symbol in legacy:
             self.assert_symbol(symbol, "y")
 
+    def test_legacy_firewall_targets_do_not_need_compatibility_wrappers(self):
+        targets = ("NETFILTER_XT_TARGET_MASQUERADE", "NETFILTER_XT_TARGET_HL")
+        wrappers = ("IP_NF_TARGET_MASQUERADE", "IP_NF_TARGET_TTL")
+        self.add_symbols("MODULES")
+        self.add_symbols(*targets, *wrappers, kind="tristate")
+        for profile in ("iptables-legacy", "docker,iptables-legacy", "firehol"):
+            with self.subTest(profile=profile):
+                self.set_baseline_symbols(MODULES="y", **dict.fromkeys(targets + wrappers, "n"))
+                self.assert_success(self.run_script(
+                    "--strict", "--prune-legacy", f"--applications={profile}",
+                    "--disable-symbols=" + ",".join(wrappers)))
+                for symbol in targets:
+                    self.assert_symbol(symbol, "m")
+                for symbol in wrappers:
+                    self.assert_symbol(symbol, "n")
+
     def test_tunnel_profiles_do_not_pin_the_hidden_udp_tunnel(self):
         self.add_kconfig('''
             config NET_UDP_TUNNEL

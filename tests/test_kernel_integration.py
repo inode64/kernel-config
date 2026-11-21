@@ -289,6 +289,20 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_enabled("IP_NF_IPTABLES_LEGACY", "IP6_NF_IPTABLES_LEGACY", "IP_NF_FILTER",
                             "IP_NF_NAT", "IP6_NF_NAT", "IP_NF_RAW", "IP6_NF_RAW")
 
+    def test_real_legacy_firewall_targets_without_compatibility_wrappers(self):
+        for profile in ("iptables-legacy", "docker,iptables-legacy", "firehol"):
+            with self.subTest(profile=profile):
+                self.config.write_bytes(self.original)
+                self.prepare_baseline(NETFILTER_XTABLES="m", NETFILTER_XT_TARGET_MASQUERADE="n",
+                                      NETFILTER_XT_TARGET_HL="n", IP_NF_TARGET_MASQUERADE="n",
+                                      IP_NF_TARGET_TTL="n")
+                self.assert_success(self.run_script(
+                    "--strict", "--prune-legacy", f"--applications={profile}",
+                    "--disable-symbols=IP_NF_TARGET_MASQUERADE,IP_NF_TARGET_TTL"))
+                self.assert_values(NETFILTER_XT_TARGET_MASQUERADE="m", NETFILTER_XT_TARGET_HL="m",
+                                   IP_NF_TARGET_MASQUERADE="n", IP_NF_TARGET_TTL="n")
+                self.assert_enabled("IP_NF_FILTER", "IP_NF_NAT", "IP_NF_MANGLE", "IP_NF_RAW")
+
     def test_real_server_profile_enables_firmware_decoders(self):
         self.prepare_baseline(FW_LOADER="y", FW_LOADER_COMPRESS="n")
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))

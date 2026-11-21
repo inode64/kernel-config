@@ -5698,12 +5698,14 @@ configure_application_profiles() {
     # Extensions that userland loads on demand: modules when the kernel has
     # MODULES, so a new request never exceeds a modular parent.
     local -A loadable_syms=()
-    # Tables an iptables-legacy userland (`iptables -V` says "legacy") loads.
+    # Tables and shared NAT/TTL targets used by iptables-legacy. The old
+    # IP_NF_TARGET_* wrappers can be pruned without removing these targets.
     # 6.17+ gates them behind NETFILTER_XTABLES_LEGACY, which PRUNE_LEGACY disables.
     local -a iptables_legacy_syms=(
         NETFILTER NETFILTER_ADVANCED NETFILTER_XTABLES NETFILTER_XTABLES_LEGACY NF_CONNTRACK NF_NAT
         IP_NF_IPTABLES IP6_NF_IPTABLES IP_NF_IPTABLES_LEGACY IP6_NF_IPTABLES_LEGACY
         IP_NF_FILTER IP6_NF_FILTER IP_NF_MANGLE IP6_NF_MANGLE IP_NF_RAW IP6_NF_RAW IP_NF_NAT IP6_NF_NAT
+        NETFILTER_XT_TARGET_MASQUERADE NETFILTER_XT_TARGET_HL
     )
 
     echo
