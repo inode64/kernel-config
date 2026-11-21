@@ -4191,6 +4191,10 @@ add_native_arch_candidate() {
     [[ ! -v _EXPLICIT_SYMBOL_VALUES[$sym] ]] || return 0
     is_protected_config_symbol "$sym" && return 0
     native_arch_control_allows "$sym" || return 0
+    if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == auto && "$_MEMORY_ECC_STATE" != on ]] \
+        && is_memory_edac_symbol "$sym"; then
+        return 0
+    fi
     case "${_KCONFIG_TYPES[$sym]:-}" in bool | tristate) ;; *) return 0 ;; esac
     if is_baseline_module_symbol "$sym"; then
         value=m
@@ -4252,6 +4256,7 @@ configure_native_arch() {
     local -a matches=() ordered=()
     echo
     echo "==> Detecting local devices (sysfs, bound drivers and installed module aliases)"
+    if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == auto ]] && is_x86_config; then detect_host_memory_ecc; fi
     facts="$(python3 -B "$SCRIPT_DIR/lib/hardware_detect.py" --host-root "${HOST_ROOT:-/}")" \
         || die "Native hardware discovery failed"
     ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
@@ -5490,6 +5495,41 @@ configure_nr_cpus_profile() {
 
 declare -A _PLATFORM_REQUESTS=()
 declare -a _PLATFORM_REQUEST_ORDER=() _PLATFORM_PARENTS=()
+_MEMORY_ECC_STATE=""
+_MEMORY_ECC_EVIDENCE=""
+
+detect_host_memory_ecc() {
+    [[ -z "$_MEMORY_ECC_STATE" ]] || return 0
+    local result
+    _MEMORY_ECC_STATE=unknown
+    _MEMORY_ECC_EVIDENCE="Python/helper unavailable; preserving existing memory drivers"
+    if command -v python3 >/dev/null && [[ -r "$SCRIPT_DIR/lib/hardware_detect.py" ]] \
+        && result="$(python3 -B "$SCRIPT_DIR/lib/hardware_detect.py" --host-root "${HOST_ROOT:-/}" --memory-ecc)"; then
+        IFS=$'\t' read -r _MEMORY_ECC_STATE _MEMORY_ECC_EVIDENCE <<<"$result"
+        case "$_MEMORY_ECC_STATE" in on | off | unknown) ;; *) _MEMORY_ECC_STATE=unknown ;; esac
+    fi
+    echo "    DRAM ECC: $_MEMORY_ECC_STATE ($_MEMORY_ECC_EVIDENCE)"
+}
+
+is_memory_edac_symbol() {
+    case "$1" in
+        EDAC_AMD64 | EDAC_IE31200 | EDAC_SBRIDGE | EDAC_SKX | EDAC_I10NM | AMD_ATL) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+configure_memory_ecc_policy() {
+    [[ "$PLATFORM_DRIVERS_EFFECTIVE" == auto && "$_MEMORY_ECC_STATE" == off ]] || return 0
+    local sym
+    echo
+    echo "==> Removing memory ECC drivers unsupported by the detected DIMMs"
+    # Keep EDAC_DECODE_MCE: AMD CPU/cache machine checks do not require ECC DIMMs.
+    # Missing/unknown evidence never prunes a baseline, and user overrides win.
+    for sym in EDAC_AMD64 EDAC_IE31200 EDAC_SBRIDGE EDAC_SKX EDAC_I10NM AMD_ATL RAS_CEC; do
+        [[ -v _EXPLICIT_SYMBOL_VALUES[$sym] ]] && continue
+        disable_if_present "$sym"
+    done
+}
 
 add_platform_request() {
     local evidence="$1" sym
@@ -5589,8 +5629,10 @@ _IE31200_HOST_BRIDGES=" 0x0108 0x010c 0x0150 0x0158 0x015c 0x0c04 0x0c08 0x190f 
 collect_platform_edac_requests() {
     local pci_table="$1" cpu_vendor="$2" line bdf vendor device class family model driver=""
     local -a parents=(RAS EDAC X86_MCE)
+    detect_host_memory_ecc
     case "$cpu_vendor" in
         intel)
+            [[ "$_MEMORY_ECC_STATE" == on ]] || return 0
             while IFS=$'\t' read -r bdf vendor device class; do
                 [[ "$vendor" == 0x8086 && "$class" == 060000 ]] || continue
                 if [[ "$_IE31200_HOST_BRIDGES" == *" $device "* ]]; then
@@ -5616,10 +5658,17 @@ collect_platform_edac_requests() {
             detect_host_cpu_family_model
             [[ -n "$REPLY" ]] || return 0
             read -r family model <<<"$REPLY"
-            # amd64_edac covers family 0x0f onwards; the EDAC_DECODE_MCE dependency is AMD-only.
+            # CPU MCE decoding remains useful even with non-ECC DIMMs.
             if ((family >= 15)); then
                 add_platform_parents "${parents[@]}" X86_MCE_AMD
-                add_platform_request "$(printf 'cpuinfo family 0x%x (AMD)' "$family")" EDAC_DECODE_MCE EDAC_AMD64
+                add_platform_request "$(printf 'cpuinfo family 0x%x (AMD)' "$family")" EDAC_DECODE_MCE
+                if [[ "$_MEMORY_ECC_STATE" == on ]]; then
+                    add_platform_request "$_MEMORY_ECC_EVIDENCE" EDAC_AMD64
+                    if ((family >= 23)) && have_symbol AMD_ATL; then
+                        add_platform_parents MEMORY_FAILURE
+                        add_platform_request "$_MEMORY_ECC_EVIDENCE (Zen address translation)" AMD_ATL
+                    fi
+                fi
             fi
             ;;
     esac
@@ -6823,6 +6872,8 @@ fi
 if [[ "$NATIVE_CPU_EFFECTIVE" == auto || "$NATIVE_CPU_EFFECTIVE" == on ]]; then
     configure_native_acceleration
 fi
+
+configure_memory_ecc_policy
 
 # Cgroup utilization hints need both the CPU controller and per-task uclamp.
 # Apply this after overrides so --uclamp=off and disabled parents still win.

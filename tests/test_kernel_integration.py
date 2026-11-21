@@ -17,6 +17,7 @@ import unittest
 
 from test_kernel_config import SCRIPT
 from test_initramfs_check import cpio
+from test_hardware_detect import memory_table
 
 
 @unittest.skipUnless(os.environ.get("KERNEL_TEST_SRCDIR"), "set KERNEL_TEST_SRCDIR for real Kconfig tests")
@@ -85,6 +86,27 @@ class KernelIntegrationTests(unittest.TestCase):
                                 env=self.env, capture_output=True, text=True, timeout=180)
         self.assert_success(result)
         self.assert_values(**values)
+
+    def test_real_memory_ecc_drivers_follow_dimm_evidence_and_keep_mce(self):
+        host = self.use_native_host()
+        (host / "proc/cpuinfo").write_text("vendor_id : AuthenticAMD\ncpu family : 25\nmodel : 97\n")
+        table = host / "sys/firmware/dmi/tables/DMI"
+        table.parent.mkdir(parents=True)
+        table.write_bytes(memory_table(correction=3, total=64))
+        self.prepare_baseline(RAS="y", EDAC="y", X86_MCE="y", X86_MCE_AMD="y",
+                              EDAC_DECODE_MCE="m", EDAC_AMD64="m", AMD_ATL="m", MEMORY_FAILURE="y")
+        self.assert_success(self.run_script("--strict", "--native-arch", "--applications=rasdaemon"))
+        self.assert_values(EDAC_AMD64="n", AMD_ATL="n", RAS_CEC="n", EDAC_DECODE_MCE="m",
+                           EDAC="y", X86_MCE_AMD="y", MEMORY_FAILURE="y", MEMORY_HOTPLUG="y")
+        repeat = self.run_script("--strict", "--native-arch", "--applications=rasdaemon", "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+        table.write_bytes(memory_table())
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto"))
+        self.assert_values(EDAC_AMD64="m", AMD_ATL="m", EDAC_DECODE_MCE="m")
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto",
+                                            "--disable-symbols=EDAC_AMD64,AMD_ATL"))
+        self.assert_values(EDAC_AMD64="n", AMD_ATL="n", EDAC_DECODE_MCE="m")
 
     def test_real_extended_controls_and_idempotence(self):
         args = ("--strict", "--preemption=lazy", "--preempt-dynamic=on", "--tick-mode=full",

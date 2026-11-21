@@ -338,7 +338,9 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   the default is `false`. It defaults `NATIVE_CPU` to `auto` and
   `PLATFORM_DRIVERS` to `auto`, and reuses the platform-driver collectors and
   initrd, NUMA, DMA, UEFI, TPM and IOMMU detectors. Only positive evidence adds
-  candidates. Their explicit CLI/environment controls, including `none`, take precedence
+  candidates. With platform detection enabled, confirmed non-ECC system memory
+  also removes the platform's DRAM ECC drivers and `RAS_CEC`; missing or conflicting
+  evidence preserves existing support. Their explicit CLI/environment controls, including `none`, take precedence
   regardless of argument order. Native compilation remains separately opt-in
   through `--native-cpu=on`.
 
@@ -367,12 +369,13 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   ambiguous/missing Kbuild mappings and unavailable dependencies are reported
   for manual review. Hidden symbols are left to Kconfig. Explicit symbol
   settings and protected values take precedence; detected drivers can restore
-  support removed by a pruning preset. Existing built-ins/modules retain their
+  support removed by a pruning preset. Accepted built-ins/modules retain their
   availability. New loadable drivers use modules when initrd and module support
   are enabled; otherwise they are built in. Standard controller and core
   support candidates default to built in.
 
-  This mode only adds detected support: absence never removes a driver. It
+  Except for confirmed non-ECC memory described above, this mode only adds
+  detected support: absence never removes a driver. It
   does not load/unload modules, change firmware or boot parameters, or lower
   `NR_CPUS`. Cross compilation and a different target architecture skip local
   detection. Devices unavailable to the running kernel, external drivers,
@@ -564,10 +567,23 @@ These options change kernel build configuration and defaults. They do not create
   - ACPI `IPI0001` or SMBIOS type 38: `IPMI_HANDLER`, `IPMI_DEVICE_INTERFACE`, `IPMI_SI`, `ACPI_IPMI`.
   - ACPI `ACPI000D` (ACPI 4.0 power meter): `SENSORS_ACPI_POWER` plus the IPMI set, because `_PMM` reads an IPMI OperationRegion; without `acpi_ipmi` the kernel logs `No handler for Region [POWR] [IPMI]` on every hwmon read.
   - `dmi/id/sys_vendor` HP/HPE: `HP_ILO`, `HP_WATCHDOG` (confirmed by PCI `103c:3306`/`103c:3307` when visible). Dell: `DCDBAS`, `DELL_SMBIOS`. Supermicro: nothing beyond IPMI.
-  - Intel host bridge (PCI class `0600`, the device ids handled by `ie31200_edac`): `EDAC_IE31200`; Xeon families by CPU model: `EDAC_SBRIDGE`, `EDAC_SKX`, `EDAC_I10NM`. AMD family 0fh+: `EDAC_AMD64`, `EDAC_DECODE_MCE`. The CPU vendor follows `CPU_VENDOR_FILTER` when set, so the two phases never contradict each other.
+  - With ECC evidence: Intel host bridge (PCI class `0600`, the device ids handled by `ie31200_edac`): `EDAC_IE31200`; Xeon families by CPU model: `EDAC_SBRIDGE`, `EDAC_SKX`, `EDAC_I10NM`. AMD family 0fh+: `EDAC_AMD64`, plus `AMD_ATL` on Zen when the target tree provides it. AMD `EDAC_DECODE_MCE` is requested independently of DRAM ECC because CPU/cache machine checks remain useful. The CPU vendor follows `CPU_VENDOR_FILTER` when set, so the two phases never contradict each other.
   - Intel SMBus (class `0c05`): `I2C_I801`. Intel LPC/eSPI bridge (class `0601`): `ITCO_WDT` (plus `LPC_ICH` when `EXPERT=y`; hpwdt and iTCO can coexist). CPU sensors: `SENSORS_CORETEMP` or `SENSORS_K10TEMP`.
 
   EDAC, PCH, hwmon and watchdog detection is x86-only. `PROTECTED_CONFIG_SYMBOLS` and the explicit symbol lists still take precedence.
+
+  DRAM ECC detection reuses the Python hardware helper. Active EDAC DIMM/rank/row
+  correction modes take precedence; otherwise it reads SMBIOS types 16 and 17
+  directly from `/sys/firmware/dmi/tables/DMI`. ECC correction plus DIMM check bits
+  allows driver requests. Only complete, consistent records showing no ECC and
+  equal total/data widths for every populated system DIMM allow removal of the
+  listed memory drivers, `AMD_ATL` and `RAS_CEC`. Empty sockets do not count as
+  non-ECC memory. Missing permissions, Python, firmware data or conflicting records
+  mean **unknown**: no new memory-driver request and no removal of existing support.
+  A CPU family or module alias alone is insufficient. SMBIOS evidence identifies
+  candidates; verify controller registration after boot to confirm firmware enabled
+  ECC. DDR5 on-die ECC alone does not provide system ECC. This detection does not
+  load modules or enable ECC in firmware, and it preserves the EDAC/MCE core.
 
 - `PROTECTED_CONFIG_SYMBOLS=<comma-separated-list>`
   Prevents the script from enabling, disabling, or overwriting the listed symbols. The default protected list already includes `CONFIG_ARCH_PKEY_BITS`.
@@ -639,7 +655,7 @@ These options change kernel build configuration and defaults. They do not create
     `/sys/devices/system/memory/{soft,hard}_offline_page`; without it,
     rasdaemon falls back to accounting even when `PAGE_CE_ACTION=soft`.
     `MEMORY_HOTREMOVE` is not required or requested. The vendor EDAC driver (`EDAC_AMD64`, `EDAC_IE31200`...)
-    comes from `--platform-drivers=auto`. The profile also keeps `DEBUG_FS`
+    comes from `--platform-drivers=auto` when memory ECC evidence is available. The profile also keeps `DEBUG_FS`
     and `DEBUG_FS_ALLOW_ALL`, together with `TRACEFS_AUTOMOUNT_DEPRECATED`
     where available: rasdaemon 0.8.4 discovers its tracing interface through
     `debugfs/tracing`, so standalone tracefs does not suffice for that version.

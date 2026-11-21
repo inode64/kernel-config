@@ -6,7 +6,27 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from hardware_detect import Host, discover
+from hardware_detect import Host, discover, memory_ecc
+
+
+def memory_table(correction=6, total=72, data=64, sizes=(0x4000, 0), handle=1, slots=None):
+    """SMBIOS memory records, including empty sockets and a string area."""
+    array = bytearray(0x17)
+    array[:2] = bytes((16, len(array)))
+    array[2:4] = handle.to_bytes(2, "little")
+    array[5:7] = bytes((3, correction))
+    array[13:15] = (len(sizes) if slots is None else slots).to_bytes(2, "little")
+    records = bytes(array) + b"\0\0"
+    for index, size in enumerate(sizes):
+        dimm = bytearray(0x15)
+        dimm[:2] = bytes((17, len(dimm)))
+        dimm[2:4] = (handle + index + 1).to_bytes(2, "little")
+        dimm[4:6] = handle.to_bytes(2, "little")
+        dimm[8:10] = (total if size else 0xffff).to_bytes(2, "little")
+        dimm[10:12] = (data if size else 0xffff).to_bytes(2, "little")
+        dimm[12:14] = size.to_bytes(2, "little")
+        records += bytes(dimm) + b"fixture DIMM\0\0"
+    return records
 
 
 class HardwareTests(unittest.TestCase):
@@ -28,6 +48,59 @@ class HardwareTests(unittest.TestCase):
 
     def facts(self):
         return {(kind, name) for kind, name, _ in discover(self.host)}
+
+    def set_memory(self, table):
+        path = self.root / "sys/firmware/dmi/tables/DMI"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(table)
+
+    def test_memory_ecc_requires_correction_type_and_dimm_check_bits(self):
+        for correction in (5, 6):
+            for total in (72, 80):
+                with self.subTest(correction=correction, total=total):
+                    self.set_memory(memory_table(correction=correction, total=total))
+                    self.assertEqual(memory_ecc(self.host)[0], "on")
+        self.set_memory(memory_table(correction=3, total=64))
+        self.assertEqual(memory_ecc(self.host)[0], "off")
+
+    def test_memory_missing_unknown_conflicting_and_empty_are_not_non_ecc(self):
+        self.assertEqual(memory_ecc(self.host)[0], "unknown")
+        for kwargs in ({"correction": 3}, {"total": 64}, {"total": 0xffff},
+                       {"data": 0}, {"correction": 4}, {"correction": 2},
+                       {"sizes": (0, 0)}, {"sizes": (0xffff,)},
+                       {"correction": 3, "total": 64, "slots": 3}):
+            with self.subTest(kwargs=kwargs):
+                self.set_memory(memory_table(**kwargs))
+                self.assertEqual(memory_ecc(self.host)[0], "unknown")
+
+    def test_memory_corrupt_and_partial_tables_do_not_prune(self):
+        valid = memory_table(correction=3, total=64)
+        for table in (valid[:-1], valid[:10], b"\x10\x02\0\0", valid + b"\x11",
+                      valid + valid, valid[0x19:]):
+            with self.subTest(table=table[:8]):
+                self.set_memory(table)
+                self.assertEqual(memory_ecc(self.host)[0], "unknown")
+
+    def test_memory_arrays_require_all_non_ecc_but_any_ecc_keeps_support(self):
+        non_ecc = memory_table(correction=3, total=64)
+        self.set_memory(non_ecc + memory_table(handle=10))
+        self.assertEqual(memory_ecc(self.host)[0], "on")
+        self.set_memory(non_ecc + memory_table(handle=10, correction=2))
+        self.assertEqual(memory_ecc(self.host)[0], "unknown")
+        self.set_memory(non_ecc + memory_table(handle=10, correction=3, total=64))
+        self.assertEqual(memory_ecc(self.host)[0], "off")
+
+    def test_active_edac_takes_precedence_over_firmware_and_missing_data(self):
+        self.set_memory(memory_table(correction=3, total=64))
+        path = "sys/devices/system/edac/mc/mc0/dimm0/dimm_edac_mode"
+        self.write(path, "SECDED\n")
+        state, evidence = memory_ecc(self.host)
+        self.assertEqual(state, "on")
+        self.assertIn("active EDAC", evidence)
+        self.write(path, "Unknown\n")
+        self.assertEqual(memory_ecc(self.host)[0], "unknown")
+        self.write("sys/devices/system/edac/mc/mc0/csrow0/edac_mode", "S4ECD4ED\n")
+        self.assertEqual(memory_ecc(self.host)[0], "on")
 
     def test_standard_controllers_disks_usb_and_allocated_msi(self):
         self.write("sys/bus/pci/devices/0000:01:00.0/class", "0x010802\n")

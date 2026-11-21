@@ -12,6 +12,7 @@ import textwrap
 import unittest
 
 from test_initramfs_check import cpio
+from test_hardware_detect import memory_table
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "kernel-config.sh"
@@ -156,10 +157,14 @@ class ScriptTests(unittest.TestCase):
             stream.write("\n" + textwrap.dedent(text))
 
     def make_host_root(self, *, cpuinfo=None, cmdline=None, sys_vendor=None, acpi=(), dmi_entries=(),
-                       pci=(), iommu=(), iommu_caps=(), acpi_tables=(), efi=False, dma=(), nodes=()):
+                       pci=(), iommu=(), iommu_caps=(), acpi_tables=(), efi=False, dma=(), nodes=(),
+                       memory=None):
         """Build a synthetic /sys and /proc for the auto detectors (KC_HOST_ROOT)."""
         host = self.root / "host"
         host.mkdir(exist_ok=True)
+        if memory is not None:
+            (host / "sys/firmware/dmi/tables").mkdir(parents=True, exist_ok=True)
+            (host / "sys/firmware/dmi/tables/DMI").write_bytes(memory)
         if cpuinfo is not None:
             (host / "proc").mkdir(exist_ok=True)
             (host / "proc/cpuinfo").write_text(cpuinfo)
@@ -2836,6 +2841,7 @@ config HID_LED
         self.add_symbols("I2C_I801", "SENSORS_CORETEMP", "ITCO_WDT", kind="tristate")
         self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y")
         env = self.make_host_root(cpuinfo=self.INTEL_CPUINFO,
+                                  memory=memory_table(),
                                   pci=[("0000:00:00.0", "0x8086", "0x1918", "0x060000"),
                                        ("0000:00:1f.3", "0x8086", "0xa123", "0x0c0500"),
                                        ("0000:00:1f.0", "0x8086", "0xa145", "0x060100")])
@@ -2862,10 +2868,11 @@ config HID_LED
         self.add_symbols("EDAC_AMD64", "EDAC_DECODE_MCE", "SENSORS_K10TEMP", "DCDBAS", "DELL_SMBIOS",
                          kind="tristate")
         self.set_baseline_symbols(X86="y", MODULES="y")
-        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO, sys_vendor="Dell Inc.", acpi=("IPI0001:00",))
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO, sys_vendor="Dell Inc.", acpi=("IPI0001:00",),
+                                  memory=memory_table())
         result = self.run_script("--strict", "--platform-drivers=auto", env=env)
         self.assert_success(result)
-        self.assertIn("cpuinfo family 0x19 (AMD) -> CONFIG_EDAC_AMD64=m", result.stdout)
+        self.assertIn("SMBIOS types 16/17 report ECC and DIMM check bits -> CONFIG_EDAC_AMD64=m", result.stdout)
         self.assertIn("IPI0001:00 -> CONFIG_IPMI_SI not available in this tree", result.stdout)
         for sym in ("EDAC_AMD64", "EDAC_DECODE_MCE", "SENSORS_K10TEMP", "DCDBAS", "DELL_SMBIOS"):
             self.assert_symbol(sym, "m")
@@ -2893,6 +2900,91 @@ config HID_LED
         self.assert_success(result)
         self.assertIn("no platform driver evidence found on this host", result.stdout)
         self.assertIn("No changes.", result.stdout)
+
+    def test_non_ecc_memory_prunes_dram_drivers_but_keeps_amd_mce(self):
+        self.add_symbols("RAS", "EDAC", "X86_MCE", "X86_MCE_AMD", "X86", "MODULES", "RAS_CEC")
+        self.add_symbols("EDAC_AMD64", "EDAC_DECODE_MCE", "AMD_ATL", kind="tristate")
+        self.set_baseline_symbols(X86="y", MODULES="y", EDAC_AMD64="m", AMD_ATL="m", RAS_CEC="y")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO, memory=memory_table(correction=3, total=64))
+        for mode in ("--platform-drivers=auto", "--native-arch"):
+            with self.subTest(mode=mode):
+                result = self.run_script("--dry-run", "--strict", mode, env=env)
+                self.assert_success(result)
+                self.assertIn("DRAM ECC: off", result.stdout)
+                for sym in ("EDAC_AMD64", "AMD_ATL", "RAS_CEC"):
+                    self.assertRegex(result.stdout, rf"CONFIG_{sym}: [ym] -> n")
+                self.assert_untouched()
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        for sym in ("EDAC_AMD64", "AMD_ATL", "RAS_CEC"):
+            self.assert_symbol(sym, "n")
+        self.assert_symbol("EDAC_DECODE_MCE", "m")
+        for sym in ("RAS", "EDAC", "X86_MCE_AMD"):
+            self.assert_symbol(sym, "y")
+
+    def test_ecc_memory_requests_amd_translation_and_unknown_preserves_baseline(self):
+        self.add_symbols("RAS", "EDAC", "X86_MCE", "X86_MCE_AMD", "X86", "MODULES", "MEMORY_FAILURE")
+        self.add_symbols("EDAC_AMD64", "EDAC_DECODE_MCE", "AMD_ATL", kind="tristate")
+        self.set_baseline_symbols(X86="y", MODULES="y")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO)
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assertNotIn("CONFIG_EDAC_AMD64=", self.config.read_text())
+        self.set_baseline_symbols(EDAC_AMD64="m", AMD_ATL="m")
+        result = self.run_script("--strict", "--platform-drivers=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("DRAM ECC: unknown", result.stdout)
+        self.assert_symbol("EDAC_AMD64", "m")
+        self.assert_symbol("AMD_ATL", "m")
+        env = self.make_host_root(memory=memory_table())
+        self.set_baseline_symbols(EDAC_AMD64="n", AMD_ATL="n")
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("EDAC_AMD64", "m")
+        self.assert_symbol("AMD_ATL", "m")
+        self.assert_symbol("MEMORY_FAILURE", "y")
+
+    def test_memory_ecc_policy_respects_explicit_and_protected_symbols(self):
+        self.add_symbols("RAS", "EDAC", "X86_MCE", "X86_MCE_AMD", "X86", "MODULES")
+        self.add_symbols("EDAC_AMD64", "EDAC_DECODE_MCE", "AMD_ATL", kind="tristate")
+        self.set_baseline_symbols(X86="y", MODULES="y", EDAC_AMD64="m")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO, memory=memory_table(correction=3, total=64))
+        for override in ("--module-symbols=EDAC_AMD64", "--protected-config-symbols=EDAC_AMD64"):
+            with self.subTest(override=override):
+                self.assert_success(self.run_script("--strict", "--platform-drivers=auto", override, env=env))
+                self.assert_symbol("EDAC_AMD64", "m")
+        env = self.make_host_root(memory=memory_table())
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto",
+                                            "--disable-symbols=EDAC_AMD64,AMD_ATL", env=env))
+        self.assert_symbol("EDAC_AMD64", "n")
+        self.assert_symbol("AMD_ATL", "n")
+
+    def test_native_cpu_alias_cannot_enable_edac_without_ecc_evidence(self):
+        self.add_symbols("X86", "MODULES", "BLK_DEV_INITRD")
+        self.add_symbols("EDAC_AMD64", kind="tristate")
+        self.set_baseline_symbols(X86="y", MODULES="y", BLK_DEV_INITRD="y", EDAC_AMD64="n")
+        source = self.tree / "drivers/edac"
+        source.mkdir(parents=True)
+        (source / "Makefile").write_text("obj-$(CONFIG_EDAC_AMD64) += amd64_edac.o\n")
+        env = self.make_host_root()
+        host = Path(env["KC_HOST_ROOT"])
+        for name, value in {
+            "proc/sys/kernel/osrelease": "fixture\n",
+            "lib/modules/fixture/modules.alias": "alias cpu:test amd64_edac\n",
+            "sys/bus/cpu/devices/cpu0/modalias": "cpu:test\n",
+        }.items():
+            path = host / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(value)
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        self.assert_symbol("EDAC_AMD64", "n")
+        env = self.make_host_root(memory=memory_table(correction=3, total=64))
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        self.assert_symbol("EDAC_AMD64", "n")
+        self.set_baseline_symbols(EDAC_AMD64="m")
+        self.assert_success(self.run_script("--strict", "--native-arch", "--platform-drivers=none", env=env))
+        self.assert_symbol("EDAC_AMD64", "m")
+        env = self.make_host_root(memory=memory_table())
+        self.set_baseline_symbols(EDAC_AMD64="n")
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        self.assert_symbol("EDAC_AMD64", "m")
 
 
 class ModuleRestorationTests(unittest.TestCase):

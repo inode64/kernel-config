@@ -126,6 +126,87 @@ PCI_DRIVERS = {
 }
 
 
+def memory_ecc(host):
+    """Return on/off/unknown; missing EDAC drivers never prove non-ECC RAM."""
+    controllers = [name for name in host.children("/sys/devices/system/edac/mc")
+                   if re.fullmatch(r"mc\d+", name)]
+    for controller in controllers:
+        directory = f"/sys/devices/system/edac/mc/{controller}"
+        for device in host.children(directory):
+            if not re.fullmatch(r"(?:dimm|rank|csrow)\d+", device):
+                continue
+            for attr in ("dimm_edac_mode", "edac_mode"):
+                path = f"{directory}/{device}/{attr}"
+                mode = host.read(path)
+                if mode in {"EC", "SECDED", "S2ECD2ED", "S4ECD4ED", "S8ECD8ED", "S16ECD16ED"}:
+                    return "on", f"{path}={mode} (active EDAC)"
+
+    # SMBIOS types 16/17 describe the array's correction type and each DIMM's
+    # total/data widths. Parse the raw table to avoid dmidecode and locale rules.
+    try:
+        table = host.path("/sys/firmware/dmi/tables/DMI").read_bytes()
+    except OSError:
+        return "unknown", "SMBIOS memory table unavailable; no active ECC evidence"
+    arrays, devices, handles = {}, [], set()
+    offset = 0
+    while offset < len(table):
+        if len(table) - offset < 4:
+            return "unknown", "truncated SMBIOS header"
+        kind, length = table[offset:offset + 2]
+        end = table.find(b"\0\0", offset + length)
+        if length < 4 or offset + length > len(table) or end < 0:
+            return "unknown", "incomplete SMBIOS record"
+        record = table[offset:offset + length]
+        handle = int.from_bytes(record[2:4], "little")
+        if handle in handles:
+            return "unknown", "duplicate SMBIOS handle"
+        handles.add(handle)
+        if kind == 127:
+            break
+        if kind == 16:
+            if length < 0x0f:
+                return "unknown", "incomplete SMBIOS memory array"
+            arrays[handle] = record
+        elif kind == 17:
+            if length < 0x15:
+                return "unknown", "incomplete SMBIOS memory device"
+            devices.append(record)
+        offset = end + 2
+
+    states = []
+    slots = defaultdict(int)
+    for device in devices:
+        handle = int.from_bytes(device[4:6], "little")
+        array = arrays.get(handle)
+        if array is None:
+            states.append("unknown")
+            continue
+        if array[5] != 3:  # System memory; video/flash arrays do not describe DRAM ECC.
+            continue
+        slots[handle] += 1
+        size = int.from_bytes(device[12:14], "little")
+        if size == 0:
+            continue
+        total = int.from_bytes(device[8:10], "little")
+        data = int.from_bytes(device[10:12], "little")
+        if size == 0xffff or total in (0, 0xffff) or data in (0, 0xffff):
+            states.append("unknown")
+        elif array[6] in (5, 6) and total > data:
+            states.append("on")
+        elif array[6] == 3 and total == data:
+            states.append("off")
+        else:
+            states.append("unknown")
+    for handle, array in arrays.items():
+        if array[5] == 3 and slots[handle] != int.from_bytes(array[13:15], "little"):
+            states.append("unknown")
+    if "on" in states:
+        return "on", "SMBIOS types 16/17 report ECC and DIMM check bits"
+    if states and set(states) == {"off"} and not controllers:
+        return "off", "SMBIOS: all populated system DIMMs have no ECC and equal total/data widths"
+    return "unknown", "ECC data missing, conflicting, or an EDAC controller lacks a readable ECC mode"
+
+
 def discover(host):
     aliases = Aliases(host)
     facts = set()
@@ -247,8 +328,13 @@ def discover(host):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host-root", default="/")
+    parser.add_argument("--memory-ecc", action="store_true", help="report DRAM ECC evidence only")
     args = parser.parse_args()
-    for fact in discover(Host(args.host_root)):
+    host = Host(args.host_root)
+    if args.memory_ecc:
+        print("\t".join(memory_ecc(host)))
+        return
+    for fact in discover(host):
         print("\t".join(fact))
 
 
