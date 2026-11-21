@@ -456,6 +456,32 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--uclamp=on", "--autogroup=on"))
         self.assert_values(UCLAMP_TASK="y", SCHED_AUTOGROUP="y", CPU_FREQ_GOV_SCHEDUTIL="y")
 
+    def test_real_uclamp_groups_and_overrides(self):
+        self.prepare_baseline(CGROUPS="y", CGROUP_SCHED="y", CPU_FREQ="y",
+                              CPU_FREQ_GOV_SCHEDUTIL="y", UCLAMP_TASK="y", UCLAMP_TASK_GROUP="n",
+                              SCHED_AUTOGROUP="n")
+        baseline = self.config.read_bytes()
+        args = ("--strict", "--optimization-profile=desktop")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(UCLAMP_TASK="y", UCLAMP_TASK_GROUP="y")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), before)
+        for override in ("--uclamp=off", "--disable-symbols=UCLAMP_TASK_GROUP",
+                         "--protected-config-symbols=UCLAMP_TASK_GROUP"):
+            with self.subTest(override=override):
+                self.config.write_bytes(baseline)
+                self.assert_success(self.run_script(*args, override))
+                self.assert_values(UCLAMP_TASK_GROUP="n")
+        self.config.write_bytes(baseline)
+        self.assert_success(self.run_script("--strict", "--uclamp=on"))
+        self.assert_values(UCLAMP_TASK_GROUP="y")
+        self.assert_success(self.run_script("--strict", "--uclamp=on", "--disable-symbols=CGROUP_SCHED"))
+        self.assert_values(CGROUP_SCHED="n", UCLAMP_TASK_GROUP="n")
+        self.prepare_baseline(EXPERT="y", GENTOO_LINUX="n", CGROUPS="n")
+        self.assert_success(self.run_script("--strict", "--uclamp=on"))
+        self.assert_values(CGROUPS="n", UCLAMP_TASK="y", UCLAMP_TASK_GROUP="n")
+
     def test_real_uclamp_enables_cpufreq_and_respects_protection(self):
         # SCHED_MC_PRIO selects CPU_FREQ on x86, hiding the missing parent.
         self.prepare_baseline(SCHED_MC_PRIO="n", CPU_FREQ="n")

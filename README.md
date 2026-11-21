@@ -206,6 +206,15 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     full preemption when supported, `PREEMPT_DYNAMIC` when supported, `NO_HZ_IDLE`, `SCHED_AUTOGROUP`, and a high timer rate preference (`HZ_1000`, then `HZ_300`, `HZ_250`, `HZ_100`).
     For THP defaults, it selects `TRANSPARENT_HUGEPAGE_MADVISE` when available.
     It also enables `SCHED_CACHE` and Multi-Gen LRU when supported.
+    It enables `UCLAMP_TASK_GROUP` when the CPU controller and per-task uclamp
+    are available, exposing `cpu.uclamp.min`/`cpu.uclamp.max` for cgroup performance
+    hints. This also applies to explicit `--uclamp=on` with existing CPU cgroups.
+    Like [CachyOS](https://github.com/CachyOS/linux-cachyos/blob/master/linux-cachyos/config)
+    and [Qubes' Fedora-based configuration](https://github.com/QubesOS/qubes-linux-kernel/blob/main/config-base),
+    it builds the capability; applications or service policies must supply the
+    hints. See [utilization clamping](https://docs.kernel.org/scheduler/sched-util-clamp.html).
+    `--uclamp=off`, disabled dependencies, protected values and
+    `--disable-symbols=UCLAMP_TASK_GROUP` take precedence.
     Memory: zswap on with the `lz4` default compressor (falls back to `zstd`), `ZSWAP_SHRINKER_DEFAULT_ON`, `PERSISTENT_HUGE_ZERO_FOLIO`, `RSEQ_SLICE_EXTENSION`, and `TICK_CPU_ACCOUNTING` (same rule as `server`).
     It makes BFQ (`IOSCHED_BFQ`, `BFQ_GROUP_IOSCHED`) and `mq-deadline` available,
     enabling `BLK_CGROUP` so BFQ can distribute I/O bandwidth by cgroup weight.
@@ -373,7 +382,7 @@ All controls in this table default to `keep`: they add no request of their own, 
 | --- | --- | --- |
 | `--preemption` | `keep`, `none`, `voluntary`, `full`, `lazy`, `rt` | Selects the preemption model. Availability depends on architecture and kernel version. |
 | `--preempt-dynamic` | `keep`, `on`, `off` | Controls dynamic preemption independently of the model. |
-| `--uclamp` | `keep`, `on`, `off` | Controls `UCLAMP_TASK`; `on` also enables `CPU_FREQ` and its schedutil build dependency, including on baselines without CPU frequency scaling. Does not change the running governor or set utilization policies. |
+| `--uclamp` | `keep`, `on`, `off` | Controls `UCLAMP_TASK`; `on` also enables `CPU_FREQ` and its schedutil build dependency, including on baselines without CPU frequency scaling, plus `UCLAMP_TASK_GROUP` when CPU cgroups are enabled. Does not change the running governor or set utilization policies. |
 | `--autogroup` | `keep`, `on`, `off` | Controls `SCHED_AUTOGROUP`, overriding profile defaults. |
 | `--tick-mode` | `keep`, `periodic`, `idle`, `full` | Selects exactly one of `HZ_PERIODIC`, `NO_HZ_IDLE`, or `NO_HZ_FULL`. |
 | `--thp` | `keep`, `off`, `always`, `madvise`, `never` | Controls transparent huge pages and their default policy. `off` removes support; `never` retains support with a disabled default. |

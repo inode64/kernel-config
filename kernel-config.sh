@@ -6368,6 +6368,16 @@ configure_extended_controls
 configure_symbol_overrides
 configure_hugetlb_vmemmap_default
 
+# Cgroup utilization hints need both the CPU controller and per-task uclamp.
+# Apply this after overrides so --uclamp=off and disabled parents still win.
+if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == desktop || "$UCLAMP" == on ]] \
+    && [[ "${_EXPLICIT_SYMBOL_VALUES[UCLAMP_TASK_GROUP]:-}" != n ]] \
+    && is_symbol_enabled_now CGROUPS \
+    && kconfig_depends_met UCLAMP_TASK \
+    && kconfig_depends_met UCLAMP_TASK_GROUP; then
+    enable_if_present UCLAMP_TASK_GROUP
+fi
+
 if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == realtime ]]; then
     # Resolve derived PREEMPT_RCU/TREE_RCU after all preemption/tick overrides.
     # Full-preemption fallback without RCU_EXPERT cannot provide RCU_BOOST;
@@ -6393,7 +6403,7 @@ make KCONFIG_CONFIG="$CONFIG_FILE" olddefconfig >/dev/null
 verify_config_result
 verify_initramfs_result
 
-echo "Scheduler capabilities for the next build: UCLAMP_TASK=${_SYMBOL_VALUE_CACHE[UCLAMP_TASK]:-n}, SCHED_AUTOGROUP=${_SYMBOL_VALUE_CACHE[SCHED_AUTOGROUP]:-n}"
+echo "Scheduler capabilities for the next build: UCLAMP_TASK=${_SYMBOL_VALUE_CACHE[UCLAMP_TASK]:-n}, UCLAMP_TASK_GROUP=${_SYMBOL_VALUE_CACHE[UCLAMP_TASK_GROUP]:-n}, SCHED_AUTOGROUP=${_SYMBOL_VALUE_CACHE[SCHED_AUTOGROUP]:-n}"
 echo "These capabilities do not establish a measured performance improvement."
 
 echo

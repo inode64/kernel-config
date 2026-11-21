@@ -2052,6 +2052,35 @@ config HID_LED
         self.assert_symbol("UCLAMP_TASK", "y")
         self.assert_symbol("SCHED_AUTOGROUP", "y")
 
+    def test_uclamp_groups_follow_profile_dependencies_and_overrides(self):
+        self.add_symbols("CPU_FREQ", "CPU_FREQ_GOV_SCHEDUTIL", "CGROUP_SCHED")
+        self.add_kconfig('''
+            config UCLAMP_TASK
+            \tbool "Utilization clamping"
+            \tdepends on CPU_FREQ_GOV_SCHEDUTIL
+            config UCLAMP_TASK_GROUP
+            \tbool "Utilization clamping per group of tasks"
+            \tdepends on CGROUP_SCHED && UCLAMP_TASK
+        ''')
+        cases = (
+            (("--optimization-profile=desktop",), {}, "y"),
+            (("--uclamp=on",), {}, "y"),
+            (("--uclamp=keep",), {}, "n"),
+            (("--optimization-profile=server",), {}, "n"),
+            (("--optimization-profile=desktop", "--uclamp=off"), {}, "n"),
+            (("--optimization-profile=desktop", "--disable-symbols=UCLAMP_TASK_GROUP"), {}, "n"),
+            (("--optimization-profile=desktop", "--protected-config-symbols=UCLAMP_TASK_GROUP"), {}, "n"),
+            (("--optimization-profile=desktop", "--disable-symbols=CGROUP_SCHED"), {}, "n"),
+            (("--uclamp=on",), {"CGROUPS": "n"}, "n"),
+            (("--uclamp=on",), {"CGROUP_SCHED": "n"}, "n"),
+        )
+        for args, overrides, expected in cases:
+            with self.subTest(args=args, overrides=overrides):
+                self.set_baseline_symbols(**dict(CGROUPS="y", CGROUP_SCHED="y", CPU_FREQ="y",
+                                                UCLAMP_TASK="n", UCLAMP_TASK_GROUP="n") | overrides)
+                self.assert_success(self.run_script("--strict", *args))
+                self.assert_symbol("UCLAMP_TASK_GROUP", expected)
+
     def test_desktop_defaults_to_thp_madvise(self):
         self.add_symbols("TRANSPARENT_HUGEPAGE", "TRANSPARENT_HUGEPAGE_ALWAYS",
                          "TRANSPARENT_HUGEPAGE_MADVISE", "TRANSPARENT_HUGEPAGE_NEVER")
