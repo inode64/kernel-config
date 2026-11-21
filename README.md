@@ -299,6 +299,16 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     supported. `KMSAN` builds are excluded. On kernels with `CRYPTO_LIB_AES_XTS`,
     libaes already provides the accelerated bulk modes and needs no extra
     driver request. See the [upstream migration notes](https://github.com/torvalds/linux/blob/master/arch/x86/crypto/Kconfig).
+  - **CPU facilities:** `x2apic` enables `X86_X2APIC` when the APIC/remapping or
+    guest dependencies hold; `fred` enables `X86_FRED`; `mce` together with `mca`
+    enables machine-check handling and the detected Intel/AMD MCE extension.
+    Each CPU flag must be present on every visible processor. In native mode,
+    generic optimization/guest profiles defer x2APIC selection to this check.
+    Active `scaling_driver` entries under CPUFreq select `X86_INTEL_PSTATE`,
+    `X86_AMD_PSTATE` or `X86_ACPI_CPUFREQ`; an active `intel_idle` selects
+    `INTEL_IDLE`. Their CPUFreq/idle parents are restored when permitted.
+    Vendor identity alone is not proof that firmware exposes HWP/CPPC or usable
+    idle tables. Hidden architecture capabilities remain under Kconfig control.
   - **Posted MSI:** `X86_POSTED_MSI` requires x86_64, enabled Intel IOMMU and
     interrupt-remapping dependencies, `cx16` on every visible CPU, and readable
     `intel-iommu/cap` and `ecap` registers for every unit in `/sys/class/iommu`.

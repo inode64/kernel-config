@@ -2209,6 +2209,42 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--native-cpu=auto", env=env))
         self.assert_symbol("X86_POSTED_MSI", "n")
 
+    def test_native_cpu_features_require_cpu_and_driver_evidence(self):
+        self.add_symbols("X86", "X86_64", "X86_LOCAL_APIC", "HYPERVISOR_GUEST", "IOMMU_SUPPORT", "IRQ_REMAP",
+                         "X86_MCE", "X86_MCE_INTEL", "X86_FRED", "CPU_FREQ", "CPU_IDLE", "INTEL_IDLE",
+                         "X86_INTEL_PSTATE", "X86_AMD_PSTATE", "X86_ACPI_CPUFREQ")
+        self.add_kconfig('''
+            config X86_X2APIC
+            \tbool "x2APIC"
+            \tdepends on X86_64 && X86_LOCAL_APIC && (IRQ_REMAP || HYPERVISOR_GUEST)
+        ''')
+        env = self.make_host_root(cpuinfo="processor : 0\nvendor_id : GenuineIntel\nflags : x2apic fred mce mca\n")
+        freq = self.root / "host/sys/devices/system/cpu/cpufreq/policy0"
+        freq.mkdir(parents=True)
+        (freq / "scaling_driver").write_text("intel_pstate\n")
+        idle = self.root / "host/sys/devices/system/cpu/cpuidle"
+        idle.mkdir()
+        (idle / "current_driver").write_text("intel_idle\n")
+        self.set_baseline_symbols(X86="y", X86_64="y", X86_LOCAL_APIC="y", IRQ_REMAP="y", IOMMU_SUPPORT="y",
+                                  HYPERVISOR_GUEST="n", X86_X2APIC="n", X86_FRED="n", X86_MCE="n",
+                                  X86_MCE_INTEL="n", CPU_FREQ="n", CPU_IDLE="n", INTEL_IDLE="n", X86_INTEL_PSTATE="n")
+        original = self.config.read_bytes()
+        args = ("--strict", "--native-cpu=auto")
+        self.assert_success(self.run_script(*args, env=env))
+        for sym in ("X86_X2APIC", "X86_FRED", "X86_MCE", "X86_MCE_INTEL", "CPU_FREQ", "CPU_IDLE", "INTEL_IDLE", "X86_INTEL_PSTATE"):
+            self.assert_symbol(sym, "y")
+        self.config.write_bytes(original)
+        self.assert_success(self.run_script(*args, "--disable-symbols=X86_X2APIC,X86_FRED,CPU_FREQ,CPU_IDLE,X86_MCE", env=env))
+        for sym in ("X86_X2APIC", "X86_FRED", "CPU_FREQ", "CPU_IDLE", "X86_MCE", "X86_MCE_INTEL", "INTEL_IDLE", "X86_INTEL_PSTATE"):
+            self.assert_symbol(sym, "n")
+        self.config.write_bytes(original)
+        (self.root / "host/proc/cpuinfo").write_text("processor : 0\nflags : aes\n")
+        (freq / "scaling_driver").unlink()
+        (idle / "current_driver").unlink()
+        self.assert_success(self.run_script(*args, "--optimization-profile=server", env=env))
+        for sym in ("X86_X2APIC", "X86_FRED", "X86_MCE", "INTEL_IDLE", "X86_INTEL_PSTATE"):
+            self.assert_symbol(sym, "n")
+
     def test_native_compile_mode_keeps_toolchain_validation(self):
         self.add_symbols("X86", "CC_HAS_MARCH_NATIVE")
         self.add_kconfig('''

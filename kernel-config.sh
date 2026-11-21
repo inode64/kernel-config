@@ -4033,6 +4033,8 @@ configure_native_acceleration() {
         return
     fi
 
+    configure_native_cpu_features
+
     # Newer libaes already supplies accelerated bulk modes through CRYPTO_AES.
     if have_symbol CRYPTO_LIB_AES_XTS; then
         echo "    (bulk AES acceleration is provided by libaes in this kernel)"
@@ -4068,6 +4070,65 @@ configure_native_acceleration() {
             fi
         else
             echo "    (posted MSI skipped: Intel IOMMU/interrupt-remapping dependencies are not enabled)"
+        fi
+    fi
+}
+
+configure_native_cpu_features() {
+    local sym vendor path driver idle
+    if host_has_x86_cpu_flag x2apic; then
+        configure_x86_x2apic
+    else
+        echo "    (x2APIC skipped: CPU flag x2apic is not confirmed on every visible CPU)"
+    fi
+    if host_has_x86_cpu_flag fred \
+        && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_FRED]:-}" != n ]] \
+        && kconfig_depends_met X86_FRED; then
+        enable_if_present X86_FRED
+    fi
+    if host_has_x86_cpu_flag mce && host_has_x86_cpu_flag mca \
+        && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_MCE]:-}" != n ]] \
+        && kconfig_depends_met X86_MCE; then
+        enable_if_present X86_MCE
+        vendor="$(detect_host_cpu_vendor)"
+        case "$vendor" in
+            intel) sym=X86_MCE_INTEL ;;
+            amd) sym=X86_MCE_AMD ;;
+            *) sym="" ;;
+        esac
+        if [[ -n "$sym" && "${_EXPLICIT_SYMBOL_VALUES[$sym]:-}" != n ]] && kconfig_depends_met "$sym"; then
+            enable_if_present "$sym"
+        fi
+    fi
+
+    # An active driver is stronger evidence than the CPU vendor: firmware can
+    # withhold HWP/CPPC or the required ACPI objects on otherwise capable CPUs.
+    for path in "${HOST_ROOT}"/sys/devices/system/cpu/cpufreq/policy*/scaling_driver; do
+        [[ -r "$path" ]] || continue
+        driver="$(<"$path")"
+        case "$driver" in
+            intel_pstate | intel_cpufreq) sym=X86_INTEL_PSTATE ;;
+            amd-pstate | amd-pstate-epp) sym=X86_AMD_PSTATE ;;
+            acpi-cpufreq) sym=X86_ACPI_CPUFREQ ;;
+            *) continue ;;
+        esac
+        [[ "${_EXPLICIT_SYMBOL_VALUES[$sym]:-}" != n && "${_EXPLICIT_SYMBOL_VALUES[CPU_FREQ]:-}" != n ]] || continue
+        kconfig_depends_met CPU_FREQ || continue
+        enable_parents_if_present CPU_FREQ
+        is_symbol_enabled_now CPU_FREQ || continue
+        kconfig_depends_met "$sym" || continue
+        echo "    (active CPU frequency driver: $driver)"
+        enable_if_present "$sym"
+    done
+    path="${HOST_ROOT}/sys/devices/system/cpu/cpuidle/current_driver"
+    if [[ -r "$path" ]]; then
+        idle="$(<"$path")"
+        if [[ "$idle" == intel_idle && "${_EXPLICIT_SYMBOL_VALUES[CPU_IDLE]:-}" != n \
+            && "${_EXPLICIT_SYMBOL_VALUES[INTEL_IDLE]:-}" != n ]] && kconfig_depends_met CPU_IDLE; then
+            enable_parents_if_present CPU_IDLE
+            if kconfig_depends_met INTEL_IDLE; then
+                enable_if_present INTEL_IDLE
+            fi
         fi
     fi
 }
@@ -4190,6 +4251,7 @@ configure_x86_x2apic() {
         if have_symbol IOMMU_SUPPORT && ! is_symbol_enabled_now IOMMU_SUPPORT; then
             return 0
         fi
+        kconfig_depends_met IRQ_REMAP || return 0
     fi
     enable_if_present X86_X2APIC
 }
@@ -6366,8 +6428,9 @@ if [[ "$HOST_TYPE_EFFECTIVE" != "none" ]]; then
     configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
 fi
 
-if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" != "none" ]] \
-    || [[ "$HOST_TYPE_EFFECTIVE" =~ ^(qemu|vmware|hyperv|virtualbox)$ ]]; then
+if [[ "$NATIVE_CPU_EFFECTIVE" != auto && "$NATIVE_CPU_EFFECTIVE" != on ]] \
+    && { [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" != "none" ]] \
+        || [[ "$HOST_TYPE_EFFECTIVE" =~ ^(qemu|vmware|hyperv|virtualbox)$ ]]; }; then
     configure_x86_x2apic
 fi
 

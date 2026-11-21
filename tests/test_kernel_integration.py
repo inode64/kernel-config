@@ -627,6 +627,33 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_native_cpu_features(self):
+        host = self.use_native_host()
+        (host / "proc/cpuinfo").write_text("processor : 0\nvendor_id : GenuineIntel\nflags : x2apic fred mce mca\n")
+        freq = host / "sys/devices/system/cpu/cpufreq/policy0"
+        freq.mkdir(parents=True)
+        (freq / "scaling_driver").write_text("intel_pstate\n")
+        idle = host / "sys/devices/system/cpu/cpuidle"
+        idle.mkdir()
+        (idle / "current_driver").write_text("intel_idle\n")
+        self.prepare_baseline(EXPERT="y", GENTOO_LINUX="n", CPU_SUP_INTEL="y", SCHED_MC_PRIO="n", ACPI_PROCESSOR="n",
+                              CPU_FREQ="n", CPU_IDLE="n", IOMMU_SUPPORT="y", IRQ_REMAP="y",
+                              X86_X2APIC="n", X86_FRED="n", X86_MCE="n", HYPERVISOR_GUEST="y")
+        before = self.config.read_bytes()
+        args = ("--strict", "--native-cpu=auto")
+        self.assert_success(self.run_script(*args, "--dry-run"))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args))
+        self.assert_values(X86_X2APIC="y", X86_FRED="y", X86_MCE="y", X86_MCE_INTEL="y",
+                           CPU_FREQ="y", CPU_IDLE="y", INTEL_IDLE="y", X86_INTEL_PSTATE="y")
+        self.config.write_bytes(before)
+        self.assert_success(self.run_script(*args, "--disable-symbols=X86_X2APIC,X86_FRED,X86_MCE,CPU_FREQ,CPU_IDLE"))
+        self.assert_values(X86_X2APIC="n", X86_FRED="n", X86_MCE="n", CPU_FREQ="n", CPU_IDLE="n")
+        self.config.write_bytes(before)
+        (host / "proc/cpuinfo").write_text("processor : 0\nflags : aes\n")
+        self.assert_success(self.run_script(*args, "--optimization-profile=server"))
+        self.assert_values(X86_X2APIC="n", X86_FRED="n")
+
     def test_real_native_aes_acceleration_and_overrides(self):
         self.use_native_host()
         modern = "config CRYPTO_LIB_AES_XTS" in (self.tree / "lib/crypto/Kconfig").read_text()
