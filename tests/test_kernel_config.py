@@ -1823,6 +1823,12 @@ config HID_LED
             self.assert_symbol(symbol, "y")
         self.assert_symbol("FUNCTION_TRACER", "n")
 
+        self.assert_success(self.run_script("--strict", "--prune-observability",
+                                            "--applications=rasdaemon",
+                                            "--disable-symbols=TRACEFS_AUTOMOUNT_DEPRECATED"))
+        for symbol in wanted:
+            self.assert_symbol(symbol, "n" if symbol == "TRACEFS_AUTOMOUNT_DEPRECATED" else "y")
+
     def test_server_profile_keeps_lockup_and_hung_task_detection(self):
         detectors = ("DEBUG_KERNEL", "LOCKUP_DETECTOR", "SOFTLOCKUP_DETECTOR", "DETECT_HUNG_TASK",
                      "DETECT_HUNG_TASK_BLOCKER")

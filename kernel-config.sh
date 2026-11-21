@@ -5938,6 +5938,8 @@ configure_application_profiles() {
                 # the function tracer. rasdaemon 0.8.4 discovers that interface
                 # through debugfs/tracing; both debugfs and its legacy tracefs
                 # automount must remain available despite the pruning presets.
+                # Version 1.0 can use standalone tracefs, but ACPI EXTLOG still
+                # needs debugfs/ras/daemon_active to request userspace events.
                 # Its page offlining needs MEMORY_FAILURE.
                 # BRANCH_PROFILE_NONE is the default of the branch-profiling choice
                 # FTRACE exposes; the coverage prune may have requested it off.

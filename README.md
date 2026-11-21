@@ -621,7 +621,12 @@ These options change kernel build configuration and defaults. They do not create
     comes from `--platform-drivers=auto`. The profile also keeps `DEBUG_FS`
     and `DEBUG_FS_ALLOW_ALL`, together with `TRACEFS_AUTOMOUNT_DEPRECATED`
     where available: rasdaemon 0.8.4 discovers its tracing interface through
-    `debugfs/tracing`, so standalone tracefs does not suffice.
+    `debugfs/tracing`, so standalone tracefs does not suffice for that version.
+    With rasdaemon 1.0 or newer and a service that mounts `/sys/kernel/tracing`,
+    `--disable-symbols=TRACEFS_AUTOMOUNT_DEPRECATED` removes only that legacy
+    automount. Keep `DEBUG_FS` and `DEBUG_FS_ALLOW_ALL`: the ACPI EXTLOG handler
+    still opens `/sys/kernel/debug/ras/daemon_active`, without which the kernel
+    logs those errors to its console instead of delivering trace events.
 
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy

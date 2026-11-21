@@ -336,6 +336,10 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_enabled("EDAC")
         if "config TRACEFS_AUTOMOUNT_DEPRECATED" in (self.tree / "kernel/trace/Kconfig").read_text():
             self.assert_values(TRACEFS_AUTOMOUNT_DEPRECATED="y")
+            self.assert_success(self.run_script("--strict", "--all-optimizations", "--applications=rasdaemon",
+                                                "--disable-symbols=TRACEFS_AUTOMOUNT_DEPRECATED"))
+            self.assert_values(TRACEFS_AUTOMOUNT_DEPRECATED="n", DEBUG_FS="y", DEBUG_FS_ALLOW_ALL="y",
+                               TRACING="y", EVENT_TRACING="y", RAS="y", MEMORY_FAILURE="y")
 
     def test_real_server_profile_keeps_lockup_and_hung_task_detection(self):
         for option in ("--optimization-profile=server", "--all-optimizations"):
