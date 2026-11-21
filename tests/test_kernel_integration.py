@@ -627,6 +627,47 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_native_arch_devices_and_overrides(self):
+        host = self.use_native_host()
+        # No IOMMU or CPU facilities are claimed by this device-only capture.
+        shutil.rmtree(host / "sys/class/iommu")
+        for name, pci_class, module in (("nvme", "0x010802", "nvme"), ("usb", "0x0c0330", "xhci_pci"),
+                                         ("net", "0x020000", "igb")):
+            device = host / f"sys/bus/pci/devices/{name}"
+            device.mkdir(parents=True)
+            (device / "class").write_text(pci_class + "\n")
+            driver = host / f"sys/bus/pci/drivers/{name}"
+            driver.mkdir(parents=True)
+            (driver / "module").symlink_to(f"/sys/module/{module}")
+            (device / "driver").symlink_to(f"/sys/bus/pci/drivers/{name}")
+        (device / "msi_irqs").mkdir()
+        (device / "msi_irqs/32").write_text("msix\n")
+        scsi = host / "sys/bus/scsi/devices/0:0:0:0"
+        scsi.mkdir(parents=True)
+        (scsi / "type").write_text("0\n")
+        tpm = host / "sys/class/tpm/tpm0"
+        tpm.mkdir(parents=True)
+        (tpm / "tpm_version_major").write_text("2\n")
+        driver = host / "sys/bus/platform/drivers/tpm_crb"
+        driver.mkdir(parents=True)
+        (driver / "module").symlink_to("/sys/module/tpm_crb")
+        (tpm / "driver").symlink_to("/sys/bus/platform/drivers/tpm_crb")
+        self.prepare_baseline(BLK_DEV_NVME="n", USB_SUPPORT="n", NET_VENDOR_INTEL="n", IGB="n", TCG_TPM="n")
+        before = self.config.read_bytes()
+        args = ("--strict", "--nativer-arch", "--native-cpu=none", "--platform-drivers=none")
+        self.assert_success(self.run_script(*args, "--dry-run"))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args))
+        self.assert_values(PCI="y", PCI_MSI="y", BLK_DEV_NVME="y", USB_SUPPORT="y", USB="y",
+                           USB_XHCI_HCD="y", USB_XHCI_PCI="y", NET_VENDOR_INTEL="y", IGB="m",
+                           TCG_TPM="y", TCG_CRB="m")
+        result = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), result)
+        self.config.write_bytes(before)
+        self.assert_success(self.run_script(*args, "--disable-symbols=IGB,USB_SUPPORT", "--tpm-support=off"))
+        self.assert_values(IGB="n", USB_SUPPORT="n", USB_XHCI_PCI="n", TCG_TPM="n", TCG_CRB="n")
+
     def test_real_native_cpu_features(self):
         host = self.use_native_host()
         (host / "proc/cpuinfo").write_text("processor : 0\nvendor_id : GenuineIntel\nflags : x2apic fred mce mca\n")

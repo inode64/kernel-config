@@ -2209,6 +2209,122 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--native-cpu=auto", env=env))
         self.assert_symbol("X86_POSTED_MSI", "n")
 
+    def test_native_arch_alias_mapping_overrides_and_unavailable_candidates(self):
+        self.add_symbols("PCI", "PCI_MSI", "NET", "NETDEVICES", "ETHERNET", "NET_VENDOR_TEST", "MODULES")
+        self.add_symbols("TEST_NIC", "TEST_UNRELATED", kind="tristate")
+        self.add_kconfig('config TEST_HIDDEN\n\ttristate\n')
+        source = self.tree / "drivers/net/ethernet/test"
+        source.mkdir(parents=True)
+        (source / "Makefile").write_text("obj-$(CONFIG_TEST_NIC) += test-nic.o\nobj-$(CONFIG_TEST_HIDDEN) += test-nic.o\n")
+        (source / "Kconfig").write_text('config NET_VENDOR_TEST\n\tbool "Test vendor"\n')
+        self.set_baseline_symbols(PCI="n", PCI_MSI="n", NET="n", NETDEVICES="n", ETHERNET="n",
+                                  NET_VENDOR_TEST="n", TEST_NIC="n", TEST_UNRELATED="m", MODULES="y")
+        env = self.make_host_root()
+        host = Path(env["KC_HOST_ROOT"])
+        device = host / "sys/bus/pci/devices/nic"
+        device.mkdir(parents=True)
+        (device / "class").write_text("0x020000\n")
+        (device / "msi_irqs").mkdir()
+        (device / "msi_irqs/32").write_text("msix\n")
+        driver = host / "sys/bus/pci/drivers/test"
+        driver.mkdir(parents=True)
+        (driver / "module").symlink_to("/sys/module/test_nic")
+        (device / "driver").symlink_to("/sys/bus/pci/drivers/test")
+        for flag in ("--native-arch", "--nativer-arch", "NATIVE_ARCH=true"):
+            with self.subTest(flag=flag):
+                self.config.write_text(self.baseline)
+                backups = set(self.tree.glob(".config.bak.*"))
+                result = self.run_script("--strict", flag, "--dry-run", env=env)
+                self.assert_success(result)
+                self.assertEqual(self.config.read_text(), self.baseline)
+                self.assertEqual(set(self.tree.glob(".config.bak.*")), backups)
+                self.assert_success(self.run_script("--strict", flag, env=env))
+                for sym in ("PCI", "PCI_MSI", "NET", "NETDEVICES", "ETHERNET", "NET_VENDOR_TEST"):
+                    self.assert_symbol(sym, "y")
+                self.assert_symbol("TEST_NIC", "m")
+                self.assert_symbol("TEST_UNRELATED", "m")
+                self.assertNotIn("CONFIG_TEST_HIDDEN=", self.config.read_text())
+        self.config.write_text(self.baseline)
+        result = self.run_script("--strict", "--native-arch", env=env | {"DROP_SYMBOLS": "TEST_NIC"})
+        self.assert_success(result)
+        self.assert_symbol("TEST_NIC", "n")
+        self.assertIn("CONFIG_TEST_NIC unavailable with current dependencies", result.stdout)
+        for override in ("--disable-symbols=TEST_NIC", "--protected-config-symbols=TEST_NIC"):
+            self.config.write_text(self.baseline)
+            self.assert_success(self.run_script("--strict", "--native-arch", override, env=env))
+            self.assert_symbol("TEST_NIC", "n")
+        self.config.write_text(self.baseline)
+        backups = set(self.tree.glob(".config.bak.*"))
+        self.assert_success(self.run_script("--native-arch", env=env | {"CROSS_COMPILE": "test-"}))
+        self.assertEqual(self.config.read_text(), self.baseline)
+        self.assertEqual(set(self.tree.glob(".config.bak.*")), backups)
+        self.assert_success(self.run_script("--nativer-arch=false", env=env))
+        self.assertEqual(self.config.read_text(), self.baseline)
+        self.assertEqual(set(self.tree.glob(".config.bak.*")), backups)
+
+    def test_native_arch_driver_modes_select_conflicts_and_rollback(self):
+        self.add_symbols("MODULES")
+        self.add_kconfig('''
+            config TEST_DRIVER
+            \ttristate "Driver"
+            \tselect TEST_INTERMEDIATE
+            config TEST_INTERMEDIATE
+            \ttristate "Intermediate"
+            \tselect TEST_REQUIRED
+            config TEST_REQUIRED
+            \ttristate "Required"
+        ''')
+        with (self.tree / "Makefile").open("a") as stream:
+            stream.write("obj-$(CONFIG_TEST_DRIVER) += test-driver.o\n")
+        self.set_baseline_symbols(MODULES="y", BLK_DEV_INITRD="n", TEST_DRIVER="n", TEST_REQUIRED="n")
+        env = self.make_host_root()
+        host = Path(env["KC_HOST_ROOT"])
+        device = host / "sys/bus/platform/devices/test/driver"
+        device.mkdir(parents=True)
+        (device / "module").symlink_to("/sys/module/test_driver")
+        for override in ("--disable-symbols=TEST_REQUIRED", "--protected-config-symbols=TEST_REQUIRED", "--module-symbols=TEST_REQUIRED"):
+            self.config.write_text(self.baseline)
+            self.assert_success(self.run_script("--strict", "--native-arch", override, env=env))
+            self.assert_symbol("TEST_DRIVER", "n")
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        self.assert_symbol("TEST_DRIVER", "y")
+        self.set_baseline_symbols(TEST_DRIVER="m")
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        self.assert_symbol("TEST_DRIVER", "m")
+        before = self.config.read_bytes()
+        backups = set(self.tree.glob(".config.bak.*"))
+        result = self.run_script("--native-arch", env=env | {"FAIL_MAKE": "1"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(set(self.tree.glob(".config.bak.*")), backups)
+
+    def test_native_arch_reuses_detectors_without_pruning_absent_hardware(self):
+        self.add_symbols("EFI", "EFI_STUB", "EFI_PARTITION", "EFIVAR_FS", "DMADEVICES", "NUMA", "TCG_TPM")
+        self.set_baseline_symbols(EFI="y", DMADEVICES="y", NUMA="y", TCG_TPM="y")
+        env = self.make_host_root()
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        for sym in ("EFI", "DMADEVICES", "NUMA", "TCG_TPM"):
+            self.assert_symbol(sym, "y")
+        self.set_baseline_symbols(EFI="n", DMADEVICES="n", NUMA="n", TCG_TPM="n")
+        env = self.make_host_root(efi=True, nodes=("node0", "node1"), dma=("dma0",))
+        tpm = Path(env["KC_HOST_ROOT"]) / "sys/class/tpm/tpm0"
+        tpm.mkdir(parents=True)
+        (tpm / "tpm_version_major").write_text("2\n")
+        self.assert_success(self.run_script("--strict", "--native-arch", env=env))
+        for sym in ("EFI", "DMADEVICES", "NUMA", "TCG_TPM"):
+            self.assert_symbol(sym, "y")
+        self.config.write_text(self.baseline)
+        result = self.run_script("--strict", "--native-arch", env=env | {"DROP_SYMBOLS": "NUMA"})
+        self.assert_success(result)
+        self.assert_symbol("NUMA", "n")
+        self.assertIn("CONFIG_NUMA unavailable with current dependencies", result.stdout)
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--uefi-support=none", "--native-arch", "--tpm-support=none",
+                                            env=env | {"DMA_ENGINE_SUPPORT": "none", "NUMA_SUPPORT": "none"}))
+        for sym in ("EFI", "DMADEVICES", "NUMA", "TCG_TPM"):
+            self.assert_symbol(sym, "n")
+
     def test_native_cpu_features_require_cpu_and_driver_evidence(self):
         self.add_symbols("X86", "X86_64", "X86_LOCAL_APIC", "HYPERVISOR_GUEST", "IOMMU_SUPPORT", "IRQ_REMAP",
                          "X86_MCE", "X86_MCE_INTEL", "X86_FRED", "CPU_FREQ", "CPU_IDLE", "INTEL_IDLE",
@@ -2619,6 +2735,12 @@ config HID_LED
         self.assertIn("CONFIG_ACPI_IPMI: n -> m", result.stdout)
         self.assertIn("CONFIG_WATCHDOG: n -> y", result.stdout)
         self.assertIn("Validation passed", result.stdout)
+        self.assert_untouched()
+        result = self.run_script("--dry-run", "--strict", "--native-arch", "--disable-symbols=IPMI_SI", env=env)
+        self.assert_success(result)
+        self.assertIn("CONFIG_ACPI_IPMI: n -> m", result.stdout)
+        self.assertIn("CONFIG_HP_WATCHDOG: n -> m", result.stdout)
+        self.assertNotIn("CONFIG_IPMI_SI: n -> m", result.stdout)
         self.assert_untouched()
         result = self.run_script("--platform-drivers=auto", "--protected-config-symbols=IPMI_SI", env=env)
         self.assert_success(result)

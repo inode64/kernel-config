@@ -66,6 +66,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   MGLRU_MODE=auto           -> auto, on, off; control Multi-Gen LRU and its default state
 #   NUMA_BALANCING_MODE=auto  -> auto, on, off; control NUMA balancing and 7.2 NUMA migration support
 #   NATIVE_CPU=none           -> none, auto, on, off; auto detects hardware acceleration; on also enables -march=native (6.16+, x86_64)
+#   NATIVE_ARCH=false         -> detect local devices, validate their drivers, and enable native CPU/platform detection
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
 #   PRUNE_LEGACY              -> disable old compatibility options and legacy/deprecated symbols
 #   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
@@ -168,6 +169,7 @@ Options:
   --mglru-mode MODE
   --numa-balancing-mode MODE
   --native-cpu MODE
+  --native-arch, --nativer-arch
   --cpu-vendor-filter MODE
   --video-support MODE
   --uefi-support MODE
@@ -254,6 +256,7 @@ Notes:
   --numa-balancing-mode accepts: auto, on, or off.
   --native-cpu accepts: none, auto, on, or off. auto detects local hardware acceleration;
     on also enables -march=native (x86_64, kernel 6.16+; build on the target CPU).
+  --native-arch (alias --nativer-arch) adds detected local device support; needs Python 3.11+.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
@@ -295,7 +298,7 @@ apply_all_optimizations() {
 
 is_boolean_option() {
     case "$1" in
-        audit-kconfig | prune-runtime-verification | check | strict | dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-unused-modules | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
+        native-arch | nativer-arch | audit-kconfig | prune-runtime-verification | check | strict | dry-run | all-optimizations | prune-observability | prune-legacy | prune-debug-trace | prune-hardening | prune-selftest | prune-sanitizers | prune-coverage | prune-fault-injection | prune-dangerous | prune-unused-modules | prune-bpf | prune-compat32 | prune-unused-net | prune-old-hw | prune-x86-old-platforms | prune-legacy-ata | prune-insecure | prune-radios | prune-dma-attack-surface)
             return 0
             ;;
         *)
@@ -306,7 +309,7 @@ is_boolean_option() {
 
 is_boolean_tunable() {
     case "$1" in
-        AUDIT_KCONFIG | PRUNE_RUNTIME_VERIFICATION | CHECK | STRICT | DRY_RUN | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
+        NATIVE_ARCH | AUDIT_KCONFIG | PRUNE_RUNTIME_VERIFICATION | CHECK | STRICT | DRY_RUN | PRUNE_OBSERVABILITY | PRUNE_LEGACY | PRUNE_DEBUG_TRACE | PRUNE_HARDENING | PRUNE_SELFTEST | PRUNE_SANITIZERS | PRUNE_COVERAGE | PRUNE_FAULT_INJECTION | PRUNE_DANGEROUS | PRUNE_UNUSED_MODULES | PRUNE_BPF | PRUNE_COMPAT32 | PRUNE_UNUSED_NET | PRUNE_OLD_HW | PRUNE_X86_OLD_PLATFORMS | PRUNE_LEGACY_ATA | PRUNE_INSECURE | PRUNE_RADIOS | PRUNE_DMA_ATTACK_SURFACE)
             return 0
             ;;
         *)
@@ -336,18 +339,26 @@ is_enabled() {
     [[ "$1" == "true" ]]
 }
 
+declare -A _USER_TUNABLES=()
+
 init_tunable() {
     local name="$1"
     local default_value="$2"
     local raw_value="${!name:-$default_value}"
+    local supplied=false
+    [[ -v "$name" ]] && supplied=true
 
     set_tunable "$name" "$raw_value"
+    if ! is_enabled "$supplied"; then
+        unset '_USER_TUNABLES[$name]'
+    fi
 }
 
 set_tunable() {
     local name="$1"
     local value="$2"
     local normalized_value=""
+    _USER_TUNABLES["$name"]=1
 
     if is_boolean_tunable "$name"; then
         if ! normalized_value="$(normalize_boolean_value "$value")"; then
@@ -384,6 +395,9 @@ set_option() {
             ;;
         config-file)
             CONFIG_FILE="$value"
+            ;;
+        nativer-arch)
+            set_tunable NATIVE_ARCH "$value"
             ;;
         all-optimizations)
             if [[ "$value" != "__flag__" ]]; then
@@ -449,6 +463,7 @@ init_tunable SCHED_CACHE_MODE auto
 init_tunable MGLRU_MODE auto
 init_tunable NUMA_BALANCING_MODE auto
 init_tunable NATIVE_CPU none
+init_tunable NATIVE_ARCH false
 init_tunable PRUNE_OBSERVABILITY false
 init_tunable PRUNE_LEGACY false
 init_tunable PRUNE_DEBUG_TRACE false
@@ -1127,6 +1142,7 @@ find_kbuild_files() {
 }
 
 declare -A MODULE_SYMBOL_TO_MODULES=()
+declare -A MODULE_SYMBOL_KBUILD=()
 declare -i MODULE_SYMBOL_MAP_READY=0
 
 capture_loaded_modules() {
@@ -1187,15 +1203,16 @@ discover_config_module_symbols() {
 }
 
 build_module_symbol_candidate_map() {
-    local sym module existing_modules
+    local sym module source existing_modules
 
     ((MODULE_SYMBOL_MAP_READY)) && return
 
     MODULE_SYMBOL_TO_MODULES=()
     # Kbuild expressions in the awk program must remain literal.
     # shellcheck disable=SC2016
-    while IFS=$'\t' read -r sym module; do
+    while IFS=$'\t' read -r sym module source; do
         [[ -n "$sym" && -n "$module" ]] || continue
+        MODULE_SYMBOL_KBUILD["$sym"]="$source"
         if [[ -v MODULE_SYMBOL_TO_MODULES[$sym] ]]; then
             existing_modules="${MODULE_SYMBOL_TO_MODULES[$sym]}"
         else
@@ -1231,7 +1248,7 @@ build_module_symbol_candidate_map() {
                         if (item ~ /^[^\/[:space:]]+\.o$/) {
                             module = item
                             sub(/\.o$/, "", module)
-                            print sym "\t" module
+                            print sym "\t" module "\t" FILENAME
                         }
                     }
                 }
@@ -4133,6 +4150,229 @@ configure_native_cpu_features() {
     fi
 }
 
+native_arch_detection_allowed() {
+    local host_arch
+    host_arch="$(uname -m)"
+    host_arch="$(ARCH="$host_arch" resolve_kconfig_srcarch)"
+    [[ -z "${CROSS_COMPILE:-}" && "$(resolve_kconfig_srcarch)" == "$host_arch" ]]
+}
+
+apply_native_arch_defaults() {
+    is_enabled "$NATIVE_ARCH" || return 0
+    if ! native_arch_detection_allowed; then
+        echo "==> Native hardware detection skipped for cross compilation or a different target architecture"
+        return 0
+    fi
+    command -v python3 >/dev/null || die "Native hardware detection requires Python 3.11+"
+    [[ -r "$SCRIPT_DIR/lib/hardware_detect.py" && -r "$SCRIPT_DIR/lib/initramfs_check.py" ]] \
+        || die "Native hardware detection requires the accompanying lib/ helpers"
+    # Explicit controls, including 'none', take precedence regardless of CLI order.
+    [[ -v _USER_TUNABLES[NATIVE_CPU] ]] || NATIVE_CPU=auto
+    [[ -v _USER_TUNABLES[PLATFORM_DRIVERS] ]] || PLATFORM_DRIVERS=auto
+}
+
+native_arch_control_allows() {
+    local control=""
+    case "$1" in
+        EFI*) control=UEFI_SUPPORT ;;
+        TCG_* | HW_RANDOM_TPM) control=TPM_SUPPORT ;;
+        IOMMU* | INTEL_IOMMU* | AMD_IOMMU*) control=IOMMU_SUPPORT ;;
+        DMADEVICES) control=DMA_ENGINE_SUPPORT ;;
+        BLK_DEV_INITRD) control=INITRD_SUPPORT ;;
+        NUMA*) control=NUMA_SUPPORT ;;
+        DRM*) control=VIDEO_SUPPORT ;;
+    esac
+    [[ -z "$control" || ! -v _USER_TUNABLES[$control] || "${!control}" == auto || "${!control}" == on ]]
+}
+
+add_native_arch_candidate() {
+    local sym="$1" kind="$2" evidence="$3" value=y
+    [[ -n "${_KCONFIG_PROMPTS[$sym]:-}" && ! -v native_blocked[$sym] ]] || return 0
+    [[ ! -v _EXPLICIT_SYMBOL_VALUES[$sym] ]] || return 0
+    is_protected_config_symbol "$sym" && return 0
+    native_arch_control_allows "$sym" || return 0
+    case "${_KCONFIG_TYPES[$sym]:-}" in bool | tristate) ;; *) return 0 ;; esac
+    if is_baseline_module_symbol "$sym"; then
+        value=m
+    elif [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" != y && "$kind" == module \
+        && "${_KCONFIG_TYPES[$sym]}" == tristate ]] && is_symbol_enabled_now MODULES; then
+        # Without initrd, newly detected storage drivers must be available at boot.
+        if is_symbol_enabled_now BLK_DEV_INITRD; then value=m; fi
+    fi
+    if [[ "${native_candidates[$sym]:-}" != y ]]; then
+        native_candidates["$sym"]="$value"
+        native_evidence["$sym"]="$evidence"
+    fi
+}
+
+add_native_arch_driver_parents() {
+    local sym="$1" source="${MODULE_SYMBOL_KBUILD[$1]:-}" parent directory
+    local -a parents=()
+    case "${source#"$KSRCDIR/"}" in
+        drivers/net/ethernet/*) parents=(NET NETDEVICES ETHERNET) ;;
+        drivers/net/wireless/*) parents=(NET NETDEVICES WIRELESS WLAN CFG80211 MAC80211) ;;
+        drivers/net/usb/*) parents=(NET NETDEVICES USB_SUPPORT USB USB_NET_DRIVERS) ;;
+        drivers/usb/*) parents=(USB_SUPPORT USB) ;;
+        drivers/ata/*) parents=(BLOCK SCSI ATA) ;;
+        drivers/scsi/*) parents=(BLOCK SCSI SCSI_LOWLEVEL) ;;
+        drivers/nvme/*) parents=(BLOCK) ;;
+        drivers/input/*) parents=(INPUT) ;;
+        drivers/hid/*) parents=(INPUT HID) ;;
+        drivers/char/tpm/*) parents=(TCG_TPM) ;;
+        drivers/i2c/*) parents=(I2C) ;;
+        drivers/spi/*) parents=(SPI) ;;
+        drivers/hwmon/*) parents=(HWMON) ;;
+        drivers/watchdog/*) parents=(WATCHDOG) ;;
+        drivers/bluetooth/*) parents=(NET BT) ;;
+        drivers/rtc/*) parents=(RTC_CLASS) ;;
+        drivers/gpu/drm/*) parents=(DRM) ;;
+        sound/*) parents=(SOUND SND) ;;
+    esac
+    # Network vendor menus vary between kernel versions; use the target's names.
+    directory="${source%/*}"
+    while [[ "$directory" == "$KSRCDIR/"* ]]; do
+        if [[ -r "$directory/Kconfig" ]]; then
+            while read -r parent; do
+                parents+=("$parent")
+            done < <(awk '$1 ~ /^(menuconfig|config)$/ && $2 ~ /^(NET_VENDOR_|WLAN_VENDOR_)/ {print $2}' "$directory/Kconfig")
+        fi
+        directory="${directory%/*}"
+    done
+    for parent in "${parents[@]}"; do
+        add_native_arch_candidate "$parent" symbol "parent for CONFIG_$sym"
+    done
+}
+
+configure_native_arch() {
+    native_arch_detection_allowed || return 0
+    local kind name evidence sym module selector value changed=1 configured=false
+    local facts original_config="$CONFIG_FILE" trial="$WORK_DIR/native.config"
+    local -A modules_to_symbols=() native_candidates=() native_evidence=() native_blocked=() actual=()
+    local -A hidden_modules=() reported_modules=()
+    local -a matches=() ordered=()
+    echo
+    echo "==> Detecting local devices (sysfs, bound drivers and installed module aliases)"
+    facts="$(python3 -B "$SCRIPT_DIR/lib/hardware_detect.py" --host-root "${HOST_ROOT:-/}")" \
+        || die "Native hardware discovery failed"
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    # Do not introduce a select chain that overrides an explicit/protected opt-out.
+    for sym in "${!_KCONFIG_TYPES[@]}"; do
+        if [[ -v _EXPLICIT_SYMBOL_VALUES[$sym] && "${_EXPLICIT_SYMBOL_VALUES[$sym]}" != y ]] \
+            || { is_protected_config_symbol "$sym" && [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" != y ]]; } \
+            || ! native_arch_control_allows "$sym"; then
+            native_blocked["$sym"]=1
+        fi
+    done
+    while ((changed)); do
+        changed=0
+        for sym in "${!native_blocked[@]}"; do
+            while read -r selector; do
+                [[ -n "$selector" && ! -v native_blocked[$selector] ]] || continue
+                native_blocked["$selector"]=1
+                changed=1
+            done <<<"${_KCONFIG_SELECTORS[$sym]:-}"
+        done
+    done
+    if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == auto && ! -v _USER_TUNABLES[PLATFORM_DRIVERS] ]]; then
+        collect_platform_requests
+        for sym in "${_PLATFORM_PARENTS[@]}"; do
+            add_native_arch_candidate "$sym" symbol "detected platform driver parent"
+        done
+        for sym in "${_PLATFORM_REQUEST_ORDER[@]}"; do
+            add_native_arch_candidate "$sym" module "${_PLATFORM_REQUESTS[$sym]}"
+        done
+    fi
+    build_module_symbol_candidate_map
+    for sym in "${!MODULE_SYMBOL_TO_MODULES[@]}"; do
+        case "${_KCONFIG_TYPES[$sym]:-}" in bool | tristate) ;; *) continue ;; esac
+        for module in ${MODULE_SYMBOL_TO_MODULES[$sym]}; do
+            if [[ -n "${_KCONFIG_PROMPTS[$sym]:-}" ]]; then
+                modules_to_symbols["${module//-/_}"]+=" $sym"
+            else
+                hidden_modules["${module//-/_}"]=1
+            fi
+        done
+    done
+    while IFS=$'\t' read -r kind name evidence; do
+        [[ -n "$name" ]] || continue
+        case "$kind" in
+            notice) echo "    ($name: $evidence)" ;;
+            symbol) add_native_arch_candidate "$name" symbol "$evidence" ;;
+            module | builtin)
+                read -r -a matches <<<"${modules_to_symbols[$name]:-}"
+                if ((${#matches[@]} != 1)); then
+                    [[ -v reported_modules[$name] ]] && continue
+                    reported_modules["$name"]=1
+                    if ((${#matches[@]} == 0)) && [[ -v hidden_modules[$name] ]]; then
+                        echo "    ($name: hidden Kconfig support, left to its parent/selector options)"
+                    else
+                        echo "    ($name: no unique visible Kbuild mapping; review manually: $evidence)"
+                    fi
+                    continue
+                fi
+                sym="${matches[0]}"
+                add_native_arch_candidate "$sym" "$kind" "$evidence"
+                [[ -v native_candidates[$sym] ]] && add_native_arch_driver_parents "$sym"
+                ;;
+        esac
+    done <<<"$facts"
+    # Reuse firmware/platform detectors; absence never requests removal.
+    if [[ "$(detect_host_initrd_support)" == on ]]; then
+        add_native_arch_candidate BLK_DEV_INITRD symbol "current boot uses initrd"
+    fi
+    if [[ "$(detect_host_numa_support)" == on ]]; then
+        add_native_arch_candidate NUMA symbol "multiple online NUMA nodes"
+    fi
+    if [[ "$(detect_host_dma_engine_support)" == on ]]; then
+        add_native_arch_candidate DMADEVICES symbol "DMA channels present"
+    fi
+    if [[ "$(detect_host_uefi_support)" == on ]]; then
+        for sym in EFI EFI_STUB EFI_PARTITION EFIVAR_FS; do
+            add_native_arch_candidate "$sym" symbol "EFI firmware present"
+        done
+    fi
+    if [[ "$(detect_host_tpm_versions)" != none ]]; then
+        add_native_arch_candidate TCG_TPM symbol "TPM class device present"
+    fi
+    if [[ "$(detect_host_iommu_support)" == on ]]; then
+        add_native_arch_candidate IOMMU_SUPPORT symbol "IOMMU detected"
+        if [[ -e "$HOST_ROOT/sys/firmware/acpi/tables/DMAR" ]] \
+            || compgen -G "$HOST_ROOT/sys/class/iommu/*/intel-iommu" >/dev/null; then
+            add_native_arch_candidate INTEL_IOMMU symbol "Intel VT-d unit or DMAR table"
+        fi
+        if [[ -e "$HOST_ROOT/sys/firmware/acpi/tables/IVRS" ]]; then
+            add_native_arch_candidate AMD_IOMMU symbol "AMD IVRS table"
+        fi
+    fi
+    ((${#native_candidates[@]})) || { echo "    (no eligible hardware candidates)"; return 0; }
+    mapfile -t ordered < <(printf '%s\n' "${!native_candidates[@]}" | sort)
+    cp -- "$CONFIG_FILE" "$trial"
+    # Probe eligibility in a separate config. This is intentionally not the
+    # request ledger: only candidates accepted by real Kconfig become requests.
+    local CONFIG_FILE="$trial"
+    for sym in "${ordered[@]}"; do
+        if [[ "${native_candidates[$sym]}" == m ]]; then cfg --module "$sym"; else cfg --enable "$sym"; fi
+    done
+    make KCONFIG_CONFIG="$trial" olddefconfig >/dev/null
+    while IFS='=' read -r sym value; do
+        [[ "$sym" == CONFIG_* ]] && actual["${sym#CONFIG_}"]="$value"
+    done < "$trial"
+    CONFIG_FILE="$original_config"
+    for sym in "${ordered[@]}"; do
+        value="${actual[$sym]:-n}"
+        if [[ "$value" == y || "$value" == m ]]; then
+            [[ "${_SYMBOL_VALUE_CACHE[$sym]:-n}" == "$value" ]] || configured=true
+            echo "    ${native_evidence[$sym]} -> CONFIG_$sym=$value (Kconfig accepted)"
+            request_explicit_symbol "$sym" "$value"
+        else
+            echo "    (CONFIG_$sym unavailable with current dependencies; review manually: ${native_evidence[$sym]})"
+        fi
+    done
+    # Native CPU checks need the derived remapping/architecture capabilities
+    # selected by these drivers in this run, not on a second invocation.
+    if is_enabled "$configured"; then refresh_config_visibility; fi
+}
+
 configure_orc_unwinder() {
     local sym
     # arch/x86/Kconfig.debug: the ORC unwinder is the x86_64 default and is
@@ -5414,13 +5654,11 @@ collect_platform_pch_requests() {
     esac
 }
 
-configure_platform_drivers_profile() {
-    local sym pci_table cpu_vendor
+collect_platform_requests() {
+    local pci_table cpu_vendor
     _PLATFORM_REQUESTS=()
     _PLATFORM_REQUEST_ORDER=()
     _PLATFORM_PARENTS=()
-    echo
-    echo "==> Applying platform drivers profile: auto"
     [[ -n "$HOST_ROOT" ]] && echo "    (host root: $HOST_ROOT)"
     pci_table="$(list_platform_pci_devices)"
     collect_platform_ipmi_requests
@@ -5432,6 +5670,13 @@ configure_platform_drivers_profile() {
     else
         echo "    (.config is not x86: skipping EDAC, PCH, hwmon and watchdog detection)"
     fi
+}
+
+configure_platform_drivers_profile() {
+    local sym
+    echo
+    echo "==> Applying platform drivers profile: auto"
+    collect_platform_requests
     if ((${#_PLATFORM_REQUEST_ORDER[@]} == 0)); then
         echo "    (no platform driver evidence found on this host)"
         return 0
@@ -5926,6 +6171,7 @@ if is_enabled "$AUDIT_KCONFIG"; then
 fi
 
 prepare_paths
+apply_native_arch_defaults
 validate_tunables
 load_protected_config_symbols
 prepare_initramfs_check
@@ -6434,7 +6680,8 @@ if [[ "$NATIVE_CPU_EFFECTIVE" != auto && "$NATIVE_CPU_EFFECTIVE" != on ]] \
     configure_x86_x2apic
 fi
 
-if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == "auto" ]]; then
+if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == "auto" ]] \
+    && { ! is_enabled "$NATIVE_ARCH" || [[ -v _USER_TUNABLES[PLATFORM_DRIVERS] ]]; }; then
     configure_platform_drivers_profile
 fi
 
@@ -6549,6 +6796,10 @@ configure_explicit_controls
 configure_extended_controls
 configure_symbol_overrides
 configure_hugetlb_vmemmap_default
+
+if is_enabled "$NATIVE_ARCH"; then
+    configure_native_arch
+fi
 
 if [[ "$NATIVE_CPU_EFFECTIVE" == auto || "$NATIVE_CPU_EFFECTIVE" == on ]]; then
     configure_native_acceleration
