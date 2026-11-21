@@ -118,6 +118,44 @@ class KernelIntegrationTests(unittest.TestCase):
                            NO_HZ_IDLE="y", NO_HZ_FULL="n", TRANSPARENT_HUGEPAGE="n",
                            NUMA_BALANCING="n", IO_URING="n")
 
+    def test_real_realtime_rcu_follows_final_preemption_and_tick(self):
+        cases = (
+            ("n", (), "n", "y"),
+            ("y", (), "y", "y"),
+            ("y", ("--preemption=full", "--tick-mode=idle"), "n", "n"),
+            ("y", ("--preemption=full", "--tick-mode=periodic"), "n", "n"),
+        )
+        for expert, overrides, rt, offload in cases:
+            with self.subTest(expert=expert, overrides=overrides):
+                self.config.write_bytes(self.original)
+                self.prepare_baseline(EXPERT=expert, RCU_EXPERT="n", PREEMPT_RT="n")
+                args = ("--strict", "--optimization-profile=realtime", *overrides)
+                self.assert_success(self.run_script(*args))
+                self.assert_values(EXPERT=expert, RCU_EXPERT="n", PREEMPT_RT=rt, PREEMPT="y",
+                                   RCU_BOOST=rt, RCU_NOCB_CPU=offload, RCU_NOCB_CPU_CB_BOOST=rt)
+                before = self.config.read_bytes()
+                self.assert_success(self.run_script(*args))
+                self.assertEqual(self.config.read_bytes(), before)
+
+    def test_real_realtime_rcu_respects_explicit_and_protected_boost(self):
+        for override in ("--disable-symbols=RCU_BOOST", "--protected-config-symbols=RCU_BOOST"):
+            with self.subTest(override=override):
+                self.config.write_bytes(self.original)
+                # Expose the prompt so the protected n is present in the baseline.
+                self.prepare_baseline(EXPERT="y", RCU_EXPERT="y", PREEMPT="y",
+                                      PREEMPT_RT="n", RCU_BOOST="n")
+                self.assert_success(self.run_script("--strict", "--optimization-profile=realtime", override))
+                self.assert_values(PREEMPT_RT="y", RCU_BOOST="n", RCU_NOCB_CPU="y",
+                                   RCU_NOCB_CPU_CB_BOOST="n")
+
+        self.prepare_baseline(EXPERT="n", RCU_EXPERT="n", PREEMPT_RT="n")
+        before = self.config.read_bytes()
+        result = self.run_script("--strict", "--optimization-profile=realtime",
+                                 "--enable-symbols=RCU_BOOST")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONFIG_RCU_BOOST requested=y final=n", result.stderr)
+        self.assertEqual(self.config.read_bytes(), before)
+
     def test_real_desktop_applications_keep_gpu_and_hotplug_modules(self):
         self.prepare_baseline(DRM="y", DRM_AMDGPU="m", FUSE_FS="m",
                               SND_USB_AUDIO="m", USB_VIDEO_CLASS="m")

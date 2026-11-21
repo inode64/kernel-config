@@ -218,6 +218,12 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   - `realtime`
     Prioritizes deterministic low-latency execution:
     `PREEMPT_RT` when its prerequisites are enabled (otherwise full preemption), `HZ_1000` preference, `RCU_BOOST`, and `RCU_NOCB_CPU` support. It requests `NO_HZ_FULL` when the baseline enables SMP and the accounting capabilities full dynticks requires, otherwise `NO_HZ_IDLE`. `RCU_NOCB_CPU_DEFAULT_ALL` is left unchanged.
+    RCU boosting and callback offloading are requested only when their
+    dependencies hold after preemption/tick overrides. In particular, the
+    full-preemption fallback without `RCU_EXPERT` omits `RCU_BOOST` and
+    `RCU_NOCB_CPU_CB_BOOST`; idle/periodic ticks without `RCU_EXPERT` also omit
+    `RCU_NOCB_CPU`. The profile preserves `EXPERT`/`RCU_EXPERT` and respects
+    protected or explicitly disabled RCU options.
     Full dynticks isolation also requires boot configuration (for example `nohz_full=` and CPU isolation/affinity tuning).
 
   The `server`/`desktop` profiles and the compression preset enable `SWAP`

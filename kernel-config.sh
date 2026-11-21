@@ -4375,10 +4375,7 @@ configure_optimization_profile() {
                 CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
                 CPU_FREQ_GOV_PERFORMANCE \
                 FAIR_GROUP_SCHED \
-                HIGH_RES_TIMERS \
-                RCU_BOOST \
-                RCU_NOCB_CPU \
-                RCU_NOCB_CPU_CB_BOOST
+                HIGH_RES_TIMERS
 
             # 6.12-6.18 LTS mm/Kconfig explicitly recommends disabling per-CPU
             # partial caches on realtime systems to avoid overflow lock spikes.
@@ -6370,6 +6367,20 @@ configure_explicit_controls
 configure_extended_controls
 configure_symbol_overrides
 configure_hugetlb_vmemmap_default
+
+if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == realtime ]]; then
+    # Resolve derived PREEMPT_RCU/TREE_RCU after all preemption/tick overrides.
+    # Full-preemption fallback without RCU_EXPERT cannot provide RCU_BOOST;
+    # idle/periodic ticks without RCU_EXPERT also remove callback offloading.
+    echo
+    echo "==> Configuring RCU for the final realtime scheduler settings"
+    refresh_config_visibility
+    for rcu_sym in RCU_NOCB_CPU RCU_BOOST RCU_NOCB_CPU_CB_BOOST; do
+        if [[ "${_EXPLICIT_SYMBOL_VALUES[$rcu_sym]:-}" != n ]] && kconfig_depends_met "$rcu_sym"; then
+            enable_if_present "$rcu_sym"
+        fi
+    done
+fi
 
 if is_enabled "$PRUNE_UNUSED_MODULES"; then
     probe_and_prune_unused_module_symbols
