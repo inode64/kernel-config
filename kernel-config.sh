@@ -65,7 +65,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   SCHED_CACHE_MODE=auto     -> auto, on, off; control cache-aware scheduler load balancing
 #   MGLRU_MODE=auto           -> auto, on, off; control Multi-Gen LRU and its default state
 #   NUMA_BALANCING_MODE=auto  -> auto, on, off; control NUMA balancing and 7.2 NUMA migration support
-#   NATIVE_CPU=none           -> none, on, off; build with -march=native via CONFIG_X86_NATIVE_CPU (6.16+, x86_64 only)
+#   NATIVE_CPU=none           -> none, auto, on, off; auto detects hardware acceleration; on also enables -march=native (6.16+, x86_64)
 #   PRUNE_OBSERVABILITY       -> disable perf/bpf/ftrace/debugfs and related observability features
 #   PRUNE_LEGACY              -> disable old compatibility options and legacy/deprecated symbols
 #   PRUNE_DEBUG_TRACE         -> disable debug/trace symbols
@@ -252,7 +252,8 @@ Notes:
   --sched-cache-mode accepts: auto, on, or off.
   --mglru-mode accepts: auto, on, or off.
   --numa-balancing-mode accepts: auto, on, or off.
-  --native-cpu accepts: none, on, or off (x86_64, kernel 6.16+; the kernel only runs on the build CPU).
+  --native-cpu accepts: none, auto, on, or off. auto detects local hardware acceleration;
+    on also enables -march=native (x86_64, kernel 6.16+; build on the target CPU).
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
@@ -2642,11 +2643,11 @@ resolve_native_cpu_mode() {
         "" | none)
             printf '%s\n' "none"
             ;;
-        on | off)
+        auto | on | off)
             printf '%s\n' "$value"
             ;;
         *)
-            echo "Invalid NATIVE_CPU: $NATIVE_CPU (use none, on, or off)" >&2
+            echo "Invalid NATIVE_CPU: $NATIVE_CPU (use none, auto, on, or off)" >&2
             exit 1
             ;;
     esac
@@ -3931,6 +3932,11 @@ configure_native_cpu_profile() {
     echo
     echo "==> Applying native CPU profile: $mode"
 
+    if [[ "$mode" == on && -n "${CROSS_COMPILE:-}" ]]; then
+        record_config_request_issue "NATIVE_CPU=on cannot infer the target CPU with CROSS_COMPILE set"
+        return
+    fi
+
     if ! is_x86_config; then
         echo "    (CONFIG_X86_NATIVE_CPU is x86_64 only; .config is not x86, skipping)"
         return
@@ -3950,6 +3956,119 @@ configure_native_cpu_profile() {
         enable_if_present X86_NATIVE_CPU
     else
         disable_if_present X86_NATIVE_CPU
+    fi
+}
+
+host_has_x86_cpu_flag() {
+    [[ -r "${HOST_ROOT}/proc/cpuinfo" ]] || return 1
+    # Missing flags or a heterogeneous CPU set cannot establish local support.
+    awk -v flag="$1" '
+        BEGIN { RS=""; FS="\n" }
+        {
+            cpu=0; flags=""; flag_lines=0
+            for (i=1; i<=NF; i++) {
+                if ($i ~ /^processor[[:space:]]*:/) cpu=1
+                if ($i ~ /^flags[[:space:]]*:/) {
+                    flags=$i; sub(/^[^:]*:[[:space:]]*/, "", flags); flag_lines++
+                }
+            }
+            if (cpu) {
+                seen++
+                if (flag_lines != 1 || flags !~ ("(^|[[:space:]])" flag "([[:space:]]|$)")) missing=1
+            }
+        }
+        END { exit !(seen && !missing) }
+    ' "${HOST_ROOT}/proc/cpuinfo"
+}
+
+detect_host_posted_msi_support() {
+    local path cap ecap arg option count=0
+    local -a boot_args=() options=()
+    REPLY="CPU flag cx16 is not confirmed on every visible CPU"
+    host_has_x86_cpu_flag cx16 || return 1
+
+    REPLY="boot parameters are unavailable"
+    [[ -r "${HOST_ROOT}/proc/cmdline" ]] || return 1
+    read -r -a boot_args <"${HOST_ROOT}/proc/cmdline" || true
+    for arg in "${boot_args[@]}"; do
+        REPLY="boot parameter $arg disables MSI, IOMMU or interrupt posting"
+        case "$arg" in
+            nointremap) return 1 ;;
+            intremap=* | intel_iommu=* | iommu=* | pci=*)
+                IFS=, read -r -a options <<<"${arg#*=}"
+                for option in "${options[@]}"; do
+                    case "${arg%%=*}:$option" in
+                        intremap:off | intremap:nopost | intel_iommu:off | iommu:off | iommu:soft | pci:nomsi)
+                            return 1 ;;
+                    esac
+                done
+                ;;
+        esac
+    done
+
+    # Intel's set_irq_posting_cap() requires PI on every remapping unit and
+    # CX16 on the CPU. The sysfs ABI exports CAP/ECAP as unprefixed hex values.
+    for path in "${HOST_ROOT}"/sys/class/iommu/*; do
+        [[ -e "$path" ]] || continue
+        REPLY="${path##*/} does not expose readable Intel VT-d capability registers"
+        [[ -r "$path/intel-iommu/cap" && -r "$path/intel-iommu/ecap" ]] || return 1
+        cap="$(<"$path/intel-iommu/cap")"
+        ecap="$(<"$path/intel-iommu/ecap")"
+        REPLY="${path##*/} has invalid Intel VT-d capability registers"
+        [[ "$cap" =~ ^[[:xdigit:]]{1,16}$ && "$ecap" =~ ^[[:xdigit:]]{1,16}$ ]] || return 1
+        REPLY="${path##*/} lacks interrupt remapping or posted-interrupt support"
+        (( (16#$cap & (1 << 59)) && (16#$ecap & (1 << 3)) )) || return 1
+        ((count += 1))
+    done
+    REPLY="no Intel VT-d capability registers are available; a DMAR table alone is insufficient"
+    ((count > 0)) || return 1
+    REPLY="$count Intel VT-d units support interrupt remapping and posted interrupts; CPU has cx16"
+}
+
+configure_native_acceleration() {
+    echo
+    echo "==> Detecting local hardware acceleration"
+    if [[ -n "${CROSS_COMPILE:-}" ]] || ! is_x86_config; then
+        echo "    (local x86 detection skipped for cross compilation or a non-x86 target)"
+        return
+    fi
+
+    # Newer libaes already supplies accelerated bulk modes through CRYPTO_AES.
+    if have_symbol CRYPTO_LIB_AES_XTS; then
+        echo "    (bulk AES acceleration is provided by libaes in this kernel)"
+    elif [[ "${_EXPLICIT_SYMBOL_VALUES[CRYPTO_AES_NI_INTEL]:-}" != n ]] \
+        && ! is_protected_config_symbol CRYPTO_AES_NI_INTEL \
+        && have_symbol CRYPTO_AES_NI_INTEL; then
+        if ! is_symbol_enabled_now KMSAN \
+            && [[ "${_SYMBOL_VALUE_CACHE[CRYPTO]:-n}" != n ]] \
+            && [[ "${_SYMBOL_VALUE_CACHE[CRYPTO_AES]:-n}" != n ]] \
+            && kconfig_depends_met CRYPTO_AES_NI_INTEL; then
+            if host_has_x86_cpu_flag aes; then
+                request_module_or_builtin CRYPTO_AES_NI_INTEL "CPU flag aes on every visible CPU"
+            else
+                echo "    (AES-NI skipped: CPU flag aes is not confirmed on every visible CPU)"
+            fi
+        else
+            echo "    (AES-NI skipped: AES/crypto dependencies are disabled or KMSAN is enabled)"
+        fi
+    fi
+
+    # Check after overrides; disabling PCI MSI can leave IRQ_REMAP stale until
+    # olddefconfig. Hardware registers provide evidence that Kconfig cannot.
+    if [[ "${_EXPLICIT_SYMBOL_VALUES[X86_POSTED_MSI]:-}" != n ]] \
+        && ! is_protected_config_symbol X86_POSTED_MSI && have_symbol X86_POSTED_MSI; then
+        if is_symbol_enabled_now IOMMU_SUPPORT && is_symbol_enabled_now INTEL_IOMMU \
+            && kconfig_depends_met IRQ_REMAP && kconfig_depends_met X86_POSTED_MSI; then
+            if detect_host_posted_msi_support; then
+                echo "    ($REPLY)"
+                enable_if_present X86_POSTED_MSI
+                echo "    (runtime use still requires intremap=posted_msi; boot parameters are not modified)"
+            else
+                echo "    (posted MSI skipped: $REPLY)"
+            fi
+        else
+            echo "    (posted MSI skipped: Intel IOMMU/interrupt-remapping dependencies are not enabled)"
+        fi
     fi
 }
 
@@ -6163,7 +6282,7 @@ if [[ "$CPU_VENDOR_EFFECTIVE" != "none" ]]; then
     fi
 fi
 
-if [[ "$NATIVE_CPU_EFFECTIVE" != "none" ]]; then
+if [[ "$NATIVE_CPU_EFFECTIVE" == on || "$NATIVE_CPU_EFFECTIVE" == off ]]; then
     configure_native_cpu_profile "$NATIVE_CPU_EFFECTIVE"
 fi
 
@@ -6368,28 +6487,8 @@ configure_extended_controls
 configure_symbol_overrides
 configure_hugetlb_vmemmap_default
 
-# Older x86 kernels need aesni-intel for accelerated bulk AES modes. Once
-# libaes provides XTS, CRYPTO_AES supplies those modes with arch acceleration.
-# The accelerated menu inherits CRYPTO, X86 and !KMSAN from crypto/Kconfig.
-if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" != none ]] \
-    && is_x86_config && ! is_symbol_enabled_now KMSAN \
-    && ! have_symbol CRYPTO_LIB_AES_XTS \
-    && [[ "${_SYMBOL_VALUE_CACHE[CRYPTO]:-n}" != n ]] \
-    && [[ "${_SYMBOL_VALUE_CACHE[CRYPTO_AES]:-n}" != n ]] \
-    && [[ "${_EXPLICIT_SYMBOL_VALUES[CRYPTO_AES_NI_INTEL]:-}" != n ]] \
-    && kconfig_depends_met CRYPTO_AES_NI_INTEL; then
-    request_module_or_builtin CRYPTO_AES_NI_INTEL "AES-NI/VAES acceleration"
-fi
-
-# Only the Intel remapper implements posted MSI delivery. Check after IOMMU
-# and symbol overrides: IRQ_REMAP can remain stale after disabling IOMMU or MSI.
-# Runtime coalescing still requires the opt-in intremap=posted_msi boot option.
-if [[ "$OPTIMIZATION_PROFILE_EFFECTIVE" == server || "$OPTIMIZATION_PROFILE_EFFECTIVE" == desktop ]] \
-    && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_POSTED_MSI]:-}" != n ]] \
-    && is_symbol_enabled_now IOMMU_SUPPORT && is_symbol_enabled_now INTEL_IOMMU \
-    && kconfig_depends_met IRQ_REMAP \
-    && kconfig_depends_met X86_POSTED_MSI; then
-    enable_if_present X86_POSTED_MSI
+if [[ "$NATIVE_CPU_EFFECTIVE" == auto || "$NATIVE_CPU_EFFECTIVE" == on ]]; then
+    configure_native_acceleration
 fi
 
 # Cgroup utilization hints need both the CPU controller and per-task uclamp.

@@ -359,6 +359,11 @@ test_native_cpu() {
         fail "NATIVE_CPU=on on a tree without X86_NATIVE_CPU unexpectedly succeeded"
     fi
     assert_contains "$output" "requires unavailable CONFIG_X86_NATIVE_CPU"
+
+    "$SCRIPT" --dry-run --validation-mode strict --native-cpu auto \
+        "$tree" "$tree/.config" >"$output" 2>&1
+    assert_contains "$output" "Validation passed:"
+    assert_contains "$output" "Detecting local hardware acceleration"
 }
 
 test_prune_gaps() {

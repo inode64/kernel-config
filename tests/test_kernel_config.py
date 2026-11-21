@@ -155,14 +155,17 @@ class ScriptTests(unittest.TestCase):
         with target.open("a") as stream:
             stream.write("\n" + textwrap.dedent(text))
 
-    def make_host_root(self, *, cpuinfo=None, sys_vendor=None, acpi=(), dmi_entries=(),
-                       pci=(), iommu=(), acpi_tables=(), efi=False, dma=(), nodes=()):
+    def make_host_root(self, *, cpuinfo=None, cmdline=None, sys_vendor=None, acpi=(), dmi_entries=(),
+                       pci=(), iommu=(), iommu_caps=(), acpi_tables=(), efi=False, dma=(), nodes=()):
         """Build a synthetic /sys and /proc for the auto detectors (KC_HOST_ROOT)."""
         host = self.root / "host"
         host.mkdir(exist_ok=True)
         if cpuinfo is not None:
             (host / "proc").mkdir(exist_ok=True)
             (host / "proc/cpuinfo").write_text(cpuinfo)
+        if cmdline is not None:
+            (host / "proc").mkdir(exist_ok=True)
+            (host / "proc/cmdline").write_text(cmdline)
         if sys_vendor is not None:
             (host / "sys/class/dmi/id").mkdir(parents=True, exist_ok=True)
             (host / "sys/class/dmi/id/sys_vendor").write_text(sys_vendor + "\n")
@@ -177,6 +180,12 @@ class ScriptTests(unittest.TestCase):
                 (dev / name).write_text(value + "\n")
         for unit in iommu:
             (host / "sys/class/iommu" / unit).mkdir(parents=True, exist_ok=True)
+        for unit, cap, ecap in iommu_caps:
+            directory = host / "sys/class/iommu" / unit / "intel-iommu"
+            directory.mkdir(parents=True, exist_ok=True)
+            for name, value in (("cap", cap), ("ecap", ecap)):
+                if value is not None:
+                    (directory / name).write_text(value + "\n")
         for table in acpi_tables:
             (host / "sys/firmware/acpi/tables").mkdir(parents=True, exist_ok=True)
             (host / "sys/firmware/acpi/tables" / table).write_bytes(b"")
@@ -2052,8 +2061,9 @@ config HID_LED
         self.assert_symbol("UCLAMP_TASK", "y")
         self.assert_symbol("SCHED_AUTOGROUP", "y")
 
-    def test_profiles_enable_aes_acceleration_for_supported_trees(self):
-        self.add_symbols("X86", "MODULES", "KMSAN")
+    def test_native_aes_acceleration_for_supported_trees(self):
+        self.add_symbols("X86", "MODULES", "KMSAN", "X86_NATIVE_CPU")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : aes cx16\n")
         self.add_symbols("CRYPTO", "CRYPTO_AES", kind="tristate")
         self.add_kconfig('''
             config CRYPTO_AES_NI_INTEL
@@ -2069,7 +2079,11 @@ config HID_LED
             (("--enable-symbols=CRYPTO_AES_NI_INTEL",), {"CRYPTO_AES_NI_INTEL": "m"}, "y"),
             (("--disable-symbols=CRYPTO_AES_NI_INTEL",), {}, "n"),
             (("--protected-config-symbols=CRYPTO_AES_NI_INTEL",), {}, "n"),
-            (("--optimization-profile=none",), {}, "n"),
+            (("--optimization-profile=none",), {}, "m"),
+            (("--native-cpu=none",), {}, "n"),
+            (("--native-cpu=off",), {}, "n"),
+            (("--native-cpu=off",), {"CRYPTO_AES_NI_INTEL": "m"}, "m"),
+            (("--native-cpu=on",), {}, "m"),
             ((), {"X86": "n"}, "n"),
             ((), {"KMSAN": "y"}, "n"),
             ((), {"CRYPTO": "n", "CRYPTO_AES": "n"}, "n"),
@@ -2078,16 +2092,49 @@ config HID_LED
         for args, overrides, expected in cases:
             with self.subTest(args=args, overrides=overrides):
                 self.set_baseline_symbols(**dict(X86="y", MODULES="y", KMSAN="n", CRYPTO="y",
-                                                CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n") | overrides)
-                self.assert_success(self.run_script("--strict", "--optimization-profile=server", *args))
+                                                X86_NATIVE_CPU="n", CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n") | overrides)
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                                    "--native-cpu=auto", *args, env=env))
                 self.assert_symbol("CRYPTO_AES_NI_INTEL", expected)
+                self.assert_symbol("X86_NATIVE_CPU", "y" if "--native-cpu=on" in args else "n")
         self.add_symbols("CRYPTO_LIB_AES_XTS", kind="tristate")
         self.set_baseline_symbols(X86="y", MODULES="y", CRYPTO="y", CRYPTO_AES="y",
                                   CRYPTO_AES_NI_INTEL="n")
-        self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
+        self.assert_success(self.run_script("--strict", "--native-cpu=auto", env=env))
         self.assert_symbol("CRYPTO_AES_NI_INTEL", "n")
 
-    def test_posted_msi_follows_profiles_and_final_iommu_settings(self):
+    def test_native_aes_requires_evidence_from_every_cpu(self):
+        self.add_symbols("X86", "MODULES", "CRYPTO", "CRYPTO_AES")
+        self.add_symbols("CRYPTO_AES_NI_INTEL", kind="tristate")
+        cases = (
+            ("", "n"),
+            ("processor : 0\nflags : vaes aes_extra\n", "n"),
+            ("processor : 0\nFeatures : aes\n", "n"),
+            ("processor : 0\nflags : aes\n\nprocessor : 1\nflags : cx16\n", "n"),
+            ("processor : 0\nflags : aes\n\nprocessor : 1\n", "n"),
+            ("processor : 0\nflags : aes\n\nprocessor : 1\nflags : aes cx16\n", "m"),
+        )
+        for cpuinfo, expected in cases:
+            with self.subTest(cpuinfo=cpuinfo):
+                env = self.make_host_root(cpuinfo=cpuinfo)
+                self.set_baseline_symbols(X86="y", MODULES="y", CRYPTO="y", CRYPTO_AES="y",
+                                          CRYPTO_AES_NI_INTEL="n")
+                result = self.run_script("--strict", "--native-cpu=auto", env=env)
+                self.assert_success(result)
+                self.assert_symbol("CRYPTO_AES_NI_INTEL", expected)
+                if expected == "n":
+                    self.assertIn("CPU flag aes is not confirmed", result.stdout)
+        self.set_baseline_symbols(CRYPTO_AES_NI_INTEL="n")
+        self.assert_success(self.run_script("--strict", "--native-cpu=auto",
+                                            env=env | {"CROSS_COMPILE": "x86_64-linux-gnu-"}))
+        self.assert_symbol("CRYPTO_AES_NI_INTEL", "n")
+        (self.root / "host/proc/cpuinfo").unlink()
+        self.assert_success(self.run_script("--strict", "--native-cpu=auto", env=env))
+        self.assert_symbol("CRYPTO_AES_NI_INTEL", "n")
+
+    def test_native_posted_msi_follows_profiles_and_final_iommu_settings(self):
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : cx16\n", cmdline="\n",
+                                  iommu_caps=(("dmar0", "800000000000000", "8"),))
         self.add_symbols("X86", "X86_64", "IOMMU_SUPPORT", "INTEL_IOMMU", "PCI_MSI", "ACPI", "X86_IO_APIC")
         self.add_kconfig('''
             config IRQ_REMAP
@@ -2102,9 +2149,11 @@ config HID_LED
         cases = (
             ("server", (), {}, "y"),
             ("desktop", (), {}, "y"),
-            ("none", (), {}, "n"),
-            ("realtime", (), {}, "n"),
+            ("none", (), {}, "y"),
+            ("realtime", (), {}, "y"),
             ("realtime", (), {"X86_POSTED_MSI": "y"}, "y"),
+            ("server", ("--native-cpu=none",), {}, "n"),
+            ("desktop", ("--native-cpu=none",), {}, "n"),
             ("server", ("--iommu-support=off",), {}, "n"),
             ("server", ("--disable-symbols=IRQ_REMAP",), {}, "n"),
             ("server", ("--disable-symbols=PCI_MSI",), {}, "n"),
@@ -2120,8 +2169,63 @@ config HID_LED
                 self.set_baseline_symbols(**dict(X86="y", X86_64="y", IOMMU_SUPPORT="y",
                                                 PCI_MSI="y", ACPI="y", X86_IO_APIC="y",
                                                 INTEL_IOMMU="y", IRQ_REMAP="y", X86_POSTED_MSI="n") | overrides)
-                self.assert_success(self.run_script("--strict", f"--optimization-profile={profile}", *args))
+                self.assert_success(self.run_script("--strict", f"--optimization-profile={profile}",
+                                                    "--native-cpu=auto", *args, env=env))
                 self.assert_symbol("X86_POSTED_MSI", expected)
+
+    def test_native_posted_msi_requires_all_iommu_capabilities(self):
+        self.add_symbols("X86", "X86_64", "IOMMU_SUPPORT", "INTEL_IOMMU", "IRQ_REMAP", "X86_POSTED_MSI")
+        good = ("dmar0", "800000000000000", "8")
+        cases = (
+            ((good,), "cx16", "", "y"),
+            ((good, ("dmar1", "ffffffffffffffff", "ffffffffffffffff")), "cx16", "", "y"),
+            ((good, ("dmar1", "0", "8")), "cx16", "", "n"),
+            ((good, ("dmar1", "800000000000000", "0")), "cx16", "", "n"),
+            ((("dmar0", "800000000000000", None),), "cx16", "", "n"),
+            ((("dmar0", "not-hex", "8"),), "cx16", "", "n"),
+            ((("dmar0", "18000000000000000", "8"),), "cx16", "", "n"),
+            ((), "cx16", "", "n"),
+            ((good,), "aes", "", "n"),
+            ((good,), "cx16", "intremap=posted_msi", "y"),
+            ((good,), "cx16", "intremap=on,nopost", "n"),
+            ((good,), "cx16", "intremap=off", "n"),
+            ((good,), "cx16", "nointremap", "n"),
+            ((good,), "cx16", "intel_iommu=off", "n"),
+            ((good,), "cx16", "pci=nomsi", "n"),
+        )
+        for units, flags, cmdline, expected in cases:
+            with self.subTest(units=units, flags=flags, cmdline=cmdline):
+                shutil.rmtree(self.root / "host", ignore_errors=True)
+                env = self.make_host_root(cpuinfo=f"processor : 0\nflags : {flags}\n",
+                                          cmdline=cmdline + "\n", iommu_caps=units, acpi_tables=("DMAR",))
+                self.set_baseline_symbols(X86="y", X86_64="y", IOMMU_SUPPORT="y", INTEL_IOMMU="y",
+                                          IRQ_REMAP="y", X86_POSTED_MSI="n")
+                result = self.run_script("--strict", "--native-cpu=auto", env=env)
+                self.assert_success(result)
+                self.assert_symbol("X86_POSTED_MSI", expected)
+                self.assertIn("runtime use still requires" if expected == "y" else "posted MSI skipped", result.stdout)
+        self.set_baseline_symbols(X86_POSTED_MSI="n")
+        (self.root / "host/proc/cmdline").unlink()
+        self.assert_success(self.run_script("--strict", "--native-cpu=auto", env=env))
+        self.assert_symbol("X86_POSTED_MSI", "n")
+
+    def test_native_compile_mode_keeps_toolchain_validation(self):
+        self.add_symbols("X86", "CC_HAS_MARCH_NATIVE")
+        self.add_kconfig('''
+            config X86_NATIVE_CPU
+            \tbool "Build for the local CPU"
+            \tdepends on CC_HAS_MARCH_NATIVE
+        ''')
+        env = self.make_host_root()
+        self.set_baseline_symbols(X86="y", CC_HAS_MARCH_NATIVE="n", X86_NATIVE_CPU="n")
+        result = self.run_script("--strict", "--native-cpu=on", env=env | {"DROP_SYMBOLS": "X86_NATIVE_CPU"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_untouched()
+        self.set_baseline_symbols(CC_HAS_MARCH_NATIVE="y")
+        result = self.run_script("--strict", "--native-cpu=on", env=env | {"CROSS_COMPILE": "x86_64-linux-gnu-"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot infer the target CPU", result.stderr)
+        self.assert_untouched()
 
     def test_uclamp_groups_follow_profile_dependencies_and_overrides(self):
         self.add_symbols("CPU_FREQ", "CPU_FREQ_GOV_SCHEDUTIL", "CGROUP_SCHED")

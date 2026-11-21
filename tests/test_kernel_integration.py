@@ -48,6 +48,19 @@ class KernelIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.config.write_bytes(self.original)
 
+    def use_native_host(self):
+        host = Path(tempfile.mkdtemp(prefix="native-host-", dir=self.temp.name))
+        self.addCleanup(shutil.rmtree, host)
+        (host / "proc").mkdir()
+        (host / "proc/cpuinfo").write_text("processor : 0\nflags : aes cx16\n")
+        (host / "proc/cmdline").write_text("\n")
+        unit = host / "sys/class/iommu/dmar0/intel-iommu"
+        unit.mkdir(parents=True)
+        (unit / "cap").write_text("800000000000000\n")
+        (unit / "ecap").write_text("8\n")
+        self.env = self.env | {"KC_HOST_ROOT": str(host)}
+        return host
+
     def run_script(self, *args):
         result = subprocess.run(["bash", str(SCRIPT), str(self.tree), *args],
                                 env=self.env, capture_output=True, text=True, timeout=180)
@@ -614,16 +627,21 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
-    def test_real_profile_aes_acceleration_and_overrides(self):
+    def test_real_native_aes_acceleration_and_overrides(self):
+        self.use_native_host()
         modern = "config CRYPTO_LIB_AES_XTS" in (self.tree / "lib/crypto/Kconfig").read_text()
         self.prepare_baseline(MODULES="y", CRYPTO="y", CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n",
-                              DM_CRYPT="n")
+                              DM_CRYPT="n", X86_NATIVE_CPU="n")
         args = ("--strict", "--optimization-profile=server", "--applications=cryptsetup")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(CRYPTO_AES_NI_INTEL="n", X86_NATIVE_CPU="n")
+        args += ("--native-cpu=auto",)
         before = self.config.read_bytes()
         self.assert_success(self.run_script(*args, "--dry-run"))
         self.assertEqual(self.config.read_bytes(), before)
         self.assert_success(self.run_script(*args))
-        self.assert_values(CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n" if modern else "m", DM_CRYPT="y")
+        self.assert_values(CRYPTO_AES="y", CRYPTO_AES_NI_INTEL="n" if modern else "m",
+                           DM_CRYPT="y", X86_NATIVE_CPU="n")
         before = self.config.read_bytes()
         self.assert_success(self.run_script(*args))
         self.assertEqual(self.config.read_bytes(), before)
@@ -633,13 +651,18 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_values(CRYPTO_AES_NI_INTEL="n")
         self.assert_success(self.run_script(*args, "--protected-config-symbols=CRYPTO_AES_NI_INTEL"))
         self.assert_values(CRYPTO_AES_NI_INTEL="n")
+        self.assert_success(self.run_script("--strict", "--native-cpu=on"))
+        self.assert_values(X86_NATIVE_CPU="y", CRYPTO_AES_NI_INTEL="n" if modern else "m")
+        self.assert_success(self.run_script("--strict", "--native-cpu=off"))
+        self.assert_values(X86_NATIVE_CPU="n", CRYPTO_AES_NI_INTEL="n" if modern else "m")
 
     def test_real_profile_enables_network_scaling(self):
         self.prepare_baseline(PCPU_DEV_REFCNT="n", BQL="n", RPS="n", RFS_ACCEL="n")
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(PCPU_DEV_REFCNT="y", BQL="y", RPS="y", RFS_ACCEL="y")
 
-    def test_real_posted_msi_profiles_and_iommu_overrides(self):
+    def test_real_native_posted_msi_profiles_and_iommu_overrides(self):
+        host = self.use_native_host()
         # AMD_IOMMU selects PCI_MSI, which would prevent testing its removal.
         self.prepare_baseline(IOMMU_SUPPORT="y", INTEL_IOMMU="y", IRQ_REMAP="y",
                               HYPERVISOR_GUEST="y", X86_POSTED_MSI="n", AMD_IOMMU="n")
@@ -648,6 +671,9 @@ class KernelIntegrationTests(unittest.TestCase):
             with self.subTest(profile=profile):
                 self.config.write_bytes(baseline)
                 args = ("--strict", f"--optimization-profile={profile}")
+                self.assert_success(self.run_script(*args))
+                self.assert_values(X86_POSTED_MSI="n")
+                args += ("--native-cpu=auto",)
                 self.assert_success(self.run_script(*args))
                 self.assert_values(X86_POSTED_MSI="y")
                 before = self.config.read_bytes()
@@ -658,8 +684,15 @@ class KernelIntegrationTests(unittest.TestCase):
                          "--disable-symbols=INTEL_IOMMU", "--disable-symbols=PCI_MSI"):
             with self.subTest(override=override):
                 self.config.write_bytes(baseline)
-                self.assert_success(self.run_script("--strict", "--optimization-profile=server", override))
+                self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                                    "--native-cpu=auto", override))
                 self.assert_values(X86_POSTED_MSI="n")
+        self.config.write_bytes(baseline)
+        (host / "sys/class/iommu/dmar0/intel-iommu/cap").write_text("0\n")
+        result = self.run_script("--strict", "--native-cpu=auto")
+        self.assert_success(result)
+        self.assertIn("lacks interrupt remapping or posted-interrupt support", result.stdout)
+        self.assert_values(X86_POSTED_MSI="n")
 
     def test_real_x86_x2apic_respects_iommu_and_baremetal_or_guest(self):
         self.prepare_baseline(IOMMU_SUPPORT="y", IRQ_REMAP="y", X86_X2APIC="n")

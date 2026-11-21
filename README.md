@@ -187,28 +187,9 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
   All profiles enable `CC_OPTIMIZE_FOR_PERFORMANCE`, topology-aware scheduling (`SCHED_MC`, `SCHED_SMT`, `SCHED_CLUSTER`, `SCHED_MC_PRIO`), the TEO cpuidle governor (`CPU_IDLE_GOV_TEO`), `RSEQ`, and disable `SLUB_TINY`, `BASE_SMALL` (when `EXPERT=y` exposes it), and the Project C alternative scheduler (`SCHED_ALT`, BMQ/PDS from gentoo-sources `USE=experimental`, which replaces EEVDF and rules out PSI, `SCHED_CACHE`, `SCHED_CORE`, NUMA balancing, `UCLAMP_TASK`, `PREEMPT_RT` and sched_ext). On 6.12–6.18 kernels where `SLUB_CPU_PARTIAL` still exists (before slab sheaves replaced per-CPU partial slabs), `server` and `desktop` keep per-CPU partial caches enabled when `SMP=y`, while `realtime` disables them as recommended by `mm/Kconfig` to avoid overflow lock latency spikes. On x86_64 they replace the frame-pointer unwinder with ORC (`UNWINDER_ORC`). `arch/x86/Kconfig.debug` documents that unwinder as 5-10% faster than frame pointers, at roughly 2-4MB more RAM, and it is the x86_64 default. A baseline already using `UNWINDER_GUESS`, a protected choice member, or an explicit `--enable-symbols`/`--disable-symbols` for the choice is left alone. arm64 selects `FRAME_POINTER` itself and has no ORC unwinder, so it is unchanged. They also enable `CRC_OPTIMIZATIONS` when that symbol exists (6.18+; `lib/crc/Kconfig` says to keep it enabled unless minimizing size, because disabling it makes CRC much slower) and `RAID6_PQ_BENCHMARK` whenever `RAID6_PQ` is enabled (`y` or `m`), so RAID6 automatically picks the fastest SIMD implementation at init. On 6.12, which has no such symbol, a slower `CRC32` implementation (`CRC32_SLICEBY4`, `CRC32_SARWATE` or `CRC32_BIT`) is moved to `CRC32_SLICEBY8` when `CRC32` is enabled. That is the choice default, and `lib/Kconfig` calls it the fastest of the four. When the baseline already has `BPF` and a JIT backend (`HAVE_CBPF_JIT` or `HAVE_EBPF_JIT`), all profiles also enable `BPF_JIT` so seccomp-bpf, socket filters and eBPF execute as native machine code instead of in the software interpreter, and enable `BPF_JIT_ALWAYS_ON` when `BPF_SYSCALL` and `HAVE_EBPF_JIT` are present (matching Fedora, RHEL, Arch, Ubuntu and Gentoo dist-kernel; pass `--disable-symbols=BPF_JIT_ALWAYS_ON` to keep the interpreter fallback). When `NET` is enabled, all profiles also restore the upstream SMP network-scaling defaults (`PCPU_DEV_REFCNT`, `BQL`, `RPS` and `RFS_ACCEL`) whenever their `SMP`/`SYSFS` dependencies are met. On x86_64, all optimization profiles and guest host types also enable `X86_X2APIC` when its prerequisites (`X86_LOCAL_APIC` plus either `IRQ_REMAP` with `IOMMU_SUPPORT` or `HYPERVISOR_GUEST`) hold: it replaces MMIO local-APIC accesses (and VM-exiting MMIO traps in guests) with faster MSR accesses and falls back safely on hardware without x2APIC.
 
-  On x86, optimization profiles also make `CRYPTO_AES_NI_INTEL` available when
-  AES is already enabled, including AES enabled by `--applications=cryptsetup`
-  in the same run. This supplies AES-NI/VAES implementations of bulk cipher
-  modes for dm-crypt and other kernel crypto users on older kernels. The driver
-  checks CPU features at runtime; generic implementations remain available.
-  Existing built-ins stay built-in, otherwise it is a module when supported
-  (like [CachyOS](https://github.com/CachyOS/linux-cachyos/blob/master/linux-cachyos/config)).
-  Explicit overrides and protected values take precedence. `KMSAN` builds are
-  excluded, as required by the accelerated crypto menu. On kernels exposing
-  `CRYPTO_LIB_AES_XTS`, `CRYPTO_AES` already supplies accelerated bulk modes;
-  no extra AES-NI driver is requested. See the [upstream migration notes](https://github.com/torvalds/linux/blob/master/arch/x86/crypto/Kconfig).
-
-  Server and desktop also enable `X86_POSTED_MSI` when x86_64, the Intel IOMMU
-  driver and interrupt remapping are enabled. This makes coalesced interrupt
-  notifications available for bursts of MSI/MSI-X traffic, as in
-  [CachyOS](https://github.com/CachyOS/linux-cachyos/blob/master/linux-cachyos/config)
-  and [Qubes' Fedora-based configuration](https://github.com/QubesOS/qubes-linux-kernel/blob/main/config-base).
-  Actual use requires compatible interrupt-posting hardware and the
-  [`intremap=posted_msi` boot parameter](https://docs.kernel.org/admin-guide/kernel-parameters.html).
-  The script does not change the boot command line. The realtime profile leaves
-  this option unchanged; `--iommu-support=off`, disabled dependencies, protected
-  values and `--disable-symbols=X86_POSTED_MSI` suppress the default.
+  Hardware-specific AES-NI and posted MSI tuning requires `--native-cpu=auto`
+  or `--native-cpu=on` and positive local hardware evidence, described below.
+  Optimization profiles alone leave these options unchanged.
 
   - `server`
     Prioritizes throughput and stable background behavior:
@@ -292,10 +273,53 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   Controls automatic NUMA memory/task placement independently of `NUMA_SUPPORT`.
   On Linux 7.2 and newer, enabling it also enables `CONFIG_NUMA_MIGRATION`; on older trees it enables the generic migration dependency when present.
 
-- `NATIVE_CPU=none|on|off`
-  Controls `CONFIG_X86_NATIVE_CPU` (Linux 6.16 and newer, x86_64 only), which builds the kernel with `-march=native`.
-  `on` requires the symbol to exist and the compiler to support the flag; otherwise final validation reports it.
-  The resulting kernel is only valid on the CPU model it was built on. Default `none` leaves the baseline untouched.
+- `NATIVE_CPU=none|auto|on|off`
+  Opts into local hardware tuning, independently of the optimization profile:
+
+  | Mode | Hardware acceleration | Native compilation |
+  | --- | --- | --- |
+  | `none` (default) | Preserve baseline | Preserve baseline |
+  | `auto` | Enable supported options after detection | Preserve `X86_NATIVE_CPU` |
+  | `on` | Same detection as `auto` | Enable `X86_NATIVE_CPU` (`-march=native`, x86_64, Linux 6.16+) |
+  | `off` | Preserve baseline | Disable `X86_NATIVE_CPU` |
+
+  `auto` also works on older trees without `X86_NATIVE_CPU`. `on` still requires
+  the Kconfig symbol and compiler support; strict validation rejects an unmet
+  request. Build an `on` configuration on the CPU model that will run the kernel.
+  With `CROSS_COMPILE` set, `auto` skips local hardware detection and `on` reports
+  an invalid native-compilation request. Run detection on the intended machine,
+  or supply a captured host tree through `KC_HOST_ROOT` for offline analysis.
+
+  - **AES-NI/VAES:** `CRYPTO_AES_NI_INTEL` is made available only when `aes`
+    appears in every visible processor's `/proc/cpuinfo` flags and AES/crypto
+    are enabled in the target config (including by `--applications=cryptsetup`).
+    Missing or incomplete CPU information skips the request. This works on
+    Intel and AMD x86 CPUs; the driver chooses its AES-NI/VAES implementation
+    at runtime. Existing built-ins stay built-in; otherwise it is a module when
+    supported. `KMSAN` builds are excluded. On kernels with `CRYPTO_LIB_AES_XTS`,
+    libaes already provides the accelerated bulk modes and needs no extra
+    driver request. See the [upstream migration notes](https://github.com/torvalds/linux/blob/master/arch/x86/crypto/Kconfig).
+  - **Posted MSI:** `X86_POSTED_MSI` requires x86_64, enabled Intel IOMMU and
+    interrupt-remapping dependencies, `cx16` on every visible CPU, and readable
+    `intel-iommu/cap` and `ecap` registers for every unit in `/sys/class/iommu`.
+    Each unit must advertise interrupt posting (CAP bit 59) and remapping
+    (ECAP bit 3), following the [kernel's capability checks](https://github.com/torvalds/linux/blob/master/drivers/iommu/intel/irq_remapping.c).
+    A DMAR table alone is insufficient. Missing, malformed or unsupported
+    capabilities skip the request, as do known disabling boot options such as
+    `nointremap`, `intremap=off,nopost`, `intel_iommu=off`, `iommu=off,soft` or
+    `pci=nomsi`. Runtime use still requires the
+    [`intremap=posted_msi` boot parameter](https://docs.kernel.org/admin-guide/kernel-parameters.html)
+    and successful driver initialization; the script does not edit boot parameters.
+
+  Detection reads `/proc` and `/sys` and prints the evidence or the reason for
+  skipping each option. It does not disable baseline drivers when hardware is
+  absent or information is unavailable. Explicit symbol overrides and protected
+  values take precedence. Missing CPU flags are treated as unconfirmed support,
+  not proof of absent hardware; see [x86 CPU flags](https://docs.kernel.org/arch/x86/cpuinfo.html).
+
+  ```bash
+  ./kernel-config.sh --dry-run --strict --optimization-profile=server --native-cpu=auto /usr/src/linux
+  ```
 
 The performance-control names above remain supported. If both control families are supplied, explicit `--preemption`, `--sched-cache`, `--lru-gen`, and `--numa-balancing` settings override their corresponding `--preempt-mode`, `--sched-cache-mode`, `--mglru-mode`, and `--numa-balancing-mode` settings. Default `keep`/`none` values do not override them.
 
