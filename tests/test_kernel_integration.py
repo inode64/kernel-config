@@ -438,6 +438,34 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--optimization-profile=desktop"))
         self.assert_values(BLK_CGROUP="y", IOSCHED_BFQ="y", BFQ_GROUP_IOSCHED="y")
 
+    def test_real_profiles_enable_zswap_from_swap_disabled_baseline(self):
+        for profile, compressor in (("server", "zstd"), ("desktop", "lz4")):
+            with self.subTest(profile=profile):
+                self.config.write_bytes(self.original)
+                self.prepare_baseline(SWAP="n", ZRAM="m", ZSMALLOC="m")
+                args = ("--strict", f"--optimization-profile={profile}")
+                self.assert_success(self.run_script(*args))
+                self.assert_values(SWAP="y", ZSWAP="y", ZSWAP_DEFAULT_ON="y", ZSMALLOC="y", ZRAM="m",
+                                   ZSWAP_SHRINKER_DEFAULT_ON="y",
+                                   ZSWAP_COMPRESSOR_DEFAULT=f'"{compressor}"')
+                before = self.config.read_bytes()
+                self.assert_success(self.run_script(*args))
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assert_success(self.run_script(*args, "--zswap=off"))
+                self.assert_values(SWAP="y", ZSWAP="n", ZSWAP_DEFAULT_ON="n")
+
+    def test_real_zswap_profile_respects_protected_swap_disabled(self):
+        self.prepare_baseline(SWAP="n")
+        before = self.config.read_bytes()
+        result = self.run_script("--strict", "--optimization-profile=server",
+                                 "--protected-config-symbols=SWAP")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CONFIG_ZSWAP requested=y final=n", result.stderr)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script("--strict", "--optimization-profile=server",
+                                            "--protected-config-symbols=SWAP", "--zswap=off"))
+        self.assert_values(SWAP="n", ZSWAP="n")
+
     def test_real_risk_controls_nfs_profile_and_explicit_override(self):
         self.prepare_baseline(MODULE_FORCE_UNLOAD="y", NFSD_FLEXFILELAYOUT="y", NFS_DISABLE_UDP_SUPPORT="n")
         self.assert_success(self.run_script("--strict", "--prune-dangerous", "--applications=nfs-server",

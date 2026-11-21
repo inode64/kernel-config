@@ -2808,7 +2808,7 @@ disable_if_present() {
 }
 
 optimize_compression() {
-    enable_if_present ZSWAP ZSWAP_DEFAULT_ON
+    enable_if_present SWAP ZSWAP ZSWAP_DEFAULT_ON
     select_if_present ZSWAP_COMPRESSOR_DEFAULT_LZO \
         ZSWAP_COMPRESSOR_DEFAULT_DEFLATE ZSWAP_COMPRESSOR_DEFAULT_842 \
         ZSWAP_COMPRESSOR_DEFAULT_LZ4 ZSWAP_COMPRESSOR_DEFAULT_LZ4HC \
@@ -3890,8 +3890,10 @@ configure_throughput_memory_defaults() {
     enable_if_present \
         PERSISTENT_HUGE_ZERO_FOLIO \
         RSEQ_SLICE_EXTENSION \
-        ZSMALLOC \
         ZSWAP_SHRINKER_DEFAULT_ON
+
+    # Zswap (its allocator choice on 6.12) selects the required allocator level.
+    # Pinning a baseline ZSMALLOC=m would conflict when built-in zswap selects y.
 
     # zswap compressor: zstd favours ratio (server), lz4 favours latency (desktop)
     case "$profile" in
@@ -4151,6 +4153,7 @@ configure_optimization_profile() {
             local -a server_parents=(
                 BLK_CGROUP
                 CGROUP_SCHED
+                SWAP
                 TRANSPARENT_HUGEPAGE
                 ZSWAP
             )
@@ -4292,6 +4295,7 @@ configure_optimization_profile() {
             enable_parents_if_present \
                 BLK_CGROUP \
                 CGROUP_SCHED \
+                SWAP \
                 TRANSPARENT_HUGEPAGE \
                 ZSWAP
 

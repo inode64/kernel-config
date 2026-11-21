@@ -220,6 +220,15 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     `PREEMPT_RT` when its prerequisites are enabled (otherwise full preemption), `HZ_1000` preference, `RCU_BOOST`, and `RCU_NOCB_CPU` support. It requests `NO_HZ_FULL` when the baseline enables SMP and the accounting capabilities full dynticks requires, otherwise `NO_HZ_IDLE`. `RCU_NOCB_CPU_DEFAULT_ALL` is left unchanged.
     Full dynticks isolation also requires boot configuration (for example `nohz_full=` and CPU isolation/affinity tuning).
 
+  The `server`/`desktop` profiles and the compression preset enable `SWAP`
+  before configuring zswap, so its compressor and shrinker survive
+  `olddefconfig` even when the baseline has swap support disabled.
+  Kconfig selects the allocator's required build level, allowing a modular
+  `ZSMALLOC` used by zram to become built-in when zswap needs it.
+  `--zswap=off` disables the compressed cache; swap support remains available.
+  This builds kernel support only: [zswap needs an active backing swap device](https://docs.kernel.org/admin-guide/mm/zswap.html)
+  to reduce swap I/O, and the script does not create or activate one.
+
 - `VALIDATION_MODE=warn|strict`
   Checks every config value requested by the script after `make olddefconfig`.
   `warn` (the default) reports values changed by Kconfig dependencies and continues.

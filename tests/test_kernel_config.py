@@ -553,6 +553,15 @@ class ScriptTests(unittest.TestCase):
                 for other in algorithms:
                     self.assert_symbol(f"ZSWAP_COMPRESSOR_DEFAULT_{other.upper()}", "y" if algorithm == other else "n")
 
+    def test_compression_preset_enables_swap_without_an_optimization_profile(self):
+        self.add_symbols("SWAP")
+        self.set_baseline_symbols(SWAP="n")
+        self.assert_success(self.run_script("--strict", "--all-optimizations",
+                                            "--optimization-profile=none"))
+        self.assert_symbol("SWAP", "y")
+        self.assert_symbol("ZSWAP", "y")
+        self.assert_symbol("ZSWAP_DEFAULT_ON", "y")
+
     def test_zram_module_and_compressor(self):
         self.add_symbols("ZRAM", "ZRAM_BACKEND_LZO", "ZRAM_BACKEND_ZSTD",
                          "ZRAM_DEF_COMP_LZORLE", "ZRAM_DEF_COMP_ZSTD")
