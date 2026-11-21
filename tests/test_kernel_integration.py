@@ -325,13 +325,17 @@ class KernelIntegrationTests(unittest.TestCase):
         # makes the server profile refresh the config while FTRACE is still off,
         # which drops their "is not set" lines.
         self.prepare_baseline(MEMORY_FAILURE="n", PCIEAER="n", FTRACE="y", UPROBE_EVENTS="y",
-                              EPROBE_EVENTS="y", TCP_CONG_ADVANCED="n")
+                              EPROBE_EVENTS="y", TCP_CONG_ADVANCED="n",
+                              DEBUG_FS="y", DEBUG_FS_ALLOW_NONE="y")
         self.assert_success(self.run_script("--strict", "--all-optimizations", "--applications=rasdaemon"))
         self.assert_values(TRACING="y", EVENT_TRACING="y", FTRACE="y", ENABLE_DEFAULT_TRACERS="y",
-                           FUNCTION_TRACER="n", DYNAMIC_FTRACE="n", KPROBES="n", DEBUG_FS="n",
+                           FUNCTION_TRACER="n", DYNAMIC_FTRACE="n", KPROBES="n", DEBUG_FS="y",
+                           DEBUG_FS_ALLOW_ALL="y",
                            UPROBE_EVENTS="n", EPROBE_EVENTS="n",
                            RAS="y", PCIEAER="y", ACPI_APEI_GHES="y", MEMORY_FAILURE="y", X86_MCE="y")
         self.assert_enabled("EDAC")
+        if "config TRACEFS_AUTOMOUNT_DEPRECATED" in (self.tree / "kernel/trace/Kconfig").read_text():
+            self.assert_values(TRACEFS_AUTOMOUNT_DEPRECATED="y")
 
     def test_real_server_profile_keeps_lockup_and_hung_task_detection(self):
         for option in ("--optimization-profile=server", "--all-optimizations"):

@@ -1813,7 +1813,7 @@ config HID_LED
     def test_rasdaemon_profile_keeps_trace_events_after_observability_pruning(self):
         wanted = ("RAS", "EDAC", "ACPI_APEI", "ACPI_APEI_GHES", "PCIEPORTBUS", "PCIEAER", "FTRACE",
                   "ENABLE_DEFAULT_TRACERS", "TRACING", "TRACEPOINTS", "EVENT_TRACING", "X86_MCE",
-                  "MEMORY_FAILURE")
+                  "MEMORY_FAILURE", "DEBUG_FS", "DEBUG_FS_ALLOW_ALL", "TRACEFS_AUTOMOUNT_DEPRECATED")
         self.add_symbols("X86", "ARCH_SUPPORTS_MEMORY_FAILURE", "FUNCTION_TRACER", *wanted)
         self.set_baseline_symbols(X86="y", ARCH_SUPPORTS_MEMORY_FAILURE="y", FUNCTION_TRACER="y",
                                   **dict.fromkeys(wanted, "n"))

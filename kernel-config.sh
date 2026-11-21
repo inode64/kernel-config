@@ -5935,10 +5935,13 @@ configure_application_profiles() {
                 # errors from tracefs events (ras:*, mce:mce_record), so it needs
                 # TRACING even when the observability prune drops the tracers:
                 # FTRACE plus ENABLE_DEFAULT_TRACERS provide the events without
-                # the function tracer. Its page offlining needs MEMORY_FAILURE.
+                # the function tracer. rasdaemon 0.8.4 discovers that interface
+                # through debugfs/tracing; both debugfs and its legacy tracefs
+                # automount must remain available despite the pruning presets.
+                # Its page offlining needs MEMORY_FAILURE.
                 # BRANCH_PROFILE_NONE is the default of the branch-profiling choice
                 # FTRACE exposes; the coverage prune may have requested it off.
-                for sym in RAS EDAC ACPI_APEI ACPI_APEI_GHES PCIEPORTBUS PCIEAER FTRACE ENABLE_DEFAULT_TRACERS TRACING TRACEPOINTS EVENT_TRACING BRANCH_PROFILE_NONE; do
+                for sym in RAS EDAC ACPI_APEI ACPI_APEI_GHES PCIEPORTBUS PCIEAER FTRACE ENABLE_DEFAULT_TRACERS TRACING TRACEPOINTS EVENT_TRACING BRANCH_PROFILE_NONE DEBUG_FS DEBUG_FS_ALLOW_ALL TRACEFS_AUTOMOUNT_DEPRECATED; do
                     append_unique_item "$sym" enable_syms
                 done
                 if is_x86_config; then

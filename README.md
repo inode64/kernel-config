@@ -176,7 +176,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
 - `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset: `OPTIMIZATION_PROFILE=server`, kernel `ZSTD` compression and server profile zswap tuning (`zstd`, falling back to `lz4`; the initial compression preset uses LZO). It preserves existing initramfs and firmware decompression support and does not disable shared compression libraries.
-  It also turns on every pruning toggle except `PRUNE_HARDENING` and `PRUNE_UNUSED_MODULES`: observability, legacy, debug/trace, selftests, sanitizers, coverage, fault injection, dangerous options, BPF, 32-bit compatibility, unused network protocols, old hardware, old x86 platforms, legacy ATA, insecure protocols, radios and DMA attack surface. The result has no debugfs, ftrace, kprobes or BTF (bpftrace and `perf probe` stop working), no `IA32_EMULATION`, and on 6.17+ no iptables-legacy tables unless `iptables-legacy` or `firehol` is among the applications. A toggle can be turned off again after the flag, for example `--prune-compat32=false`.
+  It also turns on every pruning toggle except `PRUNE_HARDENING` and `PRUNE_UNUSED_MODULES`: observability, legacy, debug/trace, selftests, sanitizers, coverage, fault injection, dangerous options, BPF, 32-bit compatibility, unused network protocols, old hardware, old x86 platforms, legacy ATA, insecure protocols, radios and DMA attack surface. Unless an application profile restores them (such as debugfs and trace events for `rasdaemon`), the result has no debugfs, ftrace, kprobes or BTF (bpftrace and `perf probe` stop working), no `IA32_EMULATION`, and on 6.17+ no iptables-legacy tables unless `iptables-legacy` or `firehol` is among the applications. A toggle can be turned off again after the flag, for example `--prune-compat32=false`.
   This setting is flag-only and must be enabled with `--all-optimizations`. To keep the existing kernel image compression, pass `--kernel-compression=keep` after this flag.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
@@ -615,10 +615,13 @@ These options change kernel build configuration and defaults. They do not create
     checks from tracefs events (`ras:*`, `mce:mce_record`), so it needs
     `TRACING` even when `--all-optimizations` prunes the tracers. The profile
     requests `FTRACE` with `ENABLE_DEFAULT_TRACERS`, which provide the events
-    without the function tracer, kprobes or debugfs, plus `RAS`, `EDAC`,
+    without the function tracer or kprobes, plus `RAS`, `EDAC`,
     `ACPI_APEI_GHES`, `PCIEAER`, `X86_MCE` and `MEMORY_FAILURE` for page
     offlining. The vendor EDAC driver (`EDAC_AMD64`, `EDAC_IE31200`...)
-    comes from `--platform-drivers=auto`.
+    comes from `--platform-drivers=auto`. The profile also keeps `DEBUG_FS`
+    and `DEBUG_FS_ALLOW_ALL`, together with `TRACEFS_AUTOMOUNT_DEPRECATED`
+    where available: rasdaemon 0.8.4 discovers its tracing interface through
+    `debugfs/tracing`, so standalone tracefs does not suffice.
 
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy
