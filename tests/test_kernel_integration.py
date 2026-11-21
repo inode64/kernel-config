@@ -332,8 +332,9 @@ class KernelIntegrationTests(unittest.TestCase):
 
     def test_real_server_profile_uses_lazy_preemption_when_none_is_arch_gated(self):
         preempt = (self.tree / "kernel/Kconfig.preempt").read_text()
-        none = preempt.split("config PREEMPT_VOLUNTARY", 1)[0]
-        if "config PREEMPT_NONE" not in none or "ARCH_NO_PREEMPT" not in none:
+        # The *_BUILD symbols precede the model choice and share its prefixes.
+        none = re.search(r"^config PREEMPT_NONE\n(.*?)(?=^config |\Z)", preempt, re.M | re.S)
+        if none is None or "ARCH_NO_PREEMPT" not in none.group(1):
             self.skipTest("PREEMPT_NONE is not gated on ARCH_NO_PREEMPT")
         self.assert_success(self.run_script("--strict", "--optimization-profile=server"))
         self.assert_values(PREEMPT_LAZY="y", PREEMPT_NONE="n", PREEMPT_VOLUNTARY="n", PREEMPT="n",
