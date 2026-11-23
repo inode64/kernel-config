@@ -3232,6 +3232,38 @@ config HID_LED
         self.assert_symbol("X86_USER_SHADOW_STACK", "n")
         self.assert_symbol("X86_UMIP", "n")
 
+    def test_native_arch_kbuild_continuations_relative_objects_and_modsymbols(self):
+        self.add_symbols("MODULES", "BLK_DEV_INITRD", "I2C", "HWMON", "NLS", "FAT_FS", "VFAT_FS")
+        self.add_symbols("TEST_CONT", "SENSORS_SPD5118", "NLS_CODEPAGE_850", kind="tristate")
+        source = self.tree / "drivers/ras"
+        source.mkdir(parents=True)
+        (source / "Makefile").write_text("obj-$(CONFIG_TEST_CONT) += \\\n\tamd/test-cont.o\n")
+        self.set_baseline_symbols(MODULES="y", BLK_DEV_INITRD="y", I2C="n", HWMON="n",
+                                  TEST_CONT="n", SENSORS_SPD5118="n", VFAT_FS="n", NLS_CODEPAGE_850="n")
+        env = self.make_host_root()
+        host = Path(env["KC_HOST_ROOT"])
+        dev = host / "sys/bus/platform/devices/cont/driver"
+        dev.mkdir(parents=True)
+        (dev / "module").symlink_to("/sys/module/test_cont")
+        i2c = host / "sys/bus/i2c/devices/0-0050"
+        i2c.mkdir(parents=True)
+        (i2c / "name").write_text("spd5118\n")
+        (host / "proc/self").mkdir(parents=True)
+        (host / "proc/self/mountinfo").write_text(
+            "26 2 8:2 / /efi rw - vfat /dev/sda2 rw,codepage=850\n"
+        )
+        self.assert_success(self.run_script("--strict", "--native-arch", "--native-cpu=none",
+                                            "--platform-drivers=none", env=env))
+        self.assert_symbol("TEST_CONT", "m")
+        self.assert_symbol("SENSORS_SPD5118", "m")
+        self.assert_symbol("VFAT_FS", "y")
+        self.assert_symbol("NLS_CODEPAGE_850", "m")
+        self.set_baseline_symbols(MODULES="y", BLK_DEV_INITRD="y", SENSORS_SPD5118="n")
+        self.assert_success(self.run_script("--strict", "--native-arch", "--native-cpu=none",
+                                            "--platform-drivers=none",
+                                            "--disable-symbols=SENSORS_SPD5118", env=env))
+        self.assert_symbol("SENSORS_SPD5118", "n")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):

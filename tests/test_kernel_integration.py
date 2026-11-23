@@ -1020,6 +1020,64 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--numa-balancing-mode=on", "--numa-balancing=off"))
         self.assert_values(NUMA="n", NUMA_MIGRATION="n", NUMA_BALANCING="n")
 
+    def test_real_native_hardware_detection_improvements(self):
+        host = self.use_native_host()
+        shutil.rmtree(host / "sys/class/iommu")
+        (host / "proc/cpuinfo").write_text(
+            "processor : 0\nvendor_id : AuthenticAMD\ncpu family : 25\nmodel : 97\nflags : umip pku mce mca\n"
+        )
+        dmi = host / "sys/class/dmi/id"
+        dmi.mkdir(parents=True)
+        (dmi / "sys_vendor").write_text("Example\n")
+        (dmi / "product_name").write_text("Workstation\n")
+        for idx in range(2):
+            pol = host / f"sys/devices/system/cpu/cpufreq/policy{idx}"
+            pol.mkdir(parents=True)
+            (pol / "scaling_driver").write_text("amd-pstate-epp\n")
+        smbus = host / "sys/bus/pci/devices/0000:00:14.0"
+        smbus.mkdir(parents=True)
+        (smbus / "vendor").write_text("0x1022\n")
+        (smbus / "device").write_text("0x790b\n")
+        (smbus / "class").write_text("0x0c0500\n")
+        bmc = host / "sys/bus/pci/devices/0000:05:00.0"
+        bmc.mkdir(parents=True)
+        (bmc / "vendor").write_text("0x1a03\n")
+        (bmc / "device").write_text("0x2000\n")
+        (bmc / "class").write_text("0x030000\n")
+        i2c = host / "sys/bus/i2c/devices/0-0050"
+        i2c.mkdir(parents=True)
+        (i2c / "name").write_text("spd5118\n")
+        hwmon = host / "sys/class/hwmon/hwmon0"
+        hwmon.mkdir(parents=True)
+        (hwmon / "name").write_text("drivetemp\n")
+        (host / "proc/self").mkdir(parents=True)
+        (host / "proc/self/mountinfo").write_text(
+            "26 2 8:1 / / rw - ext4 /dev/sda1 rw\n"
+            "27 26 8:2 / /efi rw - vfat /dev/sda2 rw,codepage=850,iocharset=iso8859-15\n"
+        )
+        self.prepare_baseline(
+            MODULES="y", BLK_DEV_INITRD="y", WATCHDOG="n", SP5100_TCO="n",
+            I2C_PIIX4="n", SENSORS_SPD5118="n", SENSORS_DRIVETEMP="n",
+            DRM="y", DRM_AST="n", DRM_I915="m", DRM_NOUVEAU="m",
+            X86_INTEL_MEMORY_PROTECTION_KEYS="n",
+            HYPERVISOR_GUEST="y", PARAVIRT="y", KVM_GUEST="y",
+            VFAT_FS="n", NLS_CODEPAGE_850="n", NLS_ISO8859_15="n",
+        )
+        args = ("--strict", "--native-arch", "--host-type=auto", "--video-support=auto")
+        result = self.run_script(*args)
+        self.assert_success(result)
+        self.assertEqual(result.stdout.count("active CPU frequency driver: amd-pstate-epp"), 1)
+        self.assert_values(
+            KVM_GUEST="n", DRM_AST="y", DRM_I915="n", DRM_NOUVEAU="n",
+            I2C_PIIX4="m", SP5100_TCO="m", SENSORS_SPD5118="m", SENSORS_DRIVETEMP="m",
+            X86_INTEL_MEMORY_PROTECTION_KEYS="y",
+            EXT4_FS="y", VFAT_FS="y", NLS_CODEPAGE_850="m", NLS_ISO8859_15="m",
+        )
+        # Idempotence on second run.
+        after = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), after)
+
 
 if __name__ == "__main__":
     unittest.main()

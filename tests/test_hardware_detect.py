@@ -321,6 +321,140 @@ class HardwareTests(unittest.TestCase):
         self.assertTrue(evidence)
         self.assertTrue(all(used in e and empty not in e for e in evidence))
 
+    def test_extended_pci_usb_scsi_and_dm_targets(self):
+        self.write("sys/bus/pci/devices/0000:01:00.0/class", "0x0c0340\n")
+        self.write("sys/bus/pci/devices/0000:02:00.0/class", "0x080501\n")
+        self.write("sys/bus/pci/devices/0000:03:00.0/class", "0x040300\n")
+        self.write("sys/bus/pci/devices/0000:04:00.0/class", "0x0c0010\n")
+        for idx, (cls, sub, proto) in enumerate((
+            ("01", "01", "00"),
+            ("0e", "01", "00"),
+            ("02", "02", "01"),
+            ("02", "06", "00"),
+            ("02", "0d", "00"),
+            ("e0", "01", "01"),
+        )):
+            self.write(f"sys/bus/usb/devices/1-{idx}:1.0/bInterfaceClass", cls + "\n")
+            self.write(f"sys/bus/usb/devices/1-{idx}:1.0/bInterfaceSubClass", sub + "\n")
+            self.write(f"sys/bus/usb/devices/1-{idx}:1.0/bInterfaceProtocol", proto + "\n")
+        self.write("sys/bus/scsi/devices/1:0:0:0/type", "1\n")
+        for idx, uuid in enumerate((
+            "mpath-36001405test",
+            "INTEGRITY-test",
+            "LVM-vg-tpool",
+            "LVM-vg-cpool",
+            "LVM-vg-cow",
+            "LVM-vg-wcache",
+            "LVM-vg-vdo",
+            "LVM-vg-rimage_0",
+        )):
+            self.write(f"sys/class/block/dm-{idx}/dm/uuid", uuid + "\n")
+        facts = self.facts()
+        for name in ("USB4", "MMC_SDHCI_PCI", "MMC_BLOCK", "SND_HDA_INTEL", "FIREWIRE_OHCI"):
+            self.assertIn(("symbol", name), facts)
+        for name in ("SND_USB_AUDIO", "USB_VIDEO_CLASS", "USB_ACM", "USB_NET_CDCETHER",
+                     "USB_NET_CDC_NCM", "BT_HCIBTUSB", "CHR_DEV_ST",
+                     "DM_MULTIPATH", "DM_INTEGRITY", "DM_THIN_PROVISIONING", "DM_CACHE",
+                     "DM_SNAPSHOT", "DM_WRITECACHE", "DM_VDO", "DM_RAID"):
+            self.assertIn(("modsymbol", name), facts)
+
+    def test_hwmon_i2c_mdio_pcie_services_and_core_drivers(self):
+        self.write("proc/sys/kernel/osrelease", "test-kernel\n")
+        self.write("lib/modules/test-kernel/modules.alias",
+                   "alias mdio:0000000000011100110010000100???? realtek\n")
+        self.write("sys/class/hwmon/hwmon0/name", "drivetemp\n")
+        self.write("sys/class/hwmon/hwmon1/name", "nvme\n")
+        self.write("sys/bus/i2c/devices/0-0050/name", "spd5118\n")
+        self.write("sys/bus/i2c/devices/0-0050/modalias", "i2c:spd5118\n")
+        self.write("sys/bus/i2c/devices/0-0018/name", "jc42\n")
+        self.write("sys/bus/i2c/devices/0-0051/name", "ee1004\n")
+        self.write("sys/bus/mdio_bus/devices/phy0/phy_id", "0x001cc840\n")
+        self.link("sys/bus/mdio_bus/devices/phy0/driver", "/sys/bus/mdio_bus/drivers/Realtek Internal NBASE-T PHY")
+        for idx, drv in enumerate(("pcie_pme", "aer", "dpc", "pciehp", "pcie_bwctrl")):
+            self.link(f"sys/bus/pci_express/devices/0000:00:01.0:pcie00{idx}/driver",
+                      f"/sys/bus/pci_express/drivers/{drv}")
+        self.link("sys/bus/platform/devices/alarmtimer.0.auto/driver", "/sys/bus/platform/drivers/alarmtimer")
+        self.link("sys/bus/faux/devices/microcode/driver", "/sys/bus/faux/drivers/faux_driver")
+        facts = self.facts()
+        for fact in (
+            ("modsymbol", "SENSORS_DRIVETEMP"), ("symbol", "NVME_HWMON"),
+            ("modsymbol", "SENSORS_SPD5118"), ("modsymbol", "SENSORS_JC42"),
+            ("modsymbol", "EEPROM_EE1004"), ("symbol", "PHYLIB"), ("module", "realtek"),
+            ("symbol", "PCIEPORTBUS"), ("symbol", "PCIE_PME"), ("symbol", "PCIEAER"),
+            ("symbol", "PCIE_DPC"), ("symbol", "HOTPLUG_PCI_PCIE"),
+        ):
+            self.assertIn(fact, facts)
+        for skipped in ("alarmtimer", "faux_driver", "pcie_pme", "pcie_bwctrl"):
+            self.assertNotIn(("module", skipped), facts)
+            self.assertNotIn(("builtin", skipped), facts)
+        self.assertNotIn(("notice", "unresolved-alias"), facts)
+
+    def test_acpi_filtering_input_multicast_hid_fallback_and_deduplication(self):
+        self.write("proc/sys/kernel/osrelease", "test-kernel\n")
+        self.write("lib/modules/test-kernel/modules.alias", "\n".join((
+            "alias acpi*:MSFT0101:* tpm_crb",
+            "alias acpi*:MSFT0101:* tpm_tis",
+            "alias input:* evdev",
+            "alias input:* input_leds",
+            "alias input:* keyboard",
+            "alias hid:* hid_generic",
+            "alias hid:b0003g*v0000046Dp0000C52B hid_logitech_dj",
+            "alias cpu:x86* kvm_amd",
+            "alias cpu:x86* rapl",
+        )) + "\n")
+        # Disabled ACPI device is ignored.
+        self.write("sys/bus/acpi/devices/DISABLED:00/status", "0\n")
+        self.write("sys/bus/acpi/devices/DISABLED:00/modalias", "acpi:DISABLED:\n")
+        # ACPI companion whose physical_node is already bound emits no bogus ambiguity.
+        self.write("sys/bus/acpi/devices/MSFT0101:00/status", "15\n")
+        self.write("sys/bus/acpi/devices/MSFT0101:00/modalias", "acpi:MSFT0101:\n")
+        self.link("sys/devices/platform/MSFT0101:00/driver", "/sys/bus/platform/drivers/tpm_crb_acpi")
+        self.link("sys/bus/platform/drivers/tpm_crb_acpi/module", "/sys/module/tpm_crb")
+        self.link("sys/bus/acpi/devices/MSFT0101:00/physical_node", "/sys/devices/platform/MSFT0101:00")
+        self.link("sys/bus/platform/devices/MSFT0101:00", "/sys/devices/platform/MSFT0101:00")
+        # Structural ACPI resources and unbound PCI host/IOMMU bridges do not spam unresolved-alias.
+        self.write("sys/bus/acpi/devices/PNP0C02:00/modalias", "acpi:PNP0C02:\n")
+        self.write("sys/bus/platform/devices/PNP0103:00/modalias", "acpi:PNP0103:\n")
+        self.write("sys/bus/pci/devices/0000:00:00.0/class", "0x060000\n")
+        self.write("sys/bus/pci/devices/0000:00:00.0/modalias", "pci:v00001022d000014DA\n")
+        self.write("sys/bus/pci/devices/0000:00:00.2/class", "0x080600\n")
+        self.write("sys/bus/pci/devices/0000:00:00.2/modalias", "pci:v00001022d000014D9\n")
+        # Input multicast resolves evdev + input_leds without ambiguous-alias.
+        self.write("sys/class/input/input0/modalias", "input:b0003v046DpC548\n")
+        # HID specific driver beats hid_generic fallback.
+        self.write("sys/bus/hid/devices/0003:046D:C52B.0001/modalias", "hid:b0003g0001v0000046Dp0000C52B\n")
+        # Repeated CPU ambiguous notices collapse to a single entry.
+        for cpu in range(4):
+            self.write(f"sys/bus/cpu/devices/cpu{cpu}/modalias", "cpu:x86test\n")
+        facts = discover(self.host)
+        pairs = {(k, v) for k, v, _ in facts}
+        for fact in (("module", "tpm_crb"), ("module", "evdev"), ("module", "input_leds"),
+                     ("module", "hid_logitech_dj")):
+            self.assertIn(fact, pairs)
+        self.assertNotIn(("notice", "unresolved-alias"), pairs)
+        ambiguous = [e for k, v, e in facts if (k, v) == ("notice", "ambiguous-alias")]
+        self.assertEqual(len(ambiguous), 1)
+        self.assertIn("kvm_amd rapl", ambiguous[0])
+
+    def test_mounted_filesystems_and_vfat_nls_from_mountinfo(self):
+        self.write("proc/self/mountinfo", "\n".join((
+            "26 2 8:1 / / rw,noatime - ext4 /dev/sda1 rw",
+            "27 26 8:2 / /efi rw - vfat /dev/sda2 rw,codepage=850,iocharset=iso8859-15,utf8",
+            "28 26 8:3 / /home rw - btrfs /dev/sda3 rw",
+            "29 26 0:40 / /srv rw - nfs4 192.0.2.1:/srv rw,vers=4.2",
+            "30 26 0:41 / /run/user/1000/doc rw - fuse.portal portal rw",
+        )) + "\n")
+        facts = self.facts()
+        for fact in (
+            ("symbol", "EXT4_FS"), ("symbol", "VFAT_FS"),
+            ("symbol", "NLS"), ("modsymbol", "NLS_CODEPAGE_850"),
+            ("modsymbol", "NLS_ISO8859_15"), ("modsymbol", "NLS_UTF8"),
+            ("modsymbol", "BTRFS_FS"), ("symbol", "NETWORK_FILESYSTEMS"),
+            ("modsymbol", "NFS_FS"), ("modsymbol", "NFS_V4"), ("symbol", "NFS_V4_2"),
+            ("modsymbol", "FUSE_FS"),
+        ):
+            self.assertIn(fact, facts)
+
 
 if __name__ == "__main__":
     unittest.main()

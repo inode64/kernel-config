@@ -353,23 +353,33 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   regardless of argument order. Native compilation remains separately opt-in
   through `--native-cpu=on`.
 
-  Discovery reads all available sysfs buses/classes and block devices. It uses
-  each device's bound module or its modalias and the running kernel's installed
-  module metadata, then reuses the target tree's Kbuild module-to-symbol map.
-  This covers PCI/USB, SATA/NVMe/SCSI, network and wireless devices, TPM
-  transports, graphics, sound, input, sensors and other registered drivers.
-  Known standard controller classes also identify NVMe and USB host
-  controllers without a loaded driver. PCI AHCI additionally requires a block,
-  SCSI or identified ATA device below that controller in sysfs; an empty
-  controller's bound driver or modalias alone does not add SATA support.
-  Unmounted disks, optical drives without media and devices awaiting a block
-  driver count as attached. An unbound controller or incomplete sysfs cannot
-  prove that its ports are empty: the script reports the missing evidence,
-  keeps baseline settings and honors `--enable-symbols=SATA_AHCI` for hotplug
-  or recovery. To remove previously enabled AHCI after verifying it is unused,
-  pass `--disable-symbols=SATA_AHCI`; Kconfig derives `SATA_HOST` from the
-  remaining drivers. Active SCSI disks, USB storage/UAS,
-  md RAID levels and dm/LVM/LUKS layers add their required support.
+  Discovery reads all available sysfs buses/classes, block devices and
+  `/proc/self/mountinfo`. It uses each device's bound module or its modalias
+  (including MDIO `phy_id` aliases) and the running kernel's installed module
+  metadata, then reuses the target tree's Kbuild module-to-symbol map (joining
+  line continuations and relative object paths). This covers PCI/PCIe port
+  services/USB, SATA/NVMe/SCSI, SD/MMC, USB4/Thunderbolt, network/MDIO PHYs and
+  wireless devices, TPM transports, graphics, sound, input, sensors (including
+  active `drivetemp`/`nvme` hwmon and unbound I2C DDR4/DDR5 `spd5118`/`jc42`/
+  `ee1004` devices) and other registered drivers. Disabled ACPI devices
+  (`status=0`) and ACPI companion nodes whose `physical_node` is already bound
+  are skipped; multicast `input:` handlers (`evdev`, `input_leds`) and
+  `hid_generic` fallbacks are resolved without false ambiguity.
+  Known standard controller and interface classes also identify NVMe, USB host
+  controllers, USB4, SDHCI, HD Audio, FireWire OHCI, USB audio/UVC video/CDC
+  ACM/CDC Ethernet/Bluetooth HCI without a loaded driver. PCI AHCI additionally
+  requires a block, SCSI or identified ATA device below that controller in
+  sysfs; an empty controller's bound driver or modalias alone does not add SATA
+  support. Unmounted disks, optical drives without media and devices awaiting a
+  block driver count as attached. An unbound controller or incomplete sysfs
+  cannot prove that its ports are empty: the script reports the missing
+  evidence, keeps baseline settings and honors `--enable-symbols=SATA_AHCI` for
+  hotplug or recovery. To remove previously enabled AHCI after verifying it is
+  unused, pass `--disable-symbols=SATA_AHCI`; Kconfig derives `SATA_HOST` from
+  the remaining drivers. Active SCSI disks/optical/tape drives, USB storage/UAS,
+  md RAID levels, dm layers (LVM thin/cache/snapshot/RAID/writecache/VDO,
+  multipath, LUKS, dm-integrity), and mounted local/network filesystems (with
+  VFAT NLS codepages/iocharsets) add their required support.
   `PCI_MSI` requires allocated interrupts in a detected PCI device's
   `msi_irqs`; posted MSI has the stronger `NATIVE_CPU` checks above.
 

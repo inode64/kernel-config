@@ -1234,9 +1234,19 @@ build_module_symbol_candidate_map() {
         # shellcheck disable=SC2016
         find_kbuild_files \
             | xargs -0 -r awk '
+                FNR == 1 { buf = "" }
                 {
                     line = $0
                     sub(/[[:space:]]*#.*/, "", line)
+                    if (buf != "") {
+                        line = buf " " line
+                        buf = ""
+                    }
+                    if (line ~ /\\$/) {
+                        sub(/\\$/, "", line)
+                        buf = line
+                        next
+                    }
                 }
 
                 line ~ /^[[:space:]]*obj-\$\(CONFIG_[A-Za-z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/ {
@@ -1250,8 +1260,9 @@ build_module_symbol_candidate_map() {
                     count = split(rest, items, /[[:space:]]+/)
                     for (i = 1; i <= count; i++) {
                         item = items[i]
-                        if (item ~ /^[^\/[:space:]]+\.o$/) {
+                        if (item ~ /^[^[:space:]]+\.o$/) {
                             module = item
+                            sub(/^.*\//, "", module)
                             sub(/\.o$/, "", module)
                             print sym "\t" module "\t" FILENAME
                         }
@@ -4381,20 +4392,32 @@ add_native_arch_driver_parents() {
         drivers/net/ethernet/*) parents=(NET NETDEVICES ETHERNET) ;;
         drivers/net/wireless/*) parents=(NET NETDEVICES WIRELESS WLAN CFG80211 MAC80211) ;;
         drivers/net/usb/*) parents=(NET NETDEVICES USB_SUPPORT USB USB_NET_DRIVERS) ;;
+        drivers/net/phy/*) parents=(NET NETDEVICES PHYLIB) ;;
         drivers/usb/*) parents=(USB_SUPPORT USB) ;;
         drivers/ata/*) parents=(BLOCK SCSI ATA) ;;
         drivers/scsi/*) parents=(BLOCK SCSI SCSI_LOWLEVEL) ;;
         drivers/nvme/*) parents=(BLOCK) ;;
+        drivers/mmc/*) parents=(MMC) ;;
+        drivers/md/*) parents=(BLOCK MD) ;;
         drivers/input/*) parents=(INPUT) ;;
         drivers/hid/*) parents=(INPUT HID) ;;
         drivers/char/tpm/*) parents=(TCG_TPM) ;;
         drivers/i2c/*) parents=(I2C) ;;
         drivers/spi/*) parents=(SPI) ;;
+        drivers/gpio/*) parents=(GPIOLIB) ;;
+        drivers/pinctrl/*) parents=(PINCTRL) ;;
         drivers/hwmon/*) parents=(HWMON) ;;
         drivers/watchdog/*) parents=(WATCHDOG) ;;
         drivers/bluetooth/*) parents=(NET BT) ;;
         drivers/rtc/*) parents=(RTC_CLASS) ;;
         drivers/gpu/drm/*) parents=(DRM) ;;
+        drivers/dma/*) parents=(DMADEVICES) ;;
+        drivers/crypto/*) parents=(CRYPTO CRYPTO_HW) ;;
+        drivers/media/*) parents=(MEDIA_SUPPORT) ;;
+        drivers/thunderbolt/*) parents=(USB4) ;;
+        drivers/infiniband/*) parents=(INFINIBAND) ;;
+        drivers/platform/x86/*) parents=(X86_PLATFORM_DEVICES) ;;
+        drivers/acpi/*) parents=(ACPI) ;;
         sound/*) parents=(SOUND SND) ;;
     esac
     # Network vendor menus vary between kernel versions; use the target's names.
@@ -4468,6 +4491,7 @@ configure_native_arch() {
         case "$kind" in
             notice) echo "    ($name: $evidence)" ;;
             symbol) add_native_arch_candidate "$name" symbol "$evidence" ;;
+            modsymbol) add_native_arch_candidate "$name" module "$evidence" ;;
             module | builtin)
                 read -r -a matches <<<"${modules_to_symbols[$name]:-}"
                 if ((${#matches[@]} != 1)); then

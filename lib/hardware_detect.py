@@ -101,10 +101,15 @@ class Aliases:
 
 
 BUS_PARENTS = {
-    "pci": ("PCI",), "usb": ("USB_SUPPORT", "USB"),
+    "pci": ("PCI",), "pci_express": ("PCI", "PCIEPORTBUS"),
+    "usb": ("USB_SUPPORT", "USB"),
     "scsi": ("BLOCK", "SCSI", "SCSI_LOWLEVEL"),
     "ata": ("BLOCK", "SCSI", "ATA"), "nvme": ("BLOCK",),
-    "i2c": ("I2C",), "spi": ("SPI",), "hid": ("INPUT", "HID"),
+    "i2c": ("I2C",), "i3c": ("I3C",), "spi": ("SPI",),
+    "hid": ("INPUT", "HID"), "serio": ("INPUT", "INPUT_SERIO"),
+    "hdaudio": ("SOUND", "SND", "SND_HDA"),
+    "mdio_bus": ("NET", "NETDEVICES", "PHYLIB"),
+    "wmi": ("ACPI", "ACPI_WMI"), "vmbus": ("HYPERV",),
     "virtio": ("VIRTIO_MENU",), "mmc": ("MMC",),
     "thunderbolt": ("USB4",), "firewire": ("FIREWIRE",),
 }
@@ -115,16 +120,80 @@ CLASS_PARENTS = {
     "tpm": ("TCG_TPM",), "gpio": ("GPIOLIB",), "pwm": ("PWM",),
     "bluetooth": ("BT",), "ieee80211": ("WIRELESS", "WLAN", "CFG80211"),
     "infiniband": ("INFINIBAND",), "dma": ("DMADEVICES",),
+    "powercap": ("POWERCAP",), "thermal": ("THERMAL",),
+    "video4linux": ("MEDIA_SUPPORT", "VIDEO_DEV"),
+    "leds": ("NEW_LEDS", "LEDS_CLASS"), "nvme": ("BLOCK",),
+    "ptp": ("PTP_1588_CLOCK",),
 }
 
 PCI_DRIVERS = {
     "0x010802": ("BLOCK", "BLK_DEV_NVME"),
     "0x010601": ("BLOCK", "SCSI", "ATA", "SATA_AHCI"),
+    "0x040300": ("SOUND", "SND", "SND_HDA_INTEL"),
+    "0x040380": ("SOUND", "SND", "SND_HDA_INTEL"),
+    "0x080500": ("MMC", "MMC_SDHCI", "MMC_SDHCI_PCI", "MMC_BLOCK"),
+    "0x080501": ("MMC", "MMC_SDHCI", "MMC_SDHCI_PCI", "MMC_BLOCK"),
+    "0x0c0010": ("FIREWIRE", "FIREWIRE_OHCI"),
     "0x0c0300": ("USB_SUPPORT", "USB", "USB_UHCI_HCD"),
     "0x0c0310": ("USB_SUPPORT", "USB", "USB_OHCI_HCD", "USB_OHCI_HCD_PCI"),
     "0x0c0320": ("USB_SUPPORT", "USB", "USB_EHCI_HCD", "USB_EHCI_PCI"),
     "0x0c0330": ("USB_SUPPORT", "USB", "USB_XHCI_HCD", "USB_XHCI_PCI"),
+    "0x0c0340": ("USB4",),
 }
+
+# PCI Express port service drivers live in drivers/pci/pcie/ under object names
+# (pme.o, bwctrl.o, aer.o, dpc.o) that do not match their runtime driver names.
+PCIE_SERVICE_DRIVERS = {
+    "pcie_pme": ("PCIEPORTBUS", "PCIE_PME"),
+    "aer": ("PCIEPORTBUS", "PCIEAER"),
+    "dpc": ("PCIEPORTBUS", "PCIE_DPC"),
+    "pciehp": ("PCIEPORTBUS", "HOTPLUG_PCI", "HOTPLUG_PCI_PCIE"),
+    "pcie_bwctrl": ("PCIEPORTBUS",),
+}
+
+# Always-built framework drivers with no standalone module Kconfig option.
+CORE_BUILTIN_DRIVERS = frozenset({"alarmtimer", "faux_driver"})
+
+# Structural ACPI firmware containers/resources that never bind a standalone driver.
+STRUCTURAL_ACPI_IDS = frozenset({
+    "ACPI0010", "LNXSYSTM", "LNXSYBUS", "LNXPOWER",
+    "PNP0000", "PNP0100", "PNP0103", "PNP0200",
+    "PNP0A03", "PNP0A08", "PNP0C01", "PNP0C02", "PNP0C0F",
+})
+
+# Well-known I2C memory/SPD sensors instantiated by i2c-smbus even when their
+# driver is absent from the running kernel.
+I2C_KNOWN_DRIVERS = {
+    "spd5118": (("I2C", "HWMON"), ("SENSORS_SPD5118",)),
+    "jc42": (("I2C", "HWMON"), ("SENSORS_JC42",)),
+    "ee1004": (("I2C",), ("EEPROM_EE1004",)),
+}
+
+# Local and network filesystems detected from /proc/self/mountinfo.
+LOCAL_FS_KCONFIG = {
+    "ext4": ("EXT4_FS",),
+    "xfs": ("XFS_FS",),
+    "btrfs": ("BTRFS_FS",),
+    "f2fs": ("F2FS_FS",),
+    "vfat": ("VFAT_FS",),
+    "jfs": ("JFS_FS",),
+}
+SECONDARY_FS_KCONFIG = {
+    "exfat": ((), ("EXFAT_FS",)),
+    "ntfs3": ((), ("NTFS3_FS",)),
+    "iso9660": ((), ("ISO9660_FS",)),
+    "udf": ((), ("UDF_FS",)),
+    "squashfs": ((), ("SQUASHFS",)),
+    "erofs": ((), ("EROFS_FS",)),
+    "overlay": ((), ("OVERLAY_FS",)),
+    "fuse": ((), ("FUSE_FS",)),
+    "nfs": (("NETWORK_FILESYSTEMS",), ("NFS_FS",)),
+    "nfs4": (("NETWORK_FILESYSTEMS",), ("NFS_FS", "NFS_V4")),
+    "cifs": (("NETWORK_FILESYSTEMS",), ("CIFS",)),
+    "smb3": (("NETWORK_FILESYSTEMS",), ("CIFS",)),
+    "ceph": (("NETWORK_FILESYSTEMS",), ("CEPH_FS",)),
+}
+BOOT_MOUNTPOINTS = frozenset({"/", "/boot", "/efi", "/boot/efi"})
 
 
 def serial_ports(host, kernel_srcdir):
@@ -295,10 +364,69 @@ def memory_ecc(host):
     return "unknown", "ECC data missing, conflicting, or an EDAC controller lacks a readable ECC mode"
 
 
+def _discover_mounts(host, symbols, modsymbols):
+    """Detect active local/network filesystems and VFAT NLS tables from mountinfo."""
+    mountinfo = host.read("/proc/self/mountinfo")
+    if not mountinfo:
+        return
+    for line in mountinfo.splitlines():
+        left, separator, right = line.partition(" - ")
+        if not separator:
+            continue
+        fields, tail = left.split(), right.split()
+        if len(fields) < 5 or len(tail) < 2:
+            continue
+        mountpoint, fstype = fields[4], tail[0]
+        opts = tail[2].split(",") if len(tail) >= 3 else []
+        evidence = f"/proc/self/mountinfo {mountpoint} ({fstype})"
+        if fstype in LOCAL_FS_KCONFIG:
+            emit = symbols if mountpoint in BOOT_MOUNTPOINTS else modsymbols
+            emit(LOCAL_FS_KCONFIG[fstype], evidence)
+            if fstype == "vfat":
+                nls = set()
+                for opt in opts:
+                    if opt == "utf8" or opt == "iocharset=utf8":
+                        nls.add("NLS_UTF8")
+                    elif opt == "iocharset=ascii":
+                        nls.add("NLS_ASCII")
+                    elif m := re.fullmatch(r"codepage=(\d+)", opt):
+                        nls.add(f"NLS_CODEPAGE_{m[1]}")
+                    elif m := re.fullmatch(r"iocharset=iso8859-(\d+)", opt):
+                        nls.add(f"NLS_ISO8859_{m[1]}")
+                    elif m := re.fullmatch(r"iocharset=cp(\d+)", opt):
+                        nls.add(f"NLS_CODEPAGE_{m[1]}")
+                if nls:
+                    symbols(("NLS",), evidence)
+                    modsymbols(sorted(nls), evidence)
+        elif fstype in SECONDARY_FS_KCONFIG or fstype.startswith("fuse."):
+            key = "fuse" if fstype.startswith("fuse.") else fstype
+            parents, mods = SECONDARY_FS_KCONFIG[key]
+            symbols(parents, evidence)
+            modsymbols(mods, evidence)
+            if fstype == "nfs4" and "vers=4.2" in opts:
+                symbols(("NFS_V4_2",), f"{evidence} vers=4.2")
+
+
+def _acpi_physical_node_bound(host, path):
+    for child in host.children(path):
+        if (child == "physical_node" or child.startswith("physical_node")) and host.link_name(f"{path}/{child}/driver"):
+            return True
+    return False
+
+
+def _is_structural_acpi_modalias(modalias):
+    if not modalias.startswith("acpi:"):
+        return False
+    ids = [part for part in modalias[5:].split(":") if part]
+    return bool(ids) and all(item in STRUCTURAL_ACPI_IDS for item in ids)
+
+
 def discover(host):
     aliases = Aliases(host)
     facts = set()
     devices = defaultdict(set)
+    seen_ambiguous = set()
+    seen_unresolved = set()
 
     def add(kind, value, evidence):
         facts.add((kind, value, re.sub(r"[\x00-\x1f\x7f]", " ", evidence)))
@@ -306,6 +434,17 @@ def discover(host):
     def symbols(names, evidence):
         for name in names:
             add("symbol", name, evidence)
+
+    def modsymbols(names, evidence):
+        for name in names:
+            add("modsymbol", name, evidence)
+
+    def emit_module(name, evidence):
+        name = name.replace("-", "_")
+        if name in CORE_BUILTIN_DRIVERS:
+            return
+        if re.fullmatch(r"[A-Za-z0-9_]+", name):
+            add("builtin" if name in aliases.builtin else "module", name, evidence)
 
     for namespace in ("bus", "class", "subsystem"):
         for subsystem in host.children(f"/sys/{namespace}"):
@@ -342,6 +481,8 @@ def discover(host):
         and not any(device.startswith(path + "/") for device in storage_paths)
     }
     for path, subsystems in sorted(resolved.items()):
+        if "acpi" in subsystems and host.read(path + "/status") == "0":
+            continue
         if any(path == controller or path.startswith(controller + "/")
                for controller in ahci_without_devices):
             if path in ahci_without_devices:
@@ -356,6 +497,9 @@ def discover(host):
         for subsystem in sorted(subsystems):
             symbols(BUS_PARENTS.get(subsystem, ()), path)
             symbols(CLASS_PARENTS.get(subsystem, ()), path)
+
+        handled = False
+        pci_class = ""
         if "pci" in subsystems:
             pci_class = host.read(path + "/class").lower()
             symbols(PCI_DRIVERS.get(pci_class, ()), f"{path} class={pci_class}")
@@ -367,15 +511,38 @@ def discover(host):
                 symbols(("PCI_MSI",), path + "/msi_irqs (allocated interrupts)")
         if "usb" in subsystems:
             interface_class = host.read(path + "/bInterfaceClass").lower()
+            interface_subclass = host.read(path + "/bInterfaceSubClass").lower()
+            interface_proto = host.read(path + "/bInterfaceProtocol").lower()
             if interface_class == "08":
                 symbols(("BLOCK", "SCSI", "USB_STORAGE"), path)
-                if host.read(path + "/bInterfaceProtocol").lower() == "62":
+                if interface_proto == "62":
                     symbols(("USB_UAS",), path)
             elif interface_class == "03":
                 symbols(("INPUT", "HID", "USB_HID"), path)
+            elif interface_class == "01":
+                symbols(("SOUND", "SND", "SND_USB"), path)
+                modsymbols(("SND_USB_AUDIO",), f"{path} usb class=01 (audio)")
+            elif interface_class == "0e":
+                symbols(("MEDIA_SUPPORT", "MEDIA_CAMERA_SUPPORT", "MEDIA_USB_SUPPORT", "VIDEO_DEV"), path)
+                modsymbols(("USB_VIDEO_CLASS",), f"{path} usb class=0e (UVC video)")
+            elif interface_class == "02":
+                if interface_subclass == "02":
+                    modsymbols(("USB_ACM",), f"{path} usb class=02/02 (CDC ACM)")
+                elif interface_subclass == "06":
+                    symbols(("NET", "NETDEVICES", "USB_NET_DRIVERS", "USB_USBNET"), path)
+                    modsymbols(("USB_NET_CDCETHER",), f"{path} usb class=02/06 (CDC Ethernet)")
+                elif interface_subclass == "0d":
+                    symbols(("NET", "NETDEVICES", "USB_NET_DRIVERS", "USB_USBNET"), path)
+                    modsymbols(("USB_NET_CDC_NCM",), f"{path} usb class=02/0d (CDC NCM)")
+            elif interface_class == "e0" and interface_subclass == "01" and interface_proto == "01":
+                symbols(("NET", "BT"), path)
+                modsymbols(("BT_HCIBTUSB",), f"{path} usb class=e0/01/01 (Bluetooth HCI)")
         if "scsi" in subsystems:
             scsi_type = host.read(path + "/type")
-            symbols({"0": ("BLK_DEV_SD",), "5": ("BLK_DEV_SR",)}.get(scsi_type, ()), path)
+            symbols({"0": ("BLK_DEV_SD",), "5": ("BLK_DEV_SR",),
+                     "14": ("BLK_DEV_SD",), "20": ("BLK_DEV_SD",)}.get(scsi_type, ()), path)
+            if scsi_type == "1":
+                modsymbols(("CHR_DEV_ST",), f"{path} scsi type=1 (tape)")
         if "block" in subsystems:
             level = host.read(path + "/md/level")
             uuid = host.read(path + "/dm/uuid")
@@ -388,6 +555,30 @@ def discover(host):
             if host.children(path + "/dm"):
                 layer = "crypt" if uuid.startswith("CRYPT-") else "lvm" if uuid.startswith("LVM-") else "dm"
                 symbols(("MD", *ROOT_LAYER_KCONFIG[layer]), path)
+                if uuid.startswith("mpath-"):
+                    modsymbols(("DM_MULTIPATH",), f"{path} dm/uuid=mpath")
+                elif uuid.startswith("INTEGRITY-"):
+                    modsymbols(("DM_INTEGRITY",), f"{path} dm/uuid=INTEGRITY")
+                elif uuid.startswith("LVM-"):
+                    if uuid.endswith(("-tpool", "-tdata", "-tmeta")):
+                        modsymbols(("DM_THIN_PROVISIONING",), f"{path} dm/uuid=LVM thin")
+                    elif uuid.endswith(("-cpool", "-cdata", "-cmeta")):
+                        modsymbols(("DM_CACHE",), f"{path} dm/uuid=LVM cache")
+                    elif uuid.endswith(("-cow", "-real")):
+                        modsymbols(("DM_SNAPSHOT",), f"{path} dm/uuid=LVM snapshot")
+                    elif uuid.endswith(("-wcache", "-wcorig")):
+                        modsymbols(("DM_WRITECACHE",), f"{path} dm/uuid=LVM writecache")
+                    elif uuid.endswith(("-vdo", "-vpool", "-vdata")):
+                        modsymbols(("DM_VDO",), f"{path} dm/uuid=LVM VDO")
+                    elif re.search(r"-(?:rimage|rmeta)_\d+$", uuid):
+                        modsymbols(("DM_RAID",), f"{path} dm/uuid=LVM RAID")
+        if "hwmon" in subsystems:
+            hwmon_name = host.read(path + "/name")
+            if hwmon_name == "drivetemp":
+                symbols(("HWMON", "SCSI", "ATA"), path)
+                modsymbols(("SENSORS_DRIVETEMP",), f"{path} hwmon=drivetemp")
+            elif hwmon_name == "nvme":
+                symbols(("HWMON", "NVME_HWMON"), f"{path} hwmon=nvme")
 
         module = host.link_name(path + "/driver/module")
         driver = host.link_name(path + "/driver")
@@ -396,20 +587,63 @@ def discover(host):
             for line in host.read(path + "/uevent").splitlines():
                 if line.startswith("MODALIAS="):
                     modalias = line.partition("=")[2]
+        if "pci_express" in subsystems and driver in PCIE_SERVICE_DRIVERS:
+            symbols(PCIE_SERVICE_DRIVERS[driver], f"{path} (bound {driver})")
+            handled = True
+        if "i2c" in subsystems and not module and not driver:
+            i2c_name = host.read(path + "/name").lower()
+            if not i2c_name and modalias.startswith("i2c:"):
+                i2c_name = modalias[4:].lower()
+            if i2c_name in I2C_KNOWN_DRIVERS:
+                parents, mods = I2C_KNOWN_DRIVERS[i2c_name]
+                symbols(parents, path)
+                modsymbols(mods, f"{path} i2c:{i2c_name}")
+                handled = True
+        if not handled and "mdio_bus" in subsystems and not module:
+            phy_id = host.read(path + "/phy_id")
+            if re.fullmatch(r"0x[0-9a-fA-F]{1,8}", phy_id) and not modalias:
+                modalias = f"mdio:{int(phy_id, 16):032b}"
+        if handled:
+            continue
+        if "acpi" in subsystems and not driver and not module and _acpi_physical_node_bound(host, path):
+            continue
+
         candidates = aliases.match(modalias) if modalias else set()
         if not module:
             if len(candidates) == 1:
                 module = candidates.pop()
             elif len(candidates) > 1:
-                add("notice", "ambiguous-alias", f"{path}: {' '.join(sorted(candidates))}")
+                if modalias.startswith("input:"):
+                    # Input handlers attach simultaneously rather than exclusively.
+                    for handler in ("evdev", "input_leds"):
+                        if handler in candidates:
+                            emit_module(handler, f"{path} (input handler)")
+                    continue
+                if modalias.startswith("hid:") and "hid_generic" in candidates:
+                    specific = candidates - {"hid_generic"}
+                    if len(specific) == 1:
+                        module = specific.pop()
+                    else:
+                        candidates = specific
+                if not module:
+                    key = ("cpu" if modalias.startswith("cpu:") else modalias, tuple(sorted(candidates)))
+                    if key not in seen_ambiguous:
+                        seen_ambiguous.add(key)
+                        add("notice", "ambiguous-alias", f"{path}: {' '.join(sorted(candidates))}")
             elif driver:
                 module = driver
             elif modalias:
-                add("notice", "unresolved-alias", f"{path}: {modalias}")
-        if module and re.fullmatch(r"[A-Za-z0-9_-]+", module):
-            module = module.replace("-", "_")
-            add("builtin" if module in aliases.builtin else "module", module,
-                f"{path} ({'bound driver' if driver else 'modalias'})")
+                if _is_structural_acpi_modalias(modalias) or (
+                    "pci" in subsystems and pci_class in {"0x060000", "0x080600"}
+                ):
+                    continue
+                if modalias not in seen_unresolved:
+                    seen_unresolved.add(modalias)
+                    add("notice", "unresolved-alias", f"{path}: {modalias}")
+        if module:
+            emit_module(module, f"{path} ({'bound driver' if driver else 'modalias'})")
+
+    _discover_mounts(host, symbols, modsymbols)
     return sorted(facts)
 
 
