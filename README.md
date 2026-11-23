@@ -604,8 +604,8 @@ These options change kernel build configuration and defaults. They do not create
 
 ### Virtualization and workload hints
 
-- `HOST_TYPE=none|baremetal|qemu|vmware|hyperv|virtualbox`
-  Tunes guest/virtualization drivers for the selected host type. `kvm` is accepted as an alias for `qemu`, and `native` as an alias for `baremetal`.
+- `HOST_TYPE=none|auto|baremetal|qemu|vmware|hyperv|virtualbox`
+  Tunes bare-metal or guest virtualization drivers for the selected host type. `kvm` is accepted as an alias for `qemu`, and `native` as an alias for `baremetal`. `auto` inspects `/proc/cpuinfo` (`hypervisor` flag), `/sys/hypervisor/type`, DMI strings, paravirtualized buses (`vmbus`, `xen`, `virtio`, `qemu_fw_cfg`) and VMware/VirtualBox PCI devices; unknown hypervisors or incomplete inventories leave the baseline untouched.
   On x86 with `CPU_IDLE=y`, `qemu` also enables `HALTPOLL_CPUIDLE` (which selects `CPU_IDLE_GOV_HALTPOLL`) so KVM guests poll briefly before halting instead of triggering unnecessary VM-exits and remote vCPU wakeup IPIs (`Documentation/virt/guest-halt-polling.rst`); other host types prune it.
   `hyperv` also keeps the synthetic keyboard, mouse and video drivers: `DRM_HYPERV` when the baseline has DRM, otherwise `FB_HYPERV` (re-enabled even if `PRUNE_LEGACY` disabled it as deprecated).
 
@@ -887,6 +887,9 @@ Several parameters support `auto`. Current detection logic is intentionally simp
 
 - `VIDEO_SUPPORT=auto`
   Tries `/sys/class/drm` first, then falls back to PCI vendor detection.
+
+- `HOST_TYPE=auto`
+  Reads `/proc/cpuinfo`, `/sys/hypervisor/type`, `/sys/class/dmi/id/*`, `/sys/bus/{vmbus,xen,virtio}/devices`, `/sys/firmware/qemu_fw_cfg` and VMware/VirtualBox PCI IDs; returns `unknown` (no changes) when virtualized on an unsupported hypervisor or when host identity is incomplete.
 
 - `UEFI_SUPPORT=auto`
   Checks `/sys/firmware/efi`.

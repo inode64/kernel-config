@@ -89,7 +89,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
 #   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, multipath, python, rasdaemon
-#   HOST_TYPE=none            -> none, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune guest-specific options
+#   HOST_TYPE=none            -> none, auto, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune bare-metal or guest-specific options
 #   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
 # Recommended:
@@ -260,6 +260,7 @@ Notes:
     on also enables -march=native (x86_64, kernel 6.16+; build on the target CPU).
   --native-arch (alias --nativer-arch) adds detected local device support; needs Python 3.11+.
   --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
+  --host-type accepts: none, auto, baremetal (alias: native), qemu (alias: kvm), vmware, hyperv, virtualbox.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
   --tpm-support accepts: none, auto, on, off.
@@ -2546,6 +2547,86 @@ resolve_platform_drivers() {
     esac
 }
 
+detect_host_type() {
+    local hypervisor_flag=0 has_cpuinfo=0 has_dmi=0
+    local hypervisor_type="" dmi_text="" sys_vendor="" product_name="" path line vendor device
+    local has_vmbus=0 has_xen=0 has_virtio=0 has_fw_cfg=0 has_vmware_pci=0 has_vbox_pci=0
+
+    if [[ -r "${HOST_ROOT}/sys/hypervisor/type" ]]; then
+        hypervisor_type="$(<"${HOST_ROOT}/sys/hypervisor/type")"
+        hypervisor_type="${hypervisor_type//[[:space:]]/}"
+    fi
+    if [[ -r "${HOST_ROOT}/proc/cpuinfo" ]]; then
+        while IFS= read -r line; do
+            case "$line" in
+                processor* | vendor_id*) has_cpuinfo=1 ;;
+                flags*)
+                    if [[ "$line" =~ (^|[[:space:]:])hypervisor([[:space:]]|$) ]]; then
+                        hypervisor_flag=1
+                    fi
+                    ;;
+            esac
+        done < "${HOST_ROOT}/proc/cpuinfo"
+    fi
+    for path in sys_vendor product_name board_vendor bios_vendor chassis_vendor; do
+        [[ -r "${HOST_ROOT}/sys/class/dmi/id/$path" ]] || continue
+        line="$(<"${HOST_ROOT}/sys/class/dmi/id/$path")"
+        line="${line//$'\n'/ }"
+        if [[ "$path" == sys_vendor ]]; then sys_vendor="$line"; fi
+        if [[ "$path" == product_name ]]; then product_name="$line"; fi
+        if [[ -n "${line//[[:space:]]/}" ]]; then
+            [[ "$path" == sys_vendor || "$path" == product_name ]] && has_dmi=1
+            dmi_text+=" $line"
+        fi
+    done
+    compgen -G "${HOST_ROOT}/sys/bus/vmbus/devices/*" >/dev/null && has_vmbus=1
+    compgen -G "${HOST_ROOT}/sys/bus/xen/devices/*" >/dev/null && has_xen=1
+    compgen -G "${HOST_ROOT}/sys/bus/virtio/devices/*" >/dev/null && has_virtio=1
+    [[ -d "${HOST_ROOT}/sys/firmware/qemu_fw_cfg" ]] && has_fw_cfg=1
+    while IFS= read -r -d '' path; do
+        [[ -r "$path/vendor" && -r "$path/device" ]] || continue
+        vendor="$(<"$path/vendor")"
+        device="$(<"$path/device")"
+        case "${vendor@L}:${device@L}" in
+            0x15ad:*) has_vmware_pci=1 ;;
+            0x80ee:0xcafe | 0x80ee:0xbeef) has_vbox_pci=1 ;;
+        esac
+    done < <(find "${HOST_ROOT}/sys/bus/pci/devices" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+
+    if [[ -n "$hypervisor_type" || "$has_xen" == 1 ]]; then
+        printf '%s\n' "unknown"
+        return
+    fi
+    if [[ "$has_vmbus" == 1 ]] \
+        || { [[ "$hypervisor_flag" == 1 ]] && [[ "${sys_vendor@L}" == *"microsoft corporation"* && "${product_name@L}" == *"virtual machine"* ]]; }; then
+        printf '%s\n' "hyperv"
+        return
+    fi
+    if [[ "$has_vmware_pci" == 1 || "${dmi_text@L}" == *"vmware"* ]]; then
+        printf '%s\n' "vmware"
+        return
+    fi
+    if [[ "$has_vbox_pci" == 1 || "${dmi_text@L}" == *"virtualbox"* || "${dmi_text@L}" == *"innotek gmbh"* ]]; then
+        printf '%s\n' "virtualbox"
+        return
+    fi
+    if [[ "$has_fw_cfg" == 1 ]] \
+        || { [[ "$hypervisor_flag" == 1 ]] && { [[ "$has_virtio" == 1 ]] || [[ "${dmi_text@L}" =~ (qemu|kvm|bochs|seabios|ovirt|rhev|openstack|proxmox) ]]; }; }; then
+        printf '%s\n' "qemu"
+        return
+    fi
+    if [[ "$hypervisor_flag" == 1 || "$has_virtio" == 1 ]] \
+        || [[ "${dmi_text@L}" =~ (qemu|kvm|bochs|virtual|xen|bhyve|parallels|amazon[[:space:]]+ec2|google[[:space:]]+compute[[:space:]]+engine|hvm[[:space:]]+domu) ]]; then
+        printf '%s\n' "unknown"
+        return
+    fi
+    if [[ "$has_cpuinfo" == 1 && "$has_dmi" == 1 ]]; then
+        printf '%s\n' "baremetal"
+        return
+    fi
+    printf '%s\n' "unknown"
+}
+
 resolve_host_type() {
     local mode
     # Assigned by init_tunable through printf -v.
@@ -2555,6 +2636,9 @@ resolve_host_type() {
     case "$mode" in
         "" | none)
             printf '%s\n' "none"
+            ;;
+        auto)
+            detect_host_type
             ;;
         baremetal | native)
             printf '%s\n' "baremetal"
@@ -2566,7 +2650,7 @@ resolve_host_type() {
             printf '%s\n' "$mode"
             ;;
         *)
-            echo "Invalid HOST_TYPE: $HOST_TYPE (use none, baremetal, qemu (or kvm), vmware, hyperv, or virtualbox)" >&2
+            echo "Invalid HOST_TYPE: $HOST_TYPE (use none, auto, baremetal, qemu (or kvm), vmware, hyperv, or virtualbox)" >&2
             exit 1
             ;;
     esac
@@ -5548,7 +5632,7 @@ configure_serial_support() {
     echo
     echo "==> Checking native serial ports"
     if ! native_arch_detection_allowed || ! is_x86_config \
-        || [[ "$HOST_TYPE_EFFECTIVE" != none && "$HOST_TYPE_EFFECTIVE" != baremetal ]]; then
+        || [[ "$HOST_TYPE_EFFECTIVE" != none && "$HOST_TYPE_EFFECTIVE" != baremetal && "$HOST_TYPE_EFFECTIVE" != unknown ]]; then
         echo "    Native UART pruning skipped for a different target or virtual machine"
         return 0
     fi
@@ -6874,7 +6958,12 @@ if [[ "$NR_CPUS_EFFECTIVE" != "none" ]]; then
 fi
 
 if [[ "$HOST_TYPE_EFFECTIVE" != "none" ]]; then
-    configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+    if [[ "$HOST_TYPE_EFFECTIVE" == "unknown" ]]; then
+        echo
+        echo "==> Could not detect host type; use HOST_TYPE=baremetal, qemu, vmware, hyperv, or virtualbox"
+    else
+        configure_host_type_profile "$HOST_TYPE_EFFECTIVE"
+    fi
 fi
 
 if [[ "$NATIVE_CPU_EFFECTIVE" != auto && "$NATIVE_CPU_EFFECTIVE" != on ]] \

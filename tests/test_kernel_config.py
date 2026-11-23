@@ -3079,6 +3079,58 @@ config HID_LED
         self.assert_success(self.run_script("--strict", "--native-arch", env=env))
         self.assert_symbol("EDAC_AMD64", "m")
 
+    def test_host_type_auto_detects_baremetal_hypervisors_and_unknown(self):
+        self.add_symbols("X86", "X86_64", "HYPERVISOR_GUEST", "PARAVIRT", "PARAVIRT_SPINLOCKS",
+                         "PARAVIRT_TIME_ACCOUNTING", "KVM_GUEST", "VIRTIO_MENU", "VIRTIO_PCI",
+                         "VMWARE_VMCI", "VMXNET3", "HYPERV", "HYPERV_VMBUS", "VIRT_DRIVERS",
+                         "VBOXGUEST", "VBOXSF_FS")
+        self.set_baseline_symbols(X86="y", X86_64="y", HYPERVISOR_GUEST="y", KVM_GUEST="y",
+                                  VMWARE_VMCI="n", HYPERV="n", VBOXGUEST="n")
+        env = self.make_host_root(cpuinfo="processor : 0\nvendor_id : AuthenticAMD\nflags : sse2\n",
+                                  sys_vendor="ASUS")
+        self.assert_success(self.run_script("--strict", "--host-type=auto", env=env))
+        self.assert_symbol("HYPERVISOR_GUEST", "n")
+        self.assert_symbol("KVM_GUEST", "n")
+        shutil.rmtree(self.root / "host")
+        self.set_baseline_symbols(HYPERVISOR_GUEST="n", KVM_GUEST="n", VMWARE_VMCI="y")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2 hypervisor\n", sys_vendor="QEMU")
+        self.assert_success(self.run_script("--strict", "--host-type=auto", env=env))
+        self.assert_symbol("KVM_GUEST", "y")
+        self.assert_symbol("VMWARE_VMCI", "n")
+        shutil.rmtree(self.root / "host")
+        self.set_baseline_symbols(HYPERVISOR_GUEST="n", KVM_GUEST="y", VMWARE_VMCI="n")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : hypervisor\n",
+                                  pci=[("0000:00:07.7", "0x15ad", "0x0740", "0x088000")])
+        self.assert_success(self.run_script("--strict", "--host-type=auto", env=env))
+        self.assert_symbol("VMWARE_VMCI", "y")
+        self.assert_symbol("KVM_GUEST", "n")
+        shutil.rmtree(self.root / "host")
+        self.set_baseline_symbols(HYPERVISOR_GUEST="n", HYPERV="n", KVM_GUEST="y")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : hypervisor\n")
+        (Path(env["KC_HOST_ROOT"]) / "sys/bus/vmbus/devices/vmbus0").mkdir(parents=True)
+        self.assert_success(self.run_script("--strict", "--host-type=auto", env=env))
+        self.assert_symbol("HYPERV", "y")
+        self.assert_symbol("KVM_GUEST", "n")
+        shutil.rmtree(self.root / "host")
+        self.set_baseline_symbols(HYPERVISOR_GUEST="n", VBOXGUEST="n", KVM_GUEST="y")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : hypervisor\n", sys_vendor="innotek GmbH")
+        self.assert_success(self.run_script("--strict", "--host-type=auto", env=env))
+        self.assert_symbol("VBOXGUEST", "y")
+        self.assert_symbol("KVM_GUEST", "n")
+        for setup in ("empty", "xen"):
+            with self.subTest(setup=setup):
+                shutil.rmtree(self.root / "host")
+                self.set_baseline_symbols(HYPERVISOR_GUEST="y", KVM_GUEST="y")
+                env = self.make_host_root()
+                if setup == "xen":
+                    hyp = Path(env["KC_HOST_ROOT"]) / "sys/hypervisor"
+                    hyp.mkdir(parents=True)
+                    (hyp / "type").write_text("xen\n")
+                result = self.run_script("--strict", "--host-type=auto", env=env)
+                self.assert_success(result)
+                self.assertIn("Could not detect host type", result.stdout)
+                self.assert_symbol("KVM_GUEST", "y")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):
