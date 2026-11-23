@@ -6668,14 +6668,6 @@ if is_enabled "$PRUNE_COVERAGE"; then
         discover_coverage_kconfig_symbols \
         GCOV_KERNEL \
         GCOV_PROFILE_ALL
-
-    # Branch Profiling lives inside `if FTRACE`; selecting BRANCH_PROFILE_NONE
-    # when FTRACE is off causes olddefconfig to drop it and fail strict mode.
-    if is_symbol_enabled_now FTRACE \
-        && ! { is_protected_config_symbol PROFILE_ANNOTATED_BRANCHES && is_symbol_enabled_now PROFILE_ANNOTATED_BRANCHES; } \
-        && ! { is_protected_config_symbol PROFILE_ALL_BRANCHES && is_symbol_enabled_now PROFILE_ALL_BRANCHES; }; then
-        select_if_present BRANCH_PROFILE_NONE PROFILE_ANNOTATED_BRANCHES PROFILE_ALL_BRANCHES
-    fi
 fi
 
 if is_enabled "$PRUNE_FAULT_INJECTION"; then
@@ -6767,13 +6759,6 @@ if is_enabled "$PRUNE_OBSERVABILITY"; then
         TRACEPOINTS \
         TRACING \
         UPROBE_EVENTS
-
-    # Only select BRANCH_PROFILE_NONE when FTRACE remains enabled (e.g. protected).
-    if is_symbol_enabled_now FTRACE \
-        && ! { is_protected_config_symbol PROFILE_ANNOTATED_BRANCHES && is_symbol_enabled_now PROFILE_ANNOTATED_BRANCHES; } \
-        && ! { is_protected_config_symbol PROFILE_ALL_BRANCHES && is_symbol_enabled_now PROFILE_ALL_BRANCHES; }; then
-        select_if_present BRANCH_PROFILE_NONE PROFILE_ANNOTATED_BRANCHES PROFILE_ALL_BRANCHES
-    fi
 fi
 
 if is_enabled "$PRUNE_LEGACY"; then
@@ -6906,6 +6891,18 @@ if is_enabled "$PRUNE_DEBUG_TRACE" || is_enabled "$PRUNE_COVERAGE"; then
         && ! { is_protected_config_symbol DEBUG_INFO_DWARF5 && is_symbol_enabled_now DEBUG_INFO_DWARF5; }; then
         echo "Selecting: CONFIG_DEBUG_INFO_NONE"
         select_if_present DEBUG_INFO_NONE DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT DEBUG_INFO_DWARF4 DEBUG_INFO_DWARF5
+    fi
+fi
+
+# Branch Profiling lives inside `if FTRACE`. Run after PRUNE_OBSERVABILITY and
+# PRUNE_DEBUG_TRACE so BRANCH_PROFILE_NONE is only selected when FTRACE remains
+# enabled (e.g. protected or only pruning coverage).
+if is_enabled "$PRUNE_COVERAGE" || is_enabled "$PRUNE_OBSERVABILITY" || is_enabled "$PRUNE_DEBUG_TRACE"; then
+    if is_symbol_enabled_now FTRACE \
+        && [[ "${_EXPLICIT_SYMBOL_VALUES[FTRACE]:-}" != n ]] \
+        && ! { is_protected_config_symbol PROFILE_ANNOTATED_BRANCHES && is_symbol_enabled_now PROFILE_ANNOTATED_BRANCHES; } \
+        && ! { is_protected_config_symbol PROFILE_ALL_BRANCHES && is_symbol_enabled_now PROFILE_ALL_BRANCHES; }; then
+        select_if_present BRANCH_PROFILE_NONE PROFILE_ANNOTATED_BRANCHES PROFILE_ALL_BRANCHES
     fi
 fi
 

@@ -933,6 +933,25 @@ endmenu
         self.assert_symbol("FTRACE", "y")
         self.assert_symbol("BRANCH_PROFILE_NONE", "y")
         self.assert_symbol("PROFILE_ALL_BRANCHES", "n")
+        # When PRUNE_COVERAGE runs alone with FTRACE=y, BRANCH_PROFILE_NONE is selected.
+        self.config.write_text(self.baseline)
+        self.assert_success(self.run_script("--strict", "--prune-coverage"))
+        self.assert_symbol("FTRACE", "y")
+        self.assert_symbol("BRANCH_PROFILE_NONE", "y")
+        self.assert_symbol("PROFILE_ALL_BRANCHES", "n")
+        # Combining PRUNE_COVERAGE with PRUNE_OBSERVABILITY or PRUNE_DEBUG_TRACE
+        # disables FTRACE, so BRANCH_PROFILE_NONE must not be requested and dropped.
+        for extra, removed in (
+            ("--prune-observability", "BRANCH_PROFILE_NONE"),
+            ("--prune-debug-trace", "DEBUG_INFO_NONE BRANCH_PROFILE_NONE"),
+        ):
+            with self.subTest(extra=extra):
+                self.config.write_text(self.baseline)
+                self.assert_success(self.run_script(
+                    "--strict", "--prune-coverage", extra,
+                    env={"REMOVE_SYMBOLS": removed},
+                ))
+                self.assert_symbol("FTRACE", "n")
 
     def test_legacy_pruning_preserves_af_alg_application_abi(self):
         with (self.tree / "Kconfig").open("a") as stream:
