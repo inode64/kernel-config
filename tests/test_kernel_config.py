@@ -3157,6 +3157,37 @@ config HID_LED
         self.assert_symbol("DRM_AMDGPU", "m")
         self.assert_symbol("DRM_AST", "m")
 
+    def test_platform_drivers_amd_fch_intel_icx_edac_and_ipmi_ssif(self):
+        self.add_symbols("X86", "X86_64", "MODULES", "RAS", "EDAC", "X86_MCE", "X86_MCE_INTEL",
+                         "X86_MCE_AMD", "I2C", "WATCHDOG", "HWMON")
+        self.add_symbols("I2C_PIIX4", "SP5100_TCO", "SENSORS_K10TEMP", "EDAC_I10NM",
+                         "IPMI_HANDLER", "IPMI_DEVICE_INTERFACE", "IPMI_SSIF", "IPMI_SI", "ACPI_IPMI",
+                         kind="tristate")
+        self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO,
+                                  pci=[("0000:00:14.0", "0x1022", "0x790b", "0x0c0500")])
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("I2C_PIIX4", "m")
+        self.assert_symbol("SP5100_TCO", "m")
+        for model in (106, 108, 134):
+            with self.subTest(model=model):
+                shutil.rmtree(self.root / "host", ignore_errors=True)
+                self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y", EDAC_I10NM="n")
+                cpu = f"processor : 0\nvendor_id : GenuineIntel\ncpu family : 6\nmodel : {model}\n\n"
+                env = self.make_host_root(cpuinfo=cpu, memory=memory_table())
+                self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+                self.assert_symbol("EDAC_I10NM", "m")
+        shutil.rmtree(self.root / "host", ignore_errors=True)
+        self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y", IPMI_SSIF="n", IPMI_SI="n")
+        env = self.make_host_root()
+        entry = Path(env["KC_HOST_ROOT"]) / "sys/firmware/dmi/entries/38-0"
+        entry.mkdir(parents=True)
+        (entry / "raw").write_bytes(bytes((38, 16, 1, 0, 4)) + b"\0" * 11)
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("I2C", "y")
+        self.assert_symbol("IPMI_SSIF", "m")
+        self.assert_symbol("IPMI_SI", "n")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):

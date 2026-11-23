@@ -90,7 +90,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   PROTECTED_CONFIG_SYMBOLS  -> comma-separated config symbols the script must not alter; defaults to CONFIG_ARCH_PKEY_BITS
 #   APPLICATIONS=none         -> comma-separated app profiles: desktop, multimedia, rocm, nebula, warp, samba, firehol, firewalld, iptables-legacy, openvswitch, ceph, nfs-client, nfs-server, openvpn, wireguard, docker, qemu, atop, bmon, btop, htop, iotop-c, cryptsetup, multipath, python, rasdaemon
 #   HOST_TYPE=none            -> none, auto, baremetal, qemu (alias: kvm), vmware, hyperv, virtualbox; tune bare-metal or guest-specific options
-#   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, SMBus, PCH watchdog and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
+#   PLATFORM_DRIVERS=none     -> none, auto; auto enables IPMI, ACPI power meter, vendor (HP iLO/Dell), EDAC, Intel/AMD SMBus and watchdog, and CPU sensor drivers evidenced by /sys and /proc/cpuinfo
 #
 # Recommended:
 #   ./kernel-config.sh /path/to/kernel
@@ -5747,14 +5747,33 @@ request_module_or_builtin() {
     fi
 }
 
+platform_dmi_ipmi_interface() {
+    local path iface=""
+    for path in "${HOST_ROOT}/sys/firmware/dmi/entries/38-"*/raw; do
+        [[ -r "$path" ]] || continue
+        iface="$(od -An -j 4 -N 1 -t u1 "$path" 2>/dev/null || true)"
+        iface="${iface//[[:space:]]/}"
+        if [[ "$iface" =~ ^[0-9]+$ ]]; then
+            printf '%s\n' "$iface"
+            return 0
+        fi
+    done
+    return 1
+}
+
 collect_platform_ipmi_requests() {
-    local ipi power_meter reason=""
+    local ipi power_meter reason="" dmi_iface=""
     ipi="$(platform_acpi_instances IPI0001)"
     power_meter="$(platform_acpi_instances ACPI000D)"
     if [[ -n "$ipi" ]]; then
         reason="$ipi"
     elif platform_dmi_has_entry_type 38; then
-        reason="DMI type 38 (IPMI device)"
+        dmi_iface="$(platform_dmi_ipmi_interface || true)"
+        if [[ "$dmi_iface" == 4 ]]; then
+            reason="DMI type 38 (IPMI SSIF device)"
+        else
+            reason="DMI type 38 (IPMI device)"
+        fi
     elif [[ -n "$power_meter" ]]; then
         # acpi_power_meter's _PMM reads an IPMI OperationRegion; without acpi_ipmi the
         # kernel logs "No handler for Region [POWR] [IPMI]" on every hwmon read.
@@ -5762,7 +5781,12 @@ collect_platform_ipmi_requests() {
     fi
     if [[ -n "$reason" ]]; then
         add_platform_parents IPMI_HANDLER
-        add_platform_request "$reason" IPMI_HANDLER IPMI_DEVICE_INTERFACE IPMI_SI ACPI_IPMI
+        if [[ "$dmi_iface" == 4 ]]; then
+            add_platform_parents I2C
+            add_platform_request "$reason" IPMI_HANDLER IPMI_DEVICE_INTERFACE IPMI_SSIF ACPI_IPMI
+        else
+            add_platform_request "$reason" IPMI_HANDLER IPMI_DEVICE_INTERFACE IPMI_SI ACPI_IPMI
+        fi
     fi
     if [[ -n "$power_meter" ]]; then
         add_platform_parents HWMON
@@ -5824,7 +5848,7 @@ collect_platform_edac_requests() {
             case "$model" in
                 45 | 62 | 63 | 79 | 86 | 87 | 133) driver=EDAC_SBRIDGE ;;   # SNB/IVB/HSW/BDW-X, BDW-D, KNL, KNM
                 85) driver=EDAC_SKX ;;                                      # Skylake-X
-                143 | 207 | 173 | 174 | 175 | 182 | 221) driver=EDAC_I10NM ;; # SPR, EMR, GNR-X/D, SRF, Grand Ridge, CWF
+                106 | 108 | 134 | 143 | 207 | 173 | 174 | 175 | 182 | 221) driver=EDAC_I10NM ;; # ICX/ICX-D, SNR, SPR, EMR, GNR-X/D, SRF, Grand Ridge, CWF
             esac
             if [[ -n "$driver" ]]; then
                 add_platform_parents "${parents[@]}" X86_MCE_INTEL
@@ -5854,17 +5878,28 @@ collect_platform_edac_requests() {
 collect_platform_pch_requests() {
     local pci_table="$1" cpu_vendor="$2" bdf vendor device class
     while IFS=$'\t' read -r bdf vendor device class; do
-        [[ "$vendor" == 0x8086 ]] || continue
-        case "$class" in
-            0c0500)
-                add_platform_parents I2C
-                add_platform_request "PCI $bdf 8086:${device#0x} (SMBus)" I2C_I801
+        case "$vendor:$device" in
+            0x8086:*)
+                case "$class" in
+                    0c0500)
+                        add_platform_parents I2C
+                        add_platform_request "PCI $bdf 8086:${device#0x} (SMBus)" I2C_I801
+                        ;;
+                    0601*)
+                        add_platform_parents WATCHDOG
+                        add_platform_request "PCI $bdf 8086:${device#0x} (LPC/eSPI bridge)" ITCO_WDT
+                        # ITCO_WDT selects LPC_ICH only when EXPERT=n.
+                        is_symbol_enabled_now EXPERT && add_platform_request "PCI $bdf 8086:${device#0x} (LPC/eSPI bridge, EXPERT=y)" LPC_ICH
+                        ;;
+                esac
                 ;;
-            0601*)
-                add_platform_parents WATCHDOG
-                add_platform_request "PCI $bdf 8086:${device#0x} (LPC/eSPI bridge)" ITCO_WDT
-                # ITCO_WDT selects LPC_ICH only when EXPERT=n.
-                is_symbol_enabled_now EXPERT && add_platform_request "PCI $bdf 8086:${device#0x} (LPC/eSPI bridge, EXPERT=y)" LPC_ICH
+            # AMD/ATI/Hygon FCH SMBus devices (drivers/i2c/busses/i2c-piix4.c and
+            # drivers/watchdog/sp5100_tco.c). sp5100_tco does not register a pci_driver
+            # so i2c-piix4 can bind to the same PCI function.
+            0x1022:0x790b | 0x1022:0x780b | 0x1d94:0x790b | 0x1002:0x4385)
+                add_platform_parents I2C WATCHDOG
+                add_platform_request "PCI $bdf ${vendor#0x}:${device#0x} (FCH SMBus)" I2C_PIIX4
+                add_platform_request "PCI $bdf ${vendor#0x}:${device#0x} (FCH TCO watchdog)" SP5100_TCO
                 ;;
         esac
     done <<<"$pci_table"
