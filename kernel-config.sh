@@ -1234,6 +1234,74 @@ build_module_symbol_candidate_map() {
         # shellcheck disable=SC2016
         find_kbuild_files \
             | xargs -0 -r awk '
+                function parse_delegated_subdir(sym, sub_dir,    sub_file, sline, sbuf, srest, scount, si, sitem, has_cond, has_sub, obj_count, only_obj, mod, has_comp, has_self) {
+                    sub_file = sub_dir "/Kbuild"
+                    if ((getline sline < sub_file) < 0) {
+                        close(sub_file)
+                        sub_file = sub_dir "/Makefile"
+                        if ((getline sline < sub_file) < 0) {
+                            close(sub_file)
+                            return
+                        }
+                    }
+                    has_cond = 0
+                    has_sub = 0
+                    obj_count = 0
+                    only_obj = ""
+                    has_comp = 0
+                    has_self = 0
+                    sbuf = ""
+                    do {
+                        sub(/[[:space:]]*#.*/, "", sline)
+                        if (sbuf != "") {
+                            sline = sbuf " " sline
+                            sbuf = ""
+                        }
+                        if (sline ~ /\\$/) {
+                            sub(/\\$/, "", sline)
+                            sbuf = sline
+                            continue
+                        }
+                        if (sline ~ /^[[:space:]]*obj-\$\(CONFIG_[A-Za-z0-9_]+\)[[:space:]]*[-+?:]?=/) {
+                            has_cond = 1
+                            if (index(sline, "CONFIG_" sym ")") > 0) {
+                                has_self = 1
+                            }
+                        } else if (sline ~ /^[[:space:]]*obj-[ym][[:space:]]*[-+?:]?=[[:space:]]*/) {
+                            srest = sline
+                            sub(/^[[:space:]]*obj-[ym][[:space:]]*[-+?:]?=[[:space:]]*/, "", srest)
+                            scount = split(srest, sitems, /[[:space:]]+/)
+                            for (si = 1; si <= scount; si++) {
+                                sitem = sitems[si]
+                                if (sitem == "") continue
+                                if (sitem ~ /\/$/) {
+                                    has_sub = 1
+                                } else if (sitem ~ /^[^[:space:]]+\.o$/) {
+                                    obj_count++
+                                    only_obj = sitem
+                                }
+                            }
+                        } else if (sline ~ /^[[:space:]]*[A-Za-z0-9_-]+-(y|objs)[[:space:]]*[-+?:]?=/) {
+                            srest = sline
+                            sub(/^[[:space:]]*/, "", srest)
+                            sub(/-(y|objs)[[:space:]]*[-+?:]?=.*/, "", srest)
+                            comp_targets[srest] = 1
+                        }
+                    } while ((getline sline < sub_file) > 0)
+                    close(sub_file)
+
+                    if (!has_sub && !has_self && obj_count == 1) {
+                        mod = only_obj
+                        sub(/^.*\//, "", mod)
+                        sub(/\.o$/, "", mod)
+                        has_comp = (mod in comp_targets)
+                        if (!has_cond || has_comp) {
+                            print "delegated\t" sym "\t" mod "\t" sub_file
+                        }
+                    }
+                    delete comp_targets
+                }
+
                 FNR == 1 { buf = "" }
                 {
                     line = $0
@@ -1257,6 +1325,9 @@ build_module_symbol_candidate_map() {
                     rest = line
                     sub(/^[[:space:]]*obj-\$\(CONFIG_[A-Za-z0-9_]+\)[[:space:]]*[-+?:]?=[[:space:]]*/, "", rest)
 
+                    parent_dir = FILENAME
+                    sub(/\/[^\/]+$/, "", parent_dir)
+
                     count = split(rest, items, /[[:space:]]+/)
                     for (i = 1; i <= count; i++) {
                         item = items[i]
@@ -1264,7 +1335,33 @@ build_module_symbol_candidate_map() {
                             module = item
                             sub(/^.*\//, "", module)
                             sub(/\.o$/, "", module)
-                            print sym "\t" module "\t" FILENAME
+                            print "direct\t" sym "\t" module "\t" FILENAME
+                        } else if (item ~ /^[^[:space:]$]+\/$/) {
+                            sub_dir = parent_dir "/" item
+                            sub(/\/$/, "", sub_dir)
+                            parse_delegated_subdir(sym, sub_dir)
+                        }
+                    }
+                }
+            ' \
+            | awk -F '\t' '
+                $1 == "direct" {
+                    norm = $3
+                    gsub(/-/, "_", norm)
+                    direct_mod[norm] = 1
+                    print $2 "\t" $3 "\t" $4
+                    next
+                }
+                $1 == "delegated" {
+                    d[++n] = $0
+                }
+                END {
+                    for (i = 1; i <= n; i++) {
+                        split(d[i], f, "\t")
+                        norm = f[3]
+                        gsub(/-/, "_", norm)
+                        if (!(norm in direct_mod)) {
+                            print f[2] "\t" f[3] "\t" f[4]
                         }
                     }
                 }

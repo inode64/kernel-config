@@ -357,7 +357,8 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   `/proc/self/mountinfo`. It uses each device's bound module or its modalias
   (including MDIO `phy_id` aliases) and the running kernel's installed module
   metadata, then reuses the target tree's Kbuild module-to-symbol map (joining
-  line continuations and relative object paths). This covers PCI/PCIe port
+  line continuations, relative object paths and single-module subdirectory
+  delegations). This covers PCI/PCIe port
   services/USB, SATA/NVMe/SCSI, SD/MMC, USB4/Thunderbolt, network/MDIO PHYs and
   wireless devices, TPM transports, graphics, sound, input, sensors (including
   active `drivetemp`/`nvme` hwmon, `powercap` RAPL domains, standard active

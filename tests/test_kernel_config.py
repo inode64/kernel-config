@@ -3360,6 +3360,54 @@ config HID_LED
                                             "--disable-symbols=SENSORS_SPD5118", env=env))
         self.assert_symbol("SENSORS_SPD5118", "n")
 
+    def test_native_arch_kbuild_subdirectory_delegated_modules(self):
+        self.add_symbols("MODULES", "BLK_DEV_INITRD")
+        self.add_symbols("TEST_SUBDIR_MOD", "TEST_COMP_MOD", "TEST_DIRECT_MOD",
+                         "TEST_MULTI_PARENT", "TEST_CHILD_A", "TEST_CHILD_B", kind="tristate")
+        # Pure single-module subdir delegation: obj-$(CONFIG_TEST_SUBDIR_MOD) += sub/
+        parent = self.tree / "drivers/misc"
+        (parent / "sub").mkdir(parents=True)
+        (parent / "comp").mkdir(parents=True)
+        (parent / "multi").mkdir(parents=True)
+        (parent / "colliding").mkdir(parents=True)
+        (parent / "Makefile").write_text(
+            "obj-$(CONFIG_TEST_SUBDIR_MOD) += sub/\n"
+            "obj-$(CONFIG_TEST_COMP_MOD) += comp/\n"
+            "obj-$(CONFIG_TEST_MULTI_PARENT) += multi/ colliding/\n"
+            "obj-$(CONFIG_TEST_DIRECT_MOD) += shared-mod.o\n"
+        )
+        (parent / "sub/Makefile").write_text("obj-y += deleg-mod.o\n")
+        # Composite single module in subdir with an optional kunit rule still maps to TEST_COMP_MOD.
+        (parent / "comp/Makefile").write_text(
+            "obj-y += comp-mod.o\n"
+            "comp-mod-y := a.o b.o\n"
+            "obj-$(CONFIG_TEST_CHILD_A) += comp-test.o\n"
+        )
+        # Multi-driver subsystem directory must NOT collapse its children onto TEST_MULTI_PARENT.
+        (parent / "multi/Makefile").write_text(
+            "obj-$(CONFIG_TEST_CHILD_A) += child-a.o\n"
+            "obj-$(CONFIG_TEST_CHILD_B) += child-b.o\n"
+        )
+        # Delegated object whose name collides with a direct mapping must not hijack it.
+        (parent / "colliding/Makefile").write_text("obj-y += shared-mod.o\n")
+        self.set_baseline_symbols(
+            MODULES="y", BLK_DEV_INITRD="y",
+            TEST_SUBDIR_MOD="n", TEST_COMP_MOD="n", TEST_DIRECT_MOD="n",
+            TEST_MULTI_PARENT="n", TEST_CHILD_A="n", TEST_CHILD_B="n",
+        )
+        env = self.make_host_root()
+        host = Path(env["KC_HOST_ROOT"])
+        for dev, mod in (("d1", "deleg_mod"), ("d2", "comp_mod"), ("d3", "shared_mod")):
+            drv = host / f"sys/bus/platform/devices/{dev}/driver"
+            drv.mkdir(parents=True)
+            (drv / "module").symlink_to(f"/sys/module/{mod}")
+        self.assert_success(self.run_script("--strict", "--native-arch", "--native-cpu=none",
+                                            "--platform-drivers=none", env=env))
+        self.assert_symbol("TEST_SUBDIR_MOD", "m")
+        self.assert_symbol("TEST_COMP_MOD", "m")
+        self.assert_symbol("TEST_DIRECT_MOD", "m")
+        self.assert_symbol("TEST_MULTI_PARENT", "n")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):
