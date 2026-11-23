@@ -4150,6 +4150,25 @@ detect_host_posted_msi_support() {
     REPLY="$count Intel VT-d units support interrupt remapping and posted interrupts; CPU has cx16"
 }
 
+_request_native_crypto_accel() {
+    local sym="$1" flag="$2" req="$3" label="$4"
+    [[ "${_EXPLICIT_SYMBOL_VALUES[$sym]:-}" != n ]] || return 0
+    ! is_protected_config_symbol "$sym" || return 0
+    have_symbol "$sym" || return 0
+    if is_symbol_enabled_now KMSAN \
+        || [[ "${_SYMBOL_VALUE_CACHE[CRYPTO]:-n}" == n ]] \
+        || [[ "${_SYMBOL_VALUE_CACHE[$req]:-n}" == n ]] \
+        || ! kconfig_depends_met "$sym"; then
+        echo "    ($label skipped: $req/crypto dependencies are disabled or KMSAN is enabled)"
+        return 0
+    fi
+    if host_has_x86_cpu_flag "$flag"; then
+        request_module_or_builtin "$sym" "CPU flag $flag on every visible CPU"
+    else
+        echo "    ($label skipped: CPU flag $flag is not confirmed on every visible CPU)"
+    fi
+}
+
 configure_native_acceleration() {
     echo
     echo "==> Detecting local hardware acceleration"
@@ -4180,6 +4199,17 @@ configure_native_acceleration() {
         fi
     fi
 
+    # On 6.12-6.18 trees where arch-specific crypto modules still exist, enable
+    # them only when the base algorithm is already enabled and every CPU confirms
+    # the required instruction set. On newer trees these symbols are absent.
+    _request_native_crypto_accel CRYPTO_GHASH_CLMUL_NI_INTEL pclmulqdq CRYPTO_GHASH "GHASH CLMUL-NI"
+    _request_native_crypto_accel CRYPTO_POLYVAL_CLMUL_NI pclmulqdq CRYPTO_POLYVAL "POLYVAL CLMUL-NI"
+    _request_native_crypto_accel CRYPTO_SHA1_SSSE3 ssse3 CRYPTO_SHA1 "SHA-1 SSSE3/SHA-NI"
+    _request_native_crypto_accel CRYPTO_SHA256_SSSE3 ssse3 CRYPTO_SHA256 "SHA-256 SSSE3/SHA-NI"
+    _request_native_crypto_accel CRYPTO_SHA512_SSSE3 ssse3 CRYPTO_SHA512 "SHA-512 SSSE3"
+    _request_native_crypto_accel CRYPTO_CRC32C_INTEL sse4_2 CRYPTO_CRC32C "CRC32C SSE4.2"
+    _request_native_crypto_accel CRYPTO_CRCT10DIF_PCLMUL pclmulqdq CRC_T10DIF "CRC-T10DIF PCLMUL"
+
     # Check after overrides; disabling PCI MSI can leave IRQ_REMAP stale until
     # olddefconfig. Hardware registers provide evidence that Kconfig cannot.
     if [[ "${_EXPLICIT_SYMBOL_VALUES[X86_POSTED_MSI]:-}" != n ]] \
@@ -4201,6 +4231,7 @@ configure_native_acceleration() {
 
 configure_native_cpu_features() {
     local sym vendor path driver idle
+    local -A seen_scaling_drivers=()
     if host_has_x86_cpu_flag x2apic; then
         configure_x86_x2apic
     else
@@ -4210,6 +4241,24 @@ configure_native_cpu_features() {
         && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_FRED]:-}" != n ]] \
         && kconfig_depends_met X86_FRED; then
         enable_if_present X86_FRED
+    fi
+    if ! is_enabled "$PRUNE_HARDENING"; then
+        if host_has_x86_cpu_flag umip \
+            && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_UMIP]:-}" != n ]] \
+            && have_symbol X86_UMIP && [[ -n "${_KCONFIG_PROMPTS[X86_UMIP]:-}" ]] \
+            && kconfig_depends_met X86_UMIP; then
+            enable_if_present X86_UMIP
+        fi
+        if host_has_x86_cpu_flag pku \
+            && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_INTEL_MEMORY_PROTECTION_KEYS]:-}" != n ]] \
+            && kconfig_depends_met X86_INTEL_MEMORY_PROTECTION_KEYS; then
+            enable_if_present X86_INTEL_MEMORY_PROTECTION_KEYS
+        fi
+        if host_has_x86_cpu_flag user_shstk \
+            && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_USER_SHADOW_STACK]:-}" != n ]] \
+            && kconfig_depends_met X86_USER_SHADOW_STACK; then
+            enable_if_present X86_USER_SHADOW_STACK
+        fi
     fi
     if host_has_x86_cpu_flag mce && host_has_x86_cpu_flag mca \
         && [[ "${_EXPLICIT_SYMBOL_VALUES[X86_MCE]:-}" != n ]] \
@@ -4231,9 +4280,11 @@ configure_native_cpu_features() {
     for path in "${HOST_ROOT}"/sys/devices/system/cpu/cpufreq/policy*/scaling_driver; do
         [[ -r "$path" ]] || continue
         driver="$(<"$path")"
+        [[ -n "$driver" && ! -v seen_scaling_drivers[$driver] ]] || continue
+        seen_scaling_drivers["$driver"]=1
         case "$driver" in
             intel_pstate | intel_cpufreq) sym=X86_INTEL_PSTATE ;;
-            amd-pstate | amd-pstate-epp) sym=X86_AMD_PSTATE ;;
+            amd-pstate | amd-pstate-epp | amd_pstate) sym=X86_AMD_PSTATE ;;
             acpi-cpufreq) sym=X86_ACPI_CPUFREQ ;;
             *) continue ;;
         esac
@@ -4248,11 +4299,17 @@ configure_native_cpu_features() {
     path="${HOST_ROOT}/sys/devices/system/cpu/cpuidle/current_driver"
     if [[ -r "$path" ]]; then
         idle="$(<"$path")"
-        if [[ "$idle" == intel_idle && "${_EXPLICIT_SYMBOL_VALUES[CPU_IDLE]:-}" != n \
-            && "${_EXPLICIT_SYMBOL_VALUES[INTEL_IDLE]:-}" != n ]] && kconfig_depends_met CPU_IDLE; then
+        case "$idle" in
+            intel_idle) sym=INTEL_IDLE ;;
+            haltpoll) sym=HALTPOLL_CPUIDLE ;;
+            *) sym="" ;;
+        esac
+        if [[ -n "$sym" && "${_EXPLICIT_SYMBOL_VALUES[CPU_IDLE]:-}" != n \
+            && "${_EXPLICIT_SYMBOL_VALUES[$sym]:-}" != n ]] && kconfig_depends_met CPU_IDLE; then
             enable_parents_if_present CPU_IDLE
-            if kconfig_depends_met INTEL_IDLE; then
-                enable_if_present INTEL_IDLE
+            if kconfig_depends_met "$sym"; then
+                echo "    (active CPU idle driver: $idle)"
+                enable_if_present "$sym"
             fi
         fi
     fi

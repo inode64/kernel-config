@@ -291,7 +291,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   an invalid native-compilation request. Run detection on the intended machine,
   or supply a captured host tree through `KC_HOST_ROOT` for offline analysis.
 
-  - **AES-NI/VAES:** `CRYPTO_AES_NI_INTEL` is made available only when `aes`
+  - **AES-NI/VAES and x86 crypto acceleration:** `CRYPTO_AES_NI_INTEL` is made available only when `aes`
     appears in every visible processor's `/proc/cpuinfo` flags and AES/crypto
     are enabled in the target config (including by `--applications=cryptsetup`).
     Missing or incomplete CPU information skips the request. This works on
@@ -299,15 +299,24 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
     at runtime. Existing built-ins stay built-in; otherwise it is a module when
     supported. `KMSAN` builds are excluded. On kernels with `CRYPTO_LIB_AES_XTS`,
     libaes already provides the accelerated bulk modes and needs no extra
-    driver request. See the [upstream migration notes](https://github.com/torvalds/linux/blob/master/arch/x86/crypto/Kconfig).
+    driver request. On 6.12–6.18 trees where arch-specific crypto modules still
+    exist, `pclmulqdq`, `ssse3` and `sse4_2` similarly enable
+    `CRYPTO_GHASH_CLMUL_NI_INTEL`, `CRYPTO_POLYVAL_CLMUL_NI`,
+    `CRYPTO_SHA1_SSSE3`, `CRYPTO_SHA256_SSSE3`, `CRYPTO_SHA512_SSSE3`,
+    `CRYPTO_CRC32C_INTEL` and `CRYPTO_CRCT10DIF_PCLMUL` only when the
+    corresponding base algorithm is already enabled. See the [upstream migration notes](https://github.com/torvalds/linux/blob/master/arch/x86/crypto/Kconfig).
   - **CPU facilities:** `x2apic` enables `X86_X2APIC` when the APIC/remapping or
     guest dependencies hold; `fred` enables `X86_FRED`; `mce` together with `mca`
-    enables machine-check handling and the detected Intel/AMD MCE extension.
+    enables machine-check handling and the detected Intel/AMD MCE extension; and
+    (unless `PRUNE_HARDENING` is active) `umip`, `pku` and `user_shstk` enable
+    `X86_UMIP` (when visible), `X86_INTEL_MEMORY_PROTECTION_KEYS` and
+    `X86_USER_SHADOW_STACK`.
     Each CPU flag must be present on every visible processor. In native mode,
     generic optimization/guest profiles defer x2APIC selection to this check.
     Active `scaling_driver` entries under CPUFreq select `X86_INTEL_PSTATE`,
-    `X86_AMD_PSTATE` or `X86_ACPI_CPUFREQ`; an active `intel_idle` selects
-    `INTEL_IDLE`. Their CPUFreq/idle parents are restored when permitted.
+    `X86_AMD_PSTATE` or `X86_ACPI_CPUFREQ` (deduplicated across CPU policies);
+    an active `intel_idle` or `haltpoll` cpuidle driver selects `INTEL_IDLE` or
+    `HALTPOLL_CPUIDLE`. Their CPUFreq/idle parents are restored when permitted.
     Vendor identity alone is not proof that firmware exposes HWP/CPPC or usable
     idle tables. Hidden architecture capabilities remain under Kconfig control.
   - **Posted MSI:** `X86_POSTED_MSI` requires x86_64, enabled Intel IOMMU and

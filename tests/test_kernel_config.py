@@ -3188,6 +3188,50 @@ config HID_LED
         self.assert_symbol("IPMI_SSIF", "m")
         self.assert_symbol("IPMI_SI", "n")
 
+    def test_native_cpu_deduplicates_scaling_driver_crypto_accel_and_hardening(self):
+        self.add_symbols("X86", "X86_64", "MODULES", "KMSAN", "CPU_FREQ", "CPU_IDLE",
+                         "X86_AMD_PSTATE", "HALTPOLL_CPUIDLE", "CRYPTO", "CRYPTO_GHASH",
+                         "CRYPTO_SHA256", "CRYPTO_CRC32C", "X86_UMIP",
+                         "X86_INTEL_MEMORY_PROTECTION_KEYS", "X86_USER_SHADOW_STACK")
+        self.add_symbols("CRYPTO_GHASH_CLMUL_NI_INTEL", "CRYPTO_SHA256_SSSE3",
+                         "CRYPTO_CRC32C_INTEL", kind="tristate")
+        self.add_kconfig('''
+            config X86_INTEL_MEMORY_PROTECTION_KEYS
+            \tbool "Memory Protection Keys"
+            config X86_USER_SHADOW_STACK
+            \tbool "X86 userspace shadow stack"
+        ''')
+        env = self.make_host_root(
+            cpuinfo="processor : 0\nvendor_id : AuthenticAMD\nflags : umip pku user_shstk pclmulqdq ssse3 sse4_2\n"
+        )
+        host = Path(env["KC_HOST_ROOT"])
+        for idx in range(4):
+            policy = host / f"sys/devices/system/cpu/cpufreq/policy{idx}"
+            policy.mkdir(parents=True)
+            (policy / "scaling_driver").write_text("amd-pstate-epp\n")
+        idle = host / "sys/devices/system/cpu/cpuidle"
+        idle.mkdir(parents=True)
+        (idle / "current_driver").write_text("haltpoll\n")
+        base = dict(X86="y", X86_64="y", MODULES="y", KMSAN="n", CPU_FREQ="n", CPU_IDLE="n",
+                    X86_AMD_PSTATE="n", HALTPOLL_CPUIDLE="n", CRYPTO="y", CRYPTO_GHASH="y",
+                    CRYPTO_SHA256="y", CRYPTO_CRC32C="y", X86_UMIP="n",
+                    X86_INTEL_MEMORY_PROTECTION_KEYS="n", X86_USER_SHADOW_STACK="n",
+                    CRYPTO_GHASH_CLMUL_NI_INTEL="n", CRYPTO_SHA256_SSSE3="n", CRYPTO_CRC32C_INTEL="n")
+        self.set_baseline_symbols(**base)
+        result = self.run_script("--strict", "--native-cpu=auto", env=env)
+        self.assert_success(result)
+        self.assertEqual(result.stdout.count("active CPU frequency driver: amd-pstate-epp"), 1)
+        for sym in ("X86_AMD_PSTATE", "HALTPOLL_CPUIDLE", "X86_UMIP",
+                    "X86_INTEL_MEMORY_PROTECTION_KEYS", "X86_USER_SHADOW_STACK"):
+            self.assert_symbol(sym, "y")
+        for sym in ("CRYPTO_GHASH_CLMUL_NI_INTEL", "CRYPTO_SHA256_SSSE3", "CRYPTO_CRC32C_INTEL"):
+            self.assert_symbol(sym, "m")
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--prune-hardening", "--native-cpu=auto", env=env))
+        self.assert_symbol("X86_INTEL_MEMORY_PROTECTION_KEYS", "n")
+        self.assert_symbol("X86_USER_SHADOW_STACK", "n")
+        self.assert_symbol("X86_UMIP", "n")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):
