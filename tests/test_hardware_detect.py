@@ -481,6 +481,82 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual(sum(1 for kind, value, _ in raw if (kind, value) == ("modsymbol", "INTEL_RAPL")), 1)
         self.assertEqual(sum(1 for kind, value, _ in raw if (kind, value) == ("modsymbol", "ACPI_BATTERY")), 1)
 
+    def test_kernel_source_fallback_resolves_unbound_acpi_i2c_wmi_and_dmi_hwmon(self):
+        srcdir = self.root / "linux"
+        # Composite ACPI driver (i2c-designware-platdrv.o -> i2c-designware-platform.o)
+        i2c_dir = srcdir / "drivers/i2c/busses"
+        i2c_dir.mkdir(parents=True)
+        (i2c_dir / "Makefile").write_text(
+            "obj-$(CONFIG_I2C_DESIGNWARE_PLATFORM) += i2c-designware-platform.o\n"
+            "i2c-designware-platform-y := i2c-designware-platdrv.o\n"
+        )
+        (i2c_dir / "i2c-designware-platdrv.c").write_text(
+            'static const struct acpi_device_id dw_i2c_acpi_match[] = { { "AMDI0010", 0 }, {} };\n'
+            "MODULE_DEVICE_TABLE(acpi, dw_i2c_acpi_match);\n"
+        )
+        # Direct ACPI GPIO driver
+        gpio_dir = srcdir / "drivers/gpio"
+        gpio_dir.mkdir(parents=True)
+        (gpio_dir / "Makefile").write_text("obj-$(CONFIG_GPIO_AMDPT) += gpio-amdpt.o\n")
+        (gpio_dir / "gpio-amdpt.c").write_text(
+            'static const struct acpi_device_id pt_gpio_acpi_match[] = { { "AMDIF031", 0 }, {} };\n'
+            "MODULE_DEVICE_TABLE(acpi, pt_gpio_acpi_match);\n"
+        )
+        # Unbound I2C sensor + DMI board hwmon table
+        hwmon_dir = srcdir / "drivers/hwmon"
+        hwmon_dir.mkdir(parents=True)
+        (hwmon_dir / "Makefile").write_text(
+            "obj-$(CONFIG_SENSORS_LM75) += lm75.o\n"
+            "nct6775-objs := nct6775-platform.o\n"
+            "obj-$(CONFIG_SENSORS_NCT6775) += nct6775.o\n"
+        )
+        (hwmon_dir / "lm75.c").write_text(
+            'static const struct i2c_device_id lm75_ids[] = { { "lm75", 0 }, {} };\n'
+            "MODULE_DEVICE_TABLE(i2c, lm75_ids);\n"
+        )
+        (hwmon_dir / "nct6775-platform.c").write_text(
+            'static const char *const boards[] = { "PRIME X670-P WIFI" };\n'
+            "/* checked via DMI_BOARD_NAME */\n"
+        )
+        # WMI single match + WMI ambiguous match
+        wmi_dir = srcdir / "drivers/platform/x86"
+        wmi_dir.mkdir(parents=True)
+        (wmi_dir / "Makefile").write_text(
+            "obj-$(CONFIG_WMI_BMOF) += wmi-bmof.o\n"
+            "obj-$(CONFIG_ASUS_NB_WMI) += asus-nb-wmi.o\n"
+            "obj-$(CONFIG_ASUS_ARMOURY) += asus-armoury.o\n"
+        )
+        (wmi_dir / "wmi-bmof.c").write_text(
+            'static const struct wmi_device_id bmof_id[] = { { "05901221-D566-11D1-B2F0-00A0C9062910" }, {} };\n'
+        )
+        for fname in ("asus-nb-wmi.c", "asus-armoury.c"):
+            (wmi_dir / fname).write_text(
+                '#define ASUS_GUID "0B3CBB35-E3C2-45ED-91C2-4C5A6D195D1C"\n'
+                'MODULE_ALIAS("wmi:" ASUS_GUID);\n'
+            )
+
+        self.write("sys/bus/acpi/devices/AMDI0010:00/status", "15\n")
+        self.write("sys/bus/acpi/devices/AMDI0010:00/modalias", "acpi:AMDI0010:\n")
+        self.write("sys/bus/acpi/devices/AMDIF031:00/status", "15\n")
+        self.write("sys/bus/acpi/devices/AMDIF031:00/modalias", "acpi:AMDIF031:\n")
+        self.write("sys/bus/i2c/devices/0-0048/modalias", "i2c:lm75\n")
+        self.write("sys/bus/wmi/devices/05901221/modalias", "wmi:05901221-D566-11D1-B2F0-00A0C9062910\n")
+        self.write("sys/bus/wmi/devices/0B3CBB35/modalias", "wmi:0B3CBB35-E3C2-45ED-91C2-4C5A6D195D1C\n")
+        # Platform devices like pcspkr are never scanned against kernel sources.
+        self.write("sys/bus/platform/devices/pcspkr/modalias", "platform:pcspkr\n")
+        self.write("sys/class/dmi/id/board_name", "PRIME X670-P WIFI\n")
+
+        raw = discover(Host(self.root), kernel_srcdir=srcdir)
+        facts = {(kind, value) for kind, value, _ in raw}
+        for mod in ("i2c_designware_platform", "gpio_amdpt", "lm75", "wmi_bmof", "nct6775"):
+            self.assertIn(("module", mod), facts)
+        ambiguous = [ev for kind, value, ev in raw if (kind, value) == ("notice", "ambiguous-source-match")]
+        self.assertEqual(len(ambiguous), 1)
+        self.assertIn("asus_armoury asus_nb_wmi", ambiguous[0])
+        unresolved = [ev for kind, value, ev in raw if (kind, value) == ("notice", "unresolved-alias")]
+        self.assertEqual(len(unresolved), 1)
+        self.assertIn("platform:pcspkr", unresolved[0])
+
 
 if __name__ == "__main__":
     unittest.main()

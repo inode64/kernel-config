@@ -1078,6 +1078,71 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script(*args))
         self.assertEqual(self.config.read_bytes(), after)
 
+    def test_real_kernel_source_fallback_tpm_powercap_and_strict_pruning(self):
+        host = self.use_native_host()
+        shutil.rmtree(host / "sys/class/iommu")
+        (host / "proc/cpuinfo").write_text(
+            "processor : 0\nvendor_id : AuthenticAMD\ncpu family : 25\nmodel : 97\nflags : mce mca\n"
+        )
+        dmi = host / "sys/class/dmi/id"
+        dmi.mkdir(parents=True)
+        (dmi / "sys_vendor").write_text("ASUS\n")
+        (dmi / "product_name").write_text("Workstation\n")
+        (dmi / "board_name").write_text("PRIME X670-P WIFI\n")
+        # Unbound ACPI GPIO, WMI BMOF, and active ACPI power button.
+        for dev, mod in (
+            ("AMDIF031:01", "acpi:AMDIF031:"),
+            ("PNP0C0C:00", "acpi:PNP0C0C:"),
+        ):
+            p = host / f"sys/bus/acpi/devices/{dev}"
+            p.mkdir(parents=True)
+            (p / "status").write_text("15\n")
+            (p / "modalias").write_text(mod + "\n")
+        wmi = host / "sys/bus/wmi/devices/05901221"
+        wmi.mkdir(parents=True)
+        (wmi / "modalias").write_text("wmi:05901221-D566-11D1-B2F0-00A0C9062910\n")
+        # Active powercap RAPL domain.
+        (host / "sys/class/powercap/intel-rapl:0").mkdir(parents=True)
+        # TPM 2.0 on CRB transport only.
+        tpm_dev = host / "sys/class/tpm/tpm0/device"
+        tpm_dev.mkdir(parents=True)
+        (tpm_dev.parent / "tpm_version_major").write_text("2\n")
+        (tpm_dev / "driver").symlink_to("/sys/bus/acpi/drivers/tpm_crb_acpi")
+
+        self.prepare_baseline(
+            MODULES="y", BLK_DEV_INITRD="y",
+            FTRACE="y", BRANCH_PROFILE_NONE="y",
+            GPIOLIB="y", GPIO_AMDPT="n",
+            ACPI_WMI="y", X86_PLATFORM_DEVICES="y", WMI_BMOF="n",
+            HWMON="y", SENSORS_NCT6775="n",
+            POWERCAP="n", INTEL_RAPL="n",
+            ACPI_BUTTON="n",
+            TCG_TPM="n", TCG_CRB="n", TCG_TIS="n", TCG_VTPM_PROXY="n",
+        )
+        args = (
+            "--strict", "--all-optimizations", "--native-arch",
+            "--tpm-support=auto",
+        )
+        result = self.run_script(*args)
+        self.assert_success(result)
+        self.assert_values(
+            FTRACE="n",
+            GPIO_AMDPT="m",
+            WMI_BMOF="m",
+            SENSORS_NCT6775="m",
+            POWERCAP="y",
+            INTEL_RAPL="m",
+            ACPI_BUTTON="m",
+            TCG_TPM="y",
+            TCG_CRB="y",
+            TCG_TIS="n",
+            TCG_VTPM_PROXY="n",
+        )
+        # Idempotence on second run.
+        after = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), after)
+
 
 if __name__ == "__main__":
     unittest.main()

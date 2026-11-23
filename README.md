@@ -356,9 +356,11 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   Discovery reads all available sysfs buses/classes, block devices and
   `/proc/self/mountinfo`. It uses each device's bound module or its modalias
   (including MDIO `phy_id` aliases) and the running kernel's installed module
-  metadata, then reuses the target tree's Kbuild module-to-symbol map (joining
-  line continuations, relative object paths and single-module subdirectory
-  delegations). This covers PCI/PCIe port
+  metadata, falls back to matching unbound ACPI, I2C, WMI and hwmon DMI board
+  identifiers directly against the target kernel sources (`--kernel-srcdir`)
+  when installed module metadata is missing, and then reuses the target tree's
+  Kbuild module-to-symbol map (joining line continuations, relative object
+  paths and single-module subdirectory delegations). This covers PCI/PCIe port
   services/USB, SATA/NVMe/SCSI, SD/MMC, USB4/Thunderbolt, network/MDIO PHYs and
   wireless devices, TPM transports, graphics, sound, input, sensors (including
   active `drivetemp`/`nvme` hwmon, `powercap` RAPL domains, standard active

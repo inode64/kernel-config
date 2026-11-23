@@ -3408,6 +3408,59 @@ config HID_LED
         self.assert_symbol("TEST_DIRECT_MOD", "m")
         self.assert_symbol("TEST_MULTI_PARENT", "n")
 
+    def test_native_arch_resolves_unbound_devices_from_kernel_sources(self):
+        self.add_symbols("MODULES", "BLK_DEV_INITRD", "I2C", "HWMON", "ACPI", "ACPI_WMI", "X86_PLATFORM_DEVICES")
+        self.add_symbols("I2C_DESIGNWARE_PLATFORM", "SENSORS_NCT6775", "WMI_BMOF", kind="tristate")
+        i2c_dir = self.tree / "drivers/i2c/busses"
+        i2c_dir.mkdir(parents=True)
+        (i2c_dir / "Makefile").write_text(
+            "obj-$(CONFIG_I2C_DESIGNWARE_PLATFORM) += i2c-designware-platform.o\n"
+            "i2c-designware-platform-y := i2c-designware-platdrv.o\n"
+        )
+        (i2c_dir / "i2c-designware-platdrv.c").write_text(
+            'static const struct acpi_device_id match[] = { { "AMDI0010", 0 }, {} };\n'
+            "MODULE_DEVICE_TABLE(acpi, match);\n"
+        )
+        hwmon_dir = self.tree / "drivers/hwmon"
+        hwmon_dir.mkdir(parents=True)
+        (hwmon_dir / "Makefile").write_text(
+            "nct6775-objs := nct6775-platform.o\n"
+            "obj-$(CONFIG_SENSORS_NCT6775) += nct6775.o\n"
+        )
+        (hwmon_dir / "nct6775-platform.c").write_text(
+            'static const char *const boards[] = { "EXAMPLE X670 BOARD" }; /* DMI_BOARD_NAME */\n'
+        )
+        wmi_dir = self.tree / "drivers/platform/x86"
+        wmi_dir.mkdir(parents=True)
+        (wmi_dir / "Makefile").write_text("obj-$(CONFIG_WMI_BMOF) += wmi-bmof.o\n")
+        (wmi_dir / "wmi-bmof.c").write_text(
+            'static const struct wmi_device_id id[] = { { "05901221-D566-11D1-B2F0-00A0C9062910" }, {} };\n'
+        )
+        self.set_baseline_symbols(
+            MODULES="y", BLK_DEV_INITRD="y", I2C="n", HWMON="n",
+            ACPI="y", ACPI_WMI="n", X86_PLATFORM_DEVICES="n",
+            I2C_DESIGNWARE_PLATFORM="n", SENSORS_NCT6775="n", WMI_BMOF="n",
+        )
+        env = self.make_host_root()
+        host = Path(env["KC_HOST_ROOT"])
+        for path, text in (
+            ("sys/bus/acpi/devices/AMDI0010:00/status", "15\n"),
+            ("sys/bus/acpi/devices/AMDI0010:00/modalias", "acpi:AMDI0010:\n"),
+            ("sys/bus/wmi/devices/05901221/modalias", "wmi:05901221-D566-11D1-B2F0-00A0C9062910\n"),
+            ("sys/class/dmi/id/board_name", "EXAMPLE X670 BOARD\n"),
+        ):
+            target = host / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text)
+        self.assert_success(self.run_script("--strict", "--native-arch", "--native-cpu=none",
+                                            "--platform-drivers=none", env=env))
+        self.assert_symbol("I2C", "y")
+        self.assert_symbol("HWMON", "y")
+        self.assert_symbol("X86_PLATFORM_DEVICES", "y")
+        self.assert_symbol("I2C_DESIGNWARE_PLATFORM", "m")
+        self.assert_symbol("SENSORS_NCT6775", "m")
+        self.assert_symbol("WMI_BMOF", "m")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):

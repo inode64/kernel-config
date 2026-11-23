@@ -4633,7 +4633,7 @@ configure_native_arch() {
     echo
     echo "==> Detecting local devices (sysfs, bound drivers and installed module aliases)"
     if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == auto ]] && is_x86_config; then detect_host_memory_ecc; fi
-    facts="$(python3 -B "$SCRIPT_DIR/lib/hardware_detect.py" --host-root "${HOST_ROOT:-/}")" \
+    facts="$(python3 -B "$SCRIPT_DIR/lib/hardware_detect.py" --host-root "${HOST_ROOT:-/}" --kernel-srcdir "$KSRCDIR")" \
         || die "Native hardware discovery failed"
     ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
     # Do not introduce a select chain that overrides an explicit/protected opt-out.

@@ -209,6 +209,153 @@ SECONDARY_FS_KCONFIG = {
 }
 BOOT_MOUNTPOINTS = frozenset({"/", "/boot", "/efi", "/boot/efi"})
 
+GENERIC_DMI_BOARDS = frozenset({
+    "default string", "to be filled by o.e.m.", "system product name",
+    "base board product name", "none", "n/a", "not applicable",
+    "not specified", "unknown", "standard pc",
+})
+
+SOURCE_SCAN_DIRS = {
+    "acpi": (
+        "drivers/i2c", "drivers/gpio", "drivers/hwmon", "drivers/pinctrl",
+        "drivers/platform/x86", "drivers/thermal", "drivers/hid",
+        "drivers/char/tpm", "drivers/spi",
+    ),
+    "i2c": (
+        "drivers/hwmon", "drivers/i2c", "drivers/rtc",
+        "drivers/misc/eeprom", "drivers/char/tpm", "drivers/input",
+    ),
+    "wmi": (
+        "drivers/platform/x86", "drivers/hwmon",
+    ),
+    "dmi_hwmon": (
+        "drivers/hwmon",
+    ),
+}
+
+
+class SourceResolver:
+    """Resolve unbound ACPI/I2C/WMI/DMI hardware against target kernel sources."""
+
+    def __init__(self, kernel_srcdir):
+        self.root = Path(kernel_srcdir)
+        self._dir_files = {}
+        self._kbuild_cache = {}
+
+    def _iter_c_files(self, rel_dirs):
+        for rel_dir in rel_dirs:
+            cached = self._dir_files.get(rel_dir)
+            if cached is None:
+                directory = self.root / rel_dir
+                cached = []
+                if directory.is_dir():
+                    for cfile in sorted(directory.rglob("*.c")):
+                        try:
+                            cached.append((cfile, cfile.read_text(errors="replace")))
+                        except OSError:
+                            continue
+                self._dir_files[rel_dir] = cached
+            yield from cached
+
+    def _kbuild_map(self, directory):
+        cached = self._kbuild_cache.get(directory)
+        if cached is not None:
+            return cached
+        direct_objs = set()
+        comp_sources = defaultdict(set)
+        for name in ("Kbuild", "Makefile"):
+            mf = directory / name
+            if not mf.is_file():
+                continue
+            try:
+                text = mf.read_text(errors="replace")
+            except OSError:
+                continue
+            text = re.sub(r"\\\n", " ", text)
+            for raw_line in text.splitlines():
+                line = raw_line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                m = re.match(r"^obj-\$\(CONFIG_[A-Za-z0-9_]+\)\s*[-+?:]?=\s*(.+)$", line)
+                if m:
+                    for item in m.group(1).split():
+                        if item.endswith(".o") and "/" not in item:
+                            direct_objs.add(item)
+                    continue
+                m = re.match(
+                    r"^([A-Za-z0-9_-]+)-(?:y|objs|\$\(CONFIG_[A-Za-z0-9_]+\))\s*[-+?:]?=\s*(.+)$",
+                    line,
+                )
+                if m:
+                    target = m.group(1)
+                    for item in m.group(2).split():
+                        if item.endswith(".o") and "/" not in item:
+                            comp_sources[item].add(target)
+        comp_map = {
+            src: {t for t in targets if f"{t}.o" in direct_objs}
+            for src, targets in comp_sources.items()
+        }
+        cached = (direct_objs, comp_map)
+        self._kbuild_cache[directory] = cached
+        return cached
+
+    def _modules_for_source(self, cfile):
+        direct_objs, comp_map = self._kbuild_map(cfile.parent)
+        obj = f"{cfile.stem}.o"
+        if obj in direct_objs:
+            return {cfile.stem.replace("-", "_")}
+        return {t.replace("-", "_") for t in comp_map.get(obj, ())}
+
+    def match_modalias(self, modalias):
+        if modalias.startswith("acpi:"):
+            ids = [
+                part for part in modalias[5:].split(":")
+                if part and part not in STRUCTURAL_ACPI_IDS
+                and re.fullmatch(r"[A-Za-z0-9_]{4,16}", part)
+            ]
+            for ident in ids:
+                needle = f'"{ident}"'
+                modules = set()
+                for cfile, text in self._iter_c_files(SOURCE_SCAN_DIRS["acpi"]):
+                    if needle in text and "acpi_device_id" in text and "MODULE_DEVICE_TABLE" in text:
+                        modules.update(self._modules_for_source(cfile))
+                if modules:
+                    return sorted(modules)
+            return []
+        if modalias.startswith("i2c:"):
+            ident = modalias[4:]
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{2,32}", ident):
+                return []
+            pattern = re.compile(rf'\{{\s*"{re.escape(ident)}"\s*,')
+            modules = set()
+            for cfile, text in self._iter_c_files(SOURCE_SCAN_DIRS["i2c"]):
+                if "i2c_device_id" in text and "MODULE_DEVICE_TABLE" in text and pattern.search(text):
+                    modules.update(self._modules_for_source(cfile))
+            return sorted(modules)
+        if modalias.startswith("wmi:"):
+            guid = modalias[4:]
+            if not re.fullmatch(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}", guid):
+                return []
+            pattern = re.compile(rf'"{re.escape(guid)}"', re.IGNORECASE)
+            modules = set()
+            for cfile, text in self._iter_c_files(SOURCE_SCAN_DIRS["wmi"]):
+                if (any(marker in text for marker in ("wmi_device_id", "wmi_driver", "MODULE_ALIAS"))
+                        and pattern.search(text)):
+                    modules.update(self._modules_for_source(cfile))
+            return sorted(modules)
+        return []
+
+    def match_dmi_hwmon(self, board_name):
+        board_name = board_name.strip()
+        if len(board_name) < 4 or board_name.lower() in GENERIC_DMI_BOARDS:
+            return []
+        needle = f'"{board_name}"'
+        modules = set()
+        for cfile, text in self._iter_c_files(SOURCE_SCAN_DIRS["dmi_hwmon"]):
+            if "DMI_BOARD_NAME" in text and needle in text:
+                modules.update(self._modules_for_source(cfile))
+        return sorted(modules)
+
 
 def serial_ports(host, kernel_srcdir):
     """Detect native UARTs; USB serial and virtual terminals are separate stacks."""
@@ -435,12 +582,14 @@ def _is_structural_acpi_modalias(modalias):
     return bool(ids) and all(item in STRUCTURAL_ACPI_IDS for item in ids)
 
 
-def discover(host):
+def discover(host, kernel_srcdir=None):
     aliases = Aliases(host)
+    source_resolver = SourceResolver(kernel_srcdir) if kernel_srcdir else None
     facts = set()
     devices = defaultdict(set)
     seen_ambiguous = set()
     seen_unresolved = set()
+    emitted_modules = set()
 
     def add(kind, value, evidence):
         facts.add((kind, value, re.sub(r"[\x00-\x1f\x7f]", " ", evidence)))
@@ -458,6 +607,7 @@ def discover(host):
         if name in CORE_BUILTIN_DRIVERS:
             return
         if re.fullmatch(r"[A-Za-z0-9_]+", name):
+            emitted_modules.add(name)
             add("builtin" if name in aliases.builtin else "module", name, evidence)
 
     for namespace in ("bus", "class", "subsystem"):
@@ -676,11 +826,35 @@ def discover(host):
                     "pci" in subsystems and pci_class in {"0x060000", "0x080600"}
                 ):
                     continue
+                if source_resolver:
+                    src_matches = source_resolver.match_modalias(modalias)
+                    if len(src_matches) == 1:
+                        emit_module(src_matches[0], f"{path} (kernel source match for {modalias})")
+                        continue
+                    if len(src_matches) > 1:
+                        key = (modalias, tuple(src_matches))
+                        if key not in seen_ambiguous:
+                            seen_ambiguous.add(key)
+                            add("notice", "ambiguous-source-match",
+                                f"{path}: {modalias} -> {' '.join(src_matches)}")
+                        continue
                 if modalias not in seen_unresolved:
                     seen_unresolved.add(modalias)
                     add("notice", "unresolved-alias", f"{path}: {modalias}")
         if module:
             emit_module(module, f"{path} ({'bound driver' if driver else 'modalias'})")
+
+    if source_resolver:
+        board_name = host.read("/sys/class/dmi/id/board_name")
+        if board_name:
+            dmi_matches = source_resolver.match_dmi_hwmon(board_name)
+            if len(dmi_matches) == 1 and dmi_matches[0] not in emitted_modules:
+                emit_module(dmi_matches[0], f"/sys/class/dmi/id/board_name={board_name} (hwmon DMI table)")
+            elif len(dmi_matches) > 1:
+                unseen = [m for m in dmi_matches if m not in emitted_modules]
+                if unseen:
+                    add("notice", "ambiguous-source-match",
+                        f"/sys/class/dmi/id/board_name={board_name} -> {' '.join(dmi_matches)}")
 
     _discover_mounts(host, symbols, modsymbols)
     return sorted(facts)
@@ -691,7 +865,7 @@ def main():
     parser.add_argument("--host-root", default="/")
     parser.add_argument("--memory-ecc", action="store_true", help="report DRAM ECC evidence only")
     parser.add_argument("--serial-ports", action="store_true", help="report native UART evidence only")
-    parser.add_argument("--kernel-srcdir", help="target kernel sources for UART hardware identifiers")
+    parser.add_argument("--kernel-srcdir", help="target kernel sources for UART and unbound device resolution")
     args = parser.parse_args()
     host = Host(args.host_root)
     if args.serial_ports:
@@ -702,7 +876,7 @@ def main():
     if args.memory_ecc:
         print("\t".join(memory_ecc(host)))
         return
-    for fact in discover(host):
+    for fact in discover(host, kernel_srcdir=args.kernel_srcdir):
         print("\t".join(fact))
 
 
