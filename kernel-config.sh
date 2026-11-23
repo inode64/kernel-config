@@ -78,7 +78,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   PRUNE_DANGEROUS           -> disable symbols explicitly marked DANGEROUS in Kconfig
 #   PRUNE_UNUSED_MODULES      -> probe module configs not currently loaded and disable direct module symbols that can be tested safely
 #   CPU_VENDOR_FILTER=none    -> none, auto, amd, intel; disable x86 options for the other vendor and select its pstate driver
-#   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau; keep only the selected GPU stack
+#   VIDEO_SUPPORT=none        -> none, auto, amd, intel, nvidia, nouveau, ast, mgag200; keep only the selected GPU stack
 #   UEFI_SUPPORT=none         -> none, auto, on, off; keep or prune common EFI/UEFI kernel support
 #   INITRD_SUPPORT=none       -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none          -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
@@ -259,7 +259,7 @@ Notes:
   --native-cpu accepts: none, auto, on, or off. auto detects local hardware acceleration;
     on also enables -march=native (x86_64, kernel 6.16+; build on the target CPU).
   --native-arch (alias --nativer-arch) adds detected local device support; needs Python 3.11+.
-  --video-support accepts: none, auto, amd, intel, nvidia, nouveau.
+  --video-support accepts: none, auto, amd, intel, nvidia, nouveau, ast, mgag200.
   --host-type accepts: none, auto, baremetal (alias: native), qemu (alias: kvm), vmware, hyperv, virtualbox.
   --uefi-support accepts: none, auto, on, off.
   --initrd-support accepts: none, auto, on, off.
@@ -1916,6 +1916,12 @@ detect_host_video_support() {
             nvidia | nvidia_drm | nvidia_modeset | nvidia_uvm)
                 profile="nvidia"
                 ;;
+            ast)
+                profile="ast"
+                ;;
+            mgag200)
+                profile="mgag200"
+                ;;
             *)
                 profile=""
                 ;;
@@ -1938,7 +1944,7 @@ detect_host_video_support() {
         class="${class#0x}"
 
         case "$class" in
-            030000 | 030200 | 038000)
+            0300* | 0301* | 0302* | 0380*)
                 ;;
             *)
                 continue
@@ -1946,7 +1952,7 @@ detect_host_video_support() {
         esac
 
         vendor="$(<"$path/vendor")"
-        case "$vendor" in
+        case "${vendor@L}" in
             0x1002)
                 profile="amd"
                 ;;
@@ -1955,6 +1961,12 @@ detect_host_video_support() {
                 ;;
             0x10de)
                 profile="nvidia"
+                ;;
+            0x1a03)
+                profile="ast"
+                ;;
+            0x102b)
+                profile="mgag200"
                 ;;
             *)
                 profile=""
@@ -1984,11 +1996,11 @@ resolve_video_support() {
         auto)
             detect_host_video_support
             ;;
-        amd | intel | nvidia | nouveau)
+        amd | intel | nvidia | nouveau | ast | mgag200)
             printf '%s\n' "$mode"
             ;;
         *)
-            echo "Invalid VIDEO_SUPPORT: $VIDEO_SUPPORT (use none, auto, amd, intel, nvidia, or nouveau)" >&2
+            echo "Invalid VIDEO_SUPPORT: $VIDEO_SUPPORT (use none, auto, amd, intel, nvidia, nouveau, ast, or mgag200)" >&2
             exit 1
             ;;
     esac
@@ -5190,6 +5202,40 @@ configure_video_support_profile() {
                 INTEL_GTT
                 DRM_NOUVEAU
                 FB_NVIDIA
+            )
+            ;;
+        ast)
+            echo "    (keeping Aspeed BMC display driver and pruning AMD/Intel/NVIDIA/Matrox stacks)"
+            enable_syms=(
+                DRM_AST
+            )
+            disable_syms=(
+                DRM_AMDGPU
+                DRM_RADEON
+                FB_RADEON
+                DRM_I915
+                DRM_XE
+                INTEL_GTT
+                DRM_NOUVEAU
+                FB_NVIDIA
+                DRM_MGAG200
+            )
+            ;;
+        mgag200)
+            echo "    (keeping Matrox G200 BMC display driver and pruning AMD/Intel/NVIDIA/Aspeed stacks)"
+            enable_syms=(
+                DRM_MGAG200
+            )
+            disable_syms=(
+                DRM_AMDGPU
+                DRM_RADEON
+                FB_RADEON
+                DRM_I915
+                DRM_XE
+                INTEL_GTT
+                DRM_NOUVEAU
+                FB_NVIDIA
+                DRM_AST
             )
             ;;
     esac

@@ -3131,6 +3131,32 @@ config HID_LED
                 self.assertIn("Could not detect host type", result.stdout)
                 self.assert_symbol("KVM_GUEST", "y")
 
+    def test_video_support_auto_supports_bmc_ast_and_mgag200(self):
+        self.add_symbols("DRM", "DRM_AMDGPU", "DRM_I915", "DRM_NOUVEAU", "DRM_AST", "DRM_MGAG200", kind="tristate")
+        for vendor, expected, pruned in (
+            ("0x1a03", "DRM_AST", "DRM_MGAG200"),
+            ("0x102b", "DRM_MGAG200", "DRM_AST"),
+        ):
+            with self.subTest(vendor=vendor):
+                shutil.rmtree(self.root / "host", ignore_errors=True)
+                self.set_baseline_symbols(DRM="y", DRM_AMDGPU="m", DRM_I915="m", DRM_NOUVEAU="m",
+                                          DRM_AST="n", DRM_MGAG200="n")
+                env = self.make_host_root(pci=[("0000:05:00.0", vendor, "0x2000", "0x030000")])
+                self.assert_success(self.run_script("--strict", "--video-support=auto", env=env))
+                self.assert_symbol(expected, "y")
+                self.assert_symbol(pruned, "n")
+                for desktop in ("DRM_AMDGPU", "DRM_I915", "DRM_NOUVEAU"):
+                    self.assert_symbol(desktop, "n")
+        shutil.rmtree(self.root / "host", ignore_errors=True)
+        self.set_baseline_symbols(DRM="y", DRM_AMDGPU="m", DRM_AST="m")
+        env = self.make_host_root(pci=[("0000:03:00.0", "0x1002", "0x7551", "0x030000"),
+                                       ("0000:05:00.0", "0x1a03", "0x2000", "0x030000")])
+        result = self.run_script("--strict", "--video-support=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("Multiple local video stacks detected", result.stdout)
+        self.assert_symbol("DRM_AMDGPU", "m")
+        self.assert_symbol("DRM_AST", "m")
+
 
 class ModuleRestorationTests(unittest.TestCase):
     def test_failed_module_listing_does_not_unload_anything(self):

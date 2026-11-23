@@ -531,12 +531,13 @@ These options change kernel build configuration and defaults. They do not create
   A symbol counts as vendor-specific only when every top-level `||` alternative of its `depends on` needs that vendor, so shared mitigations such as `MITIGATION_RETBLEED` (Intel and AMD Zen 1/2) are kept.
   `CPU_SUP_INTEL`/`CPU_SUP_AMD` are only user-visible under `PROCESSOR_SELECT`, which needs `CONFIG_EXPERT=y`; when `EXPERT` is off they and the other vendor's pstate driver are left untouched (Kconfig would force them back anyway).
 
-- `VIDEO_SUPPORT=none|auto|amd|intel|nvidia|nouveau`
+- `VIDEO_SUPPORT=none|auto|amd|intel|nvidia|nouveau|ast|mgag200`
   Keeps only the selected display driver stack.
 
   Notes:
   `amd` enables `DRM_AMDGPU` and leaves `DRM_RADEON`/`FB_RADEON` as the baseline has them.
   `nvidia` means a proprietary NVIDIA setup, so the script prunes Nouveau and the in-tree AMD/Intel stacks.
+  `ast` and `mgag200` keep the Aspeed or Matrox G200 server BMC display driver and prune the desktop AMD/Intel/NVIDIA stacks.
 
 - `UEFI_SUPPORT=none|auto|on|off`
   Keeps or prunes common EFI/UEFI kernel support.
@@ -886,7 +887,7 @@ Several parameters support `auto`. Current detection logic is intentionally simp
   Reads `/proc/cpuinfo`.
 
 - `VIDEO_SUPPORT=auto`
-  Tries `/sys/class/drm` first, then falls back to PCI vendor detection.
+  Tries `/sys/class/drm` first, then falls back to PCI vendor detection (AMD, Intel, NVIDIA, Aspeed `ast`, Matrox `mgag200`).
 
 - `HOST_TYPE=auto`
   Reads `/proc/cpuinfo`, `/sys/hypervisor/type`, `/sys/class/dmi/id/*`, `/sys/bus/{vmbus,xen,virtio}/devices`, `/sys/firmware/qemu_fw_cfg` and VMware/VirtualBox PCI IDs; returns `unknown` (no changes) when virtualized on an unsupported hypervisor or when host identity is incomplete.
