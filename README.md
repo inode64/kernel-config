@@ -685,7 +685,10 @@ These options change kernel build configuration and defaults. They do not create
   `MODULES=y`. A request therefore never exceeds a modular `NETFILTER_XTABLES`.
   `atop` builds `CONNECTOR` in, because `PROC_EVENTS` depends on `CONNECTOR=y`.
   `qemu` enables host drivers and lets Kconfig select internal VHOST dependencies
-  at the required built-in/module level.
+  at the required built-in/module level. Newly enabled `VFIO`, `VHOST_NET` and
+  `VHOST_VSOCK` use modules when available: modular `IOMMUFD`, `TAP` or
+  `VSOCKETS` dependencies prevent building those consumers into the kernel.
+  Existing built-ins and explicit symbol overrides are preserved.
   `firehol` also requests the targets and matches that `firehol debug` emits for
   an ordinary configuration (`physdev`, `TCPMSS`, `DSCP`, `NETMAP`, `CT`, mark,
   limit/recent/hashlimit, the FTP helper).

@@ -5939,8 +5939,13 @@ configure_application_profiles() {
                 # together with the guest transports.
                 # VHOST/VHOST_IOTLB are hidden tristates selected by the drivers;
                 # pinning their old =m conflicts with a newly built-in consumer.
-                for sym in KVM KVM_X86 KVM_VFIO VFIO TUN VHOST_MENU VHOST_NET VSOCKETS VHOST_VSOCK; do
+                for sym in KVM KVM_X86 KVM_VFIO TUN VHOST_MENU VSOCKETS; do
                     append_unique_item "$sym" enable_syms
+                done
+                # Modular IOMMUFD, TAP or VSOCKETS cap these drivers at =m.
+                # QEMU loads them on demand; retain existing built-ins.
+                for sym in VFIO VHOST_NET VHOST_VSOCK; do
+                    loadable_syms["$sym"]="$profile"
                 done
 
                 case "$qemu_cpu_vendor" in

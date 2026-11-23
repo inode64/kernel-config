@@ -236,9 +236,29 @@ class KernelIntegrationTests(unittest.TestCase):
                               X86_ACPI_CPUFREQ="n")
         self.assert_success(self.run_script("--strict", "--cpu-vendor-filter=amd",
                                             "--host-type=baremetal", "--applications=qemu,firewalld"))
-        self.assert_values(KVM_AMD="m", VHOST_NET="m", VHOST_VSOCK="y", VHOST="y",
-                           VHOST_IOTLB="y", NF_TABLES="m", NFT_NAT="m",
+        self.assert_values(KVM_AMD="m", VHOST_NET="m", VHOST_VSOCK="m", VHOST="m",
+                           VHOST_IOTLB="m", NF_TABLES="m", NFT_NAT="m",
                            X86_AMD_PSTATE="y", X86_ACPI_CPUFREQ="y", INTEL_IDLE="n")
+        self.assert_success(self.run_script("--strict", "--applications=qemu",
+                                            "--enable-symbols=VHOST_VSOCK"))
+        self.assert_values(VHOST_VSOCK="y", VHOST="y", VHOST_IOTLB="y")
+        self.assert_success(self.run_script("--strict", "--applications=qemu"))
+        self.assert_values(VHOST_VSOCK="y", VHOST="y", VHOST_IOTLB="y")
+
+    def test_real_qemu_with_modular_optional_dependencies(self):
+        self.prepare_baseline(MODULES="y", IOMMUFD="m", MACVLAN="m", MACVTAP="m",
+                              TUN="y", VSOCKETS="m", VHOST_MENU="y", VFIO="n",
+                              VHOST_NET="n", VHOST_VSOCK="n")
+        self.assert_values(TAP="m")
+        args = ("--strict", "--applications=qemu")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(IOMMUFD="m", TAP="m", VFIO="m", VHOST_NET="m",
+                           VSOCKETS="m", VHOST_VSOCK="m")
+        before = self.config.read_bytes()
+        self.assert_success(self.run_script(*args))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assert_success(self.run_script(*args, "--disable-symbols=VFIO,VHOST_NET,VHOST_VSOCK"))
+        self.assert_values(VFIO="n", VHOST_NET="n", VHOST_VSOCK="n")
 
     def test_real_intel_cpu_vendor_filter_enables_intel_idle(self):
         self.prepare_baseline(CPU_IDLE="y", INTEL_IDLE="n", X86_ACPI_CPUFREQ="n")
