@@ -460,6 +460,19 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(repeat)
         self.assertIn("No changes.", repeat.stdout)
 
+    def test_real_explicit_debugfs_keeps_pruned_children_off(self):
+        # Another consumer (PCP's kvm PMDA) asks for debugfs explicitly. The
+        # refresh while DEBUG_FS is pruned drops BLK_DEBUG_FS's "is not set"
+        # line, so restoring DEBUG_FS would bring it back at its default (y).
+        self.prepare_baseline(DEBUG_FS="y", DEBUG_FS_ALLOW_ALL="y", BLK_DEBUG_FS="y",
+                              TCP_CONG_ADVANCED="n")
+        args = ("--strict", "--all-optimizations", "--enable-symbols=DEBUG_FS,DEBUG_FS_ALLOW_ALL")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(DEBUG_FS="y", DEBUG_FS_ALLOW_ALL="y", BLK_DEBUG_FS="n")
+        repeat = self.run_script(*args, "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+
     def test_real_server_profile_keeps_lockup_and_hung_task_detection(self):
         for option in ("--optimization-profile=server", "--all-optimizations"):
             with self.subTest(option=option):

@@ -3352,7 +3352,7 @@ migrate_sysfb_simplefb() {
 }
 
 configure_symbol_overrides() {
-    local sym value
+    local sym value restored=false
     # Apply built-ins first so an explicit MODULES=y can precede module requests.
     for value in y m n; do
         for sym in "${!_EXPLICIT_SYMBOL_VALUES[@]}"; do
@@ -3361,9 +3361,17 @@ configure_symbol_overrides() {
                 _UNSUPPORTED_REQUESTS+=("CONFIG_$sym=m requires CONFIG_MODULES=y")
                 continue
             fi
+            ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+            [[ "$value" == n || "${_SYMBOL_VALUE_CACHE[$sym]:-n}" != n ]] || restored=true
             request_explicit_symbol "$sym" "$value"
         done
     done
+    # A parent the pruning turned off (DEBUG_FS) brings back the children whose
+    # "is not set" line a refresh dropped, at their Kconfig default (BLK_DEBUG_FS=y).
+    if is_enabled "$restored"; then
+        refresh_config_visibility
+        reassert_disable_requests "${!_EXPLICIT_SYMBOL_VALUES[@]}"
+    fi
 }
 
 # VERSION.PATCHLEVEL of the target tree, or nothing when the Makefile does not say.
