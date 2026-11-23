@@ -4496,6 +4496,8 @@ add_native_arch_driver_parents() {
         drivers/gpio/*) parents=(GPIOLIB) ;;
         drivers/pinctrl/*) parents=(PINCTRL) ;;
         drivers/hwmon/*) parents=(HWMON) ;;
+        drivers/powercap/*) parents=(POWERCAP) ;;
+        drivers/thermal/*) parents=(THERMAL) ;;
         drivers/watchdog/*) parents=(WATCHDOG) ;;
         drivers/bluetooth/*) parents=(NET BT) ;;
         drivers/rtc/*) parents=(RTC_CLASS) ;;
@@ -6111,6 +6113,12 @@ collect_platform_pch_requests() {
         intel)
             add_platform_parents HWMON
             add_platform_request "cpuinfo vendor GenuineIntel" SENSORS_CORETEMP
+            if host_has_x86_cpu_flag pts && is_symbol_enabled_now NET \
+                && have_symbol X86_PKG_TEMP_THERMAL \
+                && { ! have_symbol X86_THERMAL_VECTOR || is_symbol_enabled_now X86_THERMAL_VECTOR; }; then
+                add_platform_parents THERMAL
+                add_platform_request "cpuinfo flag pts (Intel package thermal sensor)" X86_PKG_TEMP_THERMAL
+            fi
             ;;
         amd)
             add_platform_parents HWMON

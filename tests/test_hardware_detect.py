@@ -455,6 +455,32 @@ class HardwareTests(unittest.TestCase):
         ):
             self.assertIn(fact, facts)
 
+    def test_powercap_rapl_and_acpi_power_thermal_button_devices(self):
+        # MSR RAPL package domain + subdomain (subdomain does not duplicate).
+        (self.root / "sys/class/powercap/intel-rapl:0").mkdir(parents=True)
+        (self.root / "sys/class/powercap/intel-rapl:0:0").mkdir(parents=True)
+        # TPMI RAPL domain.
+        self.link("sys/class/powercap/intel-rapl:1/device", "/sys/bus/auxiliary/devices/intel_vsec.tpmi-rapl.0")
+        # MMIO RAPL domain.
+        (self.root / "sys/class/powercap/intel-rapl-mmio:0").mkdir(parents=True)
+        # Active ACPI AC, battery, fan, power button, and thermal zone.
+        for dev in ("ACPI0003:00", "PNP0C0A:00", "PNP0C0B:00", "PNP0C0C:00", "LNXTHERM:00"):
+            self.write(f"sys/bus/acpi/devices/{dev}/status", "15\n")
+            self.write(f"sys/bus/acpi/devices/{dev}/modalias", f"acpi:{dev.split(':')[0]}:\n")
+        # Disabled ACPI battery (status=0) must be skipped.
+        self.write("sys/bus/acpi/devices/PNP0C0A:01/status", "0\n")
+        self.write("sys/bus/acpi/devices/PNP0C0A:01/modalias", "acpi:PNP0C0A:\n")
+        raw = discover(Host(self.root))
+        facts = {(kind, value) for kind, value, _ in raw}
+        for sym in ("POWERCAP", "PCI", "THERMAL", "ACPI", "ACPI_PROCESSOR", "INPUT"):
+            self.assertIn(("symbol", sym), facts)
+        for mod in ("INTEL_RAPL", "INTEL_RAPL_TPMI", "PROC_THERMAL_MMIO_RAPL",
+                    "ACPI_AC", "ACPI_BATTERY", "ACPI_FAN", "ACPI_BUTTON", "ACPI_THERMAL"):
+            self.assertIn(("modsymbol", mod), facts)
+        self.assertFalse(any(kind == "notice" and value == "unresolved-alias" for kind, value, _ in raw))
+        self.assertEqual(sum(1 for kind, value, _ in raw if (kind, value) == ("modsymbol", "INTEL_RAPL")), 1)
+        self.assertEqual(sum(1 for kind, value, _ in raw if (kind, value) == ("modsymbol", "ACPI_BATTERY")), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

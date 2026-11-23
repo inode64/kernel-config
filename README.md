@@ -360,8 +360,9 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   line continuations and relative object paths). This covers PCI/PCIe port
   services/USB, SATA/NVMe/SCSI, SD/MMC, USB4/Thunderbolt, network/MDIO PHYs and
   wireless devices, TPM transports, graphics, sound, input, sensors (including
-  active `drivetemp`/`nvme` hwmon and unbound I2C DDR4/DDR5 `spd5118`/`jc42`/
-  `ee1004` devices) and other registered drivers. Disabled ACPI devices
+  active `drivetemp`/`nvme` hwmon, `powercap` RAPL domains, standard active
+  ACPI AC/battery/button/fan/thermal devices, and unbound I2C DDR4/DDR5
+  `spd5118`/`jc42`/`ee1004` devices) and other registered drivers. Disabled ACPI devices
   (`status=0`) and ACPI companion nodes whose `physical_node` is already bound
   are skipped; multicast `input:` handlers (`evdev`, `input_leds`) and
   `hid_generic` fallbacks are resolved without false ambiguity.
@@ -603,7 +604,7 @@ These options change kernel build configuration and defaults. They do not create
   - ACPI `ACPI000D` (ACPI 4.0 power meter): `SENSORS_ACPI_POWER` plus the IPMI set, because `_PMM` reads an IPMI OperationRegion; without `acpi_ipmi` the kernel logs `No handler for Region [POWR] [IPMI]` on every hwmon read.
   - `dmi/id/sys_vendor` HP/HPE: `HP_ILO`, `HP_WATCHDOG` (confirmed by PCI `103c:3306`/`103c:3307` when visible). Dell: `DCDBAS`, `DELL_SMBIOS`. Supermicro: nothing beyond IPMI.
   - With ECC evidence: Intel host bridge (PCI class `0600`, the device ids handled by `ie31200_edac`): `EDAC_IE31200`; Xeon families by CPU model: `EDAC_SBRIDGE`, `EDAC_SKX`, `EDAC_I10NM` (including Ice Lake-X/D and Snow Ridge). AMD family 0fh+: `EDAC_AMD64`, plus `AMD_ATL` on Zen when the target tree provides it. AMD `EDAC_DECODE_MCE` is requested independently of DRAM ECC because CPU/cache machine checks remain useful. The CPU vendor follows `CPU_VENDOR_FILTER` when set, so the two phases never contradict each other.
-  - Intel SMBus (class `0c05`): `I2C_I801`. Intel LPC/eSPI bridge (class `0601`): `ITCO_WDT` (plus `LPC_ICH` when `EXPERT=y`; hpwdt and iTCO can coexist). AMD/ATI/Hygon FCH SMBus (`1022:790b`, `1022:780b`, `1d94:790b`, `1002:4385`): `I2C_PIIX4` and `SP5100_TCO` (because `sp5100_tco` does not bind as a `pci_driver`). CPU sensors: `SENSORS_CORETEMP` or `SENSORS_K10TEMP`.
+  - Intel SMBus (class `0c05`): `I2C_I801`. Intel LPC/eSPI bridge (class `0601`): `ITCO_WDT` (plus `LPC_ICH` when `EXPERT=y`; hpwdt and iTCO can coexist). AMD/ATI/Hygon FCH SMBus (`1022:790b`, `1022:780b`, `1d94:790b`, `1002:4385`): `I2C_PIIX4` and `SP5100_TCO` (because `sp5100_tco` does not bind as a `pci_driver`). CPU sensors: `SENSORS_CORETEMP` (plus `X86_PKG_TEMP_THERMAL` when every visible CPU advertises `pts` and `NET`/`X86_THERMAL_VECTOR` are enabled) or `SENSORS_K10TEMP`.
 
   EDAC, PCH, hwmon and watchdog detection is x86-only. `PROTECTED_CONFIG_SYMBOLS` and the explicit symbol lists still take precedence.
 

@@ -3261,6 +3261,29 @@ config HID_LED
         self.assert_symbol("IPMI_SSIF", "m")
         self.assert_symbol("IPMI_SI", "n")
 
+    def test_platform_drivers_intel_pkg_temp_thermal_flag_and_dependencies(self):
+        self.add_symbols("X86", "X86_64", "MODULES", "HWMON", "THERMAL", "NET", "X86_THERMAL_VECTOR")
+        self.add_symbols("SENSORS_CORETEMP", "SENSORS_K10TEMP", "X86_PKG_TEMP_THERMAL", kind="tristate")
+        intel_pts = "processor\t: 0\nvendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 143\nflags\t\t: dts pts\n"
+        self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y", NET="y",
+                                  X86_THERMAL_VECTOR="y", THERMAL="n", X86_PKG_TEMP_THERMAL="n")
+        env = self.make_host_root(cpuinfo=intel_pts)
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("THERMAL", "y")
+        self.assert_symbol("X86_PKG_TEMP_THERMAL", "m")
+        # Without NET, X86_PKG_TEMP_THERMAL dependencies are unmet so it is skipped.
+        self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y", NET="n",
+                                  X86_THERMAL_VECTOR="y", THERMAL="n", X86_PKG_TEMP_THERMAL="n")
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("X86_PKG_TEMP_THERMAL", "n")
+        # AMD CPUs do not request Intel X86_PKG_TEMP_THERMAL.
+        shutil.rmtree(self.root / "host")
+        env = self.make_host_root(cpuinfo=self.AMD_CPUINFO)
+        self.set_baseline_symbols(X86="y", X86_64="y", MODULES="y", NET="y",
+                                  X86_THERMAL_VECTOR="y", THERMAL="n", X86_PKG_TEMP_THERMAL="n")
+        self.assert_success(self.run_script("--strict", "--platform-drivers=auto", env=env))
+        self.assert_symbol("X86_PKG_TEMP_THERMAL", "n")
+
     def test_native_cpu_deduplicates_scaling_driver_crypto_accel_and_hardening(self):
         self.add_symbols("X86", "X86_64", "MODULES", "KMSAN", "CPU_FREQ", "CPU_IDLE",
                          "X86_AMD_PSTATE", "HALTPOLL_CPUIDLE", "CRYPTO", "CRYPTO_GHASH",

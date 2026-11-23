@@ -169,6 +169,20 @@ I2C_KNOWN_DRIVERS = {
     "ee1004": (("I2C",), ("EEPROM_EE1004",)),
 }
 
+# Standard ACPI platform devices that may remain unbound or map to short
+# generic module names (ac, battery, button, fan, thermal).
+ACPI_KNOWN_DRIVERS = {
+    "ACPI0003": (("ACPI",), ("ACPI_AC",)),
+    "PNP0C0A": (("ACPI",), ("ACPI_BATTERY",)),
+    "PNP0C0B": (("ACPI", "THERMAL"), ("ACPI_FAN",)),
+    "PNP0C0C": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
+    "PNP0C0D": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
+    "PNP0C0E": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
+    "LNXPWRBN": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
+    "LNXSLPBN": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
+    "LNXTHERM": (("ACPI", "ACPI_PROCESSOR", "THERMAL"), ("ACPI_THERMAL",)),
+}
+
 # Local and network filesystems detected from /proc/self/mountinfo.
 LOCAL_FS_KCONFIG = {
     "ext4": ("EXT4_FS",),
@@ -579,6 +593,19 @@ def discover(host):
                 modsymbols(("SENSORS_DRIVETEMP",), f"{path} hwmon=drivetemp")
             elif hwmon_name == "nvme":
                 symbols(("HWMON", "NVME_HWMON"), f"{path} hwmon=nvme")
+        if "powercap" in subsystems:
+            pc_name = Path(path).name
+            if re.fullmatch(r"intel-rapl:\d+", pc_name):
+                pc_dev = host.link_name(path + "/device")
+                if "tpmi" in pc_dev:
+                    symbols(("POWERCAP",), path)
+                    modsymbols(("INTEL_RAPL_TPMI",), f"{path} powercap=intel-rapl-tpmi")
+                else:
+                    symbols(("POWERCAP", "PCI"), path)
+                    modsymbols(("INTEL_RAPL",), f"{path} powercap=intel-rapl")
+            elif re.fullmatch(r"intel-rapl-mmio:\d+", pc_name):
+                symbols(("POWERCAP", "THERMAL"), path)
+                modsymbols(("PROC_THERMAL_MMIO_RAPL",), f"{path} powercap=intel-rapl-mmio")
 
         module = host.link_name(path + "/driver/module")
         driver = host.link_name(path + "/driver")
@@ -590,6 +617,18 @@ def discover(host):
         if "pci_express" in subsystems and driver in PCIE_SERVICE_DRIVERS:
             symbols(PCIE_SERVICE_DRIVERS[driver], f"{path} (bound {driver})")
             handled = True
+        if "acpi" in subsystems:
+            acpi_hid = host.read(path + "/hid") or Path(path).name.split(":", 1)[0]
+            if acpi_hid not in ACPI_KNOWN_DRIVERS and modalias.startswith("acpi:"):
+                for part in modalias[5:].split(":"):
+                    if part in ACPI_KNOWN_DRIVERS:
+                        acpi_hid = part
+                        break
+            if acpi_hid in ACPI_KNOWN_DRIVERS:
+                parents, mods = ACPI_KNOWN_DRIVERS[acpi_hid]
+                symbols(parents, path)
+                modsymbols(mods, f"{path} acpi:{acpi_hid}")
+                handled = True
         if "i2c" in subsystems and not module and not driver:
             i2c_name = host.read(path + "/name").lower()
             if not i2c_name and modalias.startswith("i2c:"):
