@@ -176,7 +176,7 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
 
 - `ALL_OPTIMIZATIONS`
   Enables the script's optimization preset: `OPTIMIZATION_PROFILE=server`, kernel `ZSTD` compression and server profile zswap tuning (`zstd`, falling back to `lz4`; the initial compression preset uses LZO). It preserves existing initramfs and firmware decompression support and does not disable shared compression libraries.
-  It also turns on every pruning toggle except `PRUNE_HARDENING` and `PRUNE_UNUSED_MODULES`: observability, legacy, debug/trace, selftests, sanitizers, coverage, fault injection, dangerous options, BPF, 32-bit compatibility, unused network protocols, old hardware, old x86 platforms, legacy ATA, insecure protocols, radios and DMA attack surface. Unless an application profile restores them (such as debugfs and trace events for `rasdaemon`), the result has no debugfs, ftrace, kprobes or BTF (bpftrace and `perf probe` stop working), no `IA32_EMULATION`, and on 6.17+ no iptables-legacy tables unless `iptables-legacy` or `firehol` is among the applications. A toggle can be turned off again after the flag, for example `--prune-compat32=false`.
+  It also turns on every pruning toggle except `PRUNE_HARDENING` and `PRUNE_UNUSED_MODULES`: observability, legacy, debug/trace, selftests, sanitizers, coverage, fault injection, dangerous options, BPF, 32-bit compatibility, unused network protocols, old hardware, old x86 platforms, legacy ATA, insecure protocols, radios and DMA attack surface. Unless an application profile restores them (such as trace events for `rasdaemon`, and debugfs when its rasdaemon release or CPU needs it), the result has no debugfs, ftrace, kprobes or BTF (bpftrace and `perf probe` stop working), no `IA32_EMULATION`, and on 6.17+ no iptables-legacy tables unless `iptables-legacy` or `firehol` is among the applications. A toggle can be turned off again after the flag, for example `--prune-compat32=false`.
   This setting is flag-only and must be enabled with `--all-optimizations`. To keep the existing kernel image compression, pass `--kernel-compression=keep` after this flag.
 
 - `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
@@ -645,25 +645,40 @@ These options change kernel build configuration and defaults. They do not create
     multipathd or require currently active paths. Vendor-specific SCSI handlers
     remain a separate hardware requirement.
 
-  - `rasdaemon`: rasdaemon records EDAC memory errors, PCIe AER and machine
-    checks from tracefs events (`ras:*`, `mce:mce_record`), so it needs
-    `TRACING` even when `--all-optimizations` prunes the tracers. The profile
+  - `rasdaemon`: rasdaemon records PCIe AER, machine checks and memory errors
+    from tracefs events (`ras:*`, `mce:mce_record`), so it needs `TRACING`
+    even when `--all-optimizations` prunes the tracers. The profile always
     requests `FTRACE` with `ENABLE_DEFAULT_TRACERS`, which provide the events
-    without the function tracer or kprobes, plus `RAS`, `EDAC`,
-    `ACPI_APEI_GHES`, `PCIEAER`, `X86_MCE`, `MEMORY_FAILURE` and
-    `MEMORY_HOTPLUG` for page offlining. The latter builds the sysfs interface
-    `/sys/devices/system/memory/{soft,hard}_offline_page`; without it,
-    rasdaemon falls back to accounting even when `PAGE_CE_ACTION=soft`.
-    `MEMORY_HOTREMOVE` is not required or requested. The vendor EDAC driver (`EDAC_AMD64`, `EDAC_IE31200`...)
-    comes from `--platform-drivers=auto` when memory ECC evidence is available. The profile also keeps `DEBUG_FS`
-    and `DEBUG_FS_ALLOW_ALL`, together with `TRACEFS_AUTOMOUNT_DEPRECATED`
-    where available: rasdaemon 0.8.4 discovers its tracing interface through
-    `debugfs/tracing`, so standalone tracefs does not suffice for that version.
-    With rasdaemon 1.0 or newer and a service that mounts `/sys/kernel/tracing`,
-    `--disable-symbols=TRACEFS_AUTOMOUNT_DEPRECATED` removes only that legacy
-    automount. Keep `DEBUG_FS` and `DEBUG_FS_ALLOW_ALL`: the ACPI EXTLOG handler
-    still opens `/sys/kernel/debug/ras/daemon_active`, without which the kernel
-    logs those errors to its console instead of delivering trace events.
+    without the function tracer or kprobes, plus `RAS`, `PCIEAER` and
+    `X86_MCE`. `PCIEAER` needs no evidence: sysfs does not show whether the
+    firmware grants AER to the operating system. The other symbols serve
+    consumers that only some hardware or rasdaemon releases have. Without host
+    evidence the profile requests all of them; with `--platform-drivers=auto`
+    (implied by `--native-arch`) it leaves one out when the evidence rules out
+    every consumer:
+
+    | Symbols | Consumer | Left out when |
+    |---|---|---|
+    | `EDAC` | memory controller events (`ras:mc_event`) | DRAM ECC is off |
+    | `ACPI_APEI`, `ACPI_APEI_GHES` | firmware-first errors (HEST) and machine checks saved in ERST | `/sys/firmware/acpi/tables` has no `HEST` (GHES), or neither `HEST` nor `ERST` (APEI) |
+    | `MEMORY_FAILURE`, `MEMORY_HOTPLUG` | memory failure events and page offlining, which uses `/sys/devices/system/memory/{soft,hard}_offline_page` (built with `MEMORY_HOTPLUG`) | DRAM ECC is off and no CXL memory device (PCI class 0502) is present |
+    | `DEBUG_FS`, `DEBUG_FS_ALLOW_ALL` | rasdaemon before 1.0, which finds tracefs only at `debugfs/tracing`, and ACPI EXTLOG, which only emits events while rasdaemon holds `/sys/kernel/debug/ras/daemon_active` open | rasdaemon is 1.0 or newer and the CPU is AMD or Hygon (EXTLOG needs Intel eMCA, `MCG_ELOG_P`) or the target is not x86 |
+    | `TRACEFS_AUTOMOUNT_DEPRECATED` | rasdaemon before 1.0 | rasdaemon is 1.0 or newer |
+
+    Missing or unreadable evidence keeps the request, and each symbol left out
+    is printed with its evidence. ECC comes from the same detection as the
+    platform drivers. The rasdaemon release comes from `rasdaemon --version` on
+    the running host; with `KC_HOST_ROOT` it stays unknown unless
+    `KC_RASDAEMON_VERSION` supplies it. The profile does not disable a symbol it
+    leaves out: `--all-optimizations` prunes debugfs, and the rest keep their
+    baseline value. `TRACEFS_AUTOMOUNT_DEPRECATED` returns at its Kconfig default
+    (`y`) whenever `TRACING` does; with rasdaemon 1.0 and a service that mounts
+    `/sys/kernel/tracing`, `--disable-symbols=TRACEFS_AUTOMOUNT_DEPRECATED`
+    removes that legacy automount. Without page offlining support rasdaemon
+    falls back to accounting even when `PAGE_CE_ACTION=soft`. `MEMORY_HOTREMOVE`
+    is not required or requested. The vendor EDAC driver (`EDAC_AMD64`,
+    `EDAC_IE31200`...) comes from `--platform-drivers=auto` when memory ECC
+    evidence is available.
 
   `firewalld` enables the nftables backend without requesting legacy-only NAT
   tables on kernels exposing `NETFILTER_XTABLES_LEGACY` (6.17+). Existing legacy
@@ -888,7 +903,7 @@ Several parameters support `auto`. Current detection logic is intentionally simp
   `CONFIG_XFS_SUPPORT_V4`
   `CONFIG_XFS_SUPPORT_ASCII_CI`
 
-`KC_HOST_ROOT=/path` prefixes every `/sys` and `/proc` read used by auto-detection and is passed to the initramfs inspector as its `--host-root` (its `/etc`, `/proc/self/mountinfo` and `/sys/class/block`). Native device discovery also reads the capture's `/proc/sys/kernel/osrelease` and `/lib/modules/<release>/modules.alias`, `modules.builtin` and `modules.builtin.modinfo`; it resolves captured sysfs links within that root and never falls back to live module metadata for an offline capture. It exists for the test suite and for offline analysis of a captured sysfs; it is not a tuning option, and tools such as `findmnt`, `nproc` or `xfs_info` still see the real host.
+`KC_HOST_ROOT=/path` prefixes every `/sys` and `/proc` read used by auto-detection and is passed to the initramfs inspector as its `--host-root` (its `/etc`, `/proc/self/mountinfo` and `/sys/class/block`). Native device discovery also reads the capture's `/proc/sys/kernel/osrelease` and `/lib/modules/<release>/modules.alias`, `modules.builtin` and `modules.builtin.modinfo`; it resolves captured sysfs links within that root and never falls back to live module metadata for an offline capture. It exists for the test suite and for offline analysis of a captured sysfs; it is not a tuning option, and tools such as `findmnt`, `nproc` or `xfs_info` still see the real host. A capture cannot run its own `rasdaemon --version`, so `KC_RASDAEMON_VERSION` (for example `1.0.0`) gives the `rasdaemon` profile the release installed on the captured host.
 
 Important limitation:
 

@@ -419,6 +419,29 @@ class KernelIntegrationTests(unittest.TestCase):
             self.assert_values(TRACEFS_AUTOMOUNT_DEPRECATED="n", DEBUG_FS="y", DEBUG_FS_ALLOW_ALL="y",
                                TRACING="y", EVENT_TRACING="y", RAS="y", MEMORY_FAILURE="y")
 
+    def test_real_rasdaemon_lets_pruning_drop_debugfs_without_a_consumer(self):
+        # AMD CPU (no ACPI EXTLOG) and rasdaemon 1.0 (tracefs): nothing restores
+        # the debugfs that --all-optimizations prunes; the trace events stay.
+        host = self.use_native_host()
+        (host / "proc/cpuinfo").write_text(
+            "vendor_id : AuthenticAMD\ncpu family : 25\nmodel : 97\nflags : mce mca\n")
+        table = host / "sys/firmware/dmi/tables/DMI"
+        table.parent.mkdir(parents=True)
+        table.write_bytes(memory_table(correction=3, total=64))
+        (host / "sys/firmware/acpi/tables").mkdir(parents=True)
+        (host / "sys/firmware/acpi/tables/MCFG").write_bytes(b"")
+        self.env = self.env | {"KC_RASDAEMON_VERSION": "rasdaemon 1.0.0"}
+        self.prepare_baseline(DEBUG_FS="y", DEBUG_FS_ALLOW_ALL="y", FTRACE="y")
+        result = self.run_script("--strict", "--all-optimizations", "--native-arch", "--applications=rasdaemon")
+        self.assert_success(result)
+        self.assertIn("rasdaemon does not request DEBUG_FS, DEBUG_FS_ALLOW_ALL", result.stdout)
+        self.assert_values(DEBUG_FS="n", TRACING="y", EVENT_TRACING="y", FTRACE="y",
+                           ENABLE_DEFAULT_TRACERS="y", RAS="y", PCIEAER="y", X86_MCE="y")
+        repeat = self.run_script("--strict", "--all-optimizations", "--native-arch",
+                                 "--applications=rasdaemon", "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+
     def test_real_server_profile_keeps_lockup_and_hung_task_detection(self):
         for option in ("--optimization-profile=server", "--all-optimizations"):
             with self.subTest(option=option):

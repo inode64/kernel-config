@@ -5739,6 +5739,95 @@ configure_platform_drivers_profile() {
     fi
 }
 
+# rasdaemon symbols whose only consumers depend on the hardware or on the
+# rasdaemon release. Host evidence (PLATFORM_DRIVERS=auto) leaves one out only
+# when it rules out every consumer; missing or unreadable evidence keeps it.
+collect_rasdaemon_requests() {
+    local target="$1"
+    local tables="${HOST_ROOT}/sys/firmware/acpi/tables" version="${KC_RASDAEMON_VERSION:-}"
+    local vendor=unknown path class
+    local legacy=1 extlog=1 apei=1 ghes=1 ecc=1 memory_errors=1
+    local -a skipped=()
+
+    if [[ "$PLATFORM_DRIVERS_EFFECTIVE" == auto ]]; then
+        # A captured host cannot run its binary; KC_RASDAEMON_VERSION supplies it.
+        if [[ -z "$version" && -z "$HOST_ROOT" ]] && command -v rasdaemon >/dev/null; then
+            version="$(rasdaemon --version 2>/dev/null || true)"
+        fi
+        version="${version#rasdaemon }"
+        # 1.0 reads /sys/kernel/tracing; older releases find tracefs only through debugfs.
+        if [[ "$version" =~ ^([0-9]+)\. ]] && ((BASH_REMATCH[1] >= 1)); then
+            legacy=0
+        fi
+        # ACPI EXTLOG, the only debugfs user left, needs Intel eMCA (MCG_ELOG_P).
+        if is_x86_config; then
+            vendor="$(resolve_cpu_vendor_or_detect)"
+            [[ "$vendor" != amd ]] || extlog=0
+        else
+            extlog=0
+        fi
+        if [[ -d "$tables" ]]; then
+            [[ -e "$tables/HEST" ]] || ghes=0
+            [[ -e "$tables/HEST" || -e "$tables/ERST" ]] || apei=0
+        fi
+        detect_host_memory_ecc
+        if [[ "$_MEMORY_ECC_STATE" == off ]]; then
+            ecc=0
+            memory_errors=0
+            # CXL memory devices (PCI class 0502) report DRAM errors without EDAC.
+            for path in "${HOST_ROOT}"/sys/bus/pci/devices/*/class; do
+                [[ -r "$path" ]] || continue
+                class="$(<"$path")"
+                if [[ "$class" == 0x0502* ]]; then
+                    memory_errors=1
+                    break
+                fi
+            done
+        fi
+    fi
+
+    if ((ecc)); then
+        append_unique_item EDAC "$target"
+    else
+        skipped+=("EDAC: DRAM ECC is off")
+    fi
+    if ((apei)); then
+        append_unique_item ACPI_APEI "$target"
+    else
+        skipped+=("ACPI_APEI: no HEST or ERST ACPI table")
+    fi
+    if ((ghes)); then
+        append_unique_item ACPI_APEI_GHES "$target"
+    else
+        skipped+=("ACPI_APEI_GHES: no HEST ACPI table")
+    fi
+    if ((legacy || extlog)); then
+        append_unique_item DEBUG_FS "$target"
+        append_unique_item DEBUG_FS_ALLOW_ALL "$target"
+    else
+        skipped+=("DEBUG_FS, DEBUG_FS_ALLOW_ALL: rasdaemon $version reads tracefs and ACPI EXTLOG needs an Intel CPU")
+    fi
+    if ((legacy)); then
+        append_unique_item TRACEFS_AUTOMOUNT_DEPRECATED "$target"
+    else
+        skipped+=("TRACEFS_AUTOMOUNT_DEPRECATED: rasdaemon $version reads /sys/kernel/tracing")
+    fi
+    # Userspace page offlining needs MEMORY_FAILURE and the sysfs interface in
+    # drivers/base/memory.c, built with MEMORY_HOTPLUG.
+    ((_SYMBOL_CACHE_LOADED)) || _load_symbol_cache
+    if [[ "${_SYMBOL_VALUE_CACHE[ARCH_SUPPORTS_MEMORY_FAILURE]:-n}" == y ]]; then
+        if ((memory_errors)); then
+            append_unique_item MEMORY_FAILURE "$target"
+            append_unique_item MEMORY_HOTPLUG "$target"
+        else
+            skipped+=("MEMORY_FAILURE, MEMORY_HOTPLUG: DRAM ECC is off and no CXL memory device is present")
+        fi
+    fi
+    for path in "${skipped[@]}"; do
+        echo "    (rasdaemon does not request $path)"
+    done
+}
+
 configure_application_profiles() {
     local profile sym
     local qemu_cpu_vendor=""
@@ -5997,29 +6086,22 @@ configure_application_profiles() {
                 done
                 ;;
             rasdaemon)
-                # rasdaemon records memory (EDAC), PCIe AER and machine-check
-                # errors from tracefs events (ras:*, mce:mce_record), so it needs
+                # rasdaemon records PCIe AER, machine-check and memory errors
+                # from tracefs events (ras:*, mce:mce_record), so it needs
                 # TRACING even when the observability prune drops the tracers:
                 # FTRACE plus ENABLE_DEFAULT_TRACERS provide the events without
-                # the function tracer. rasdaemon 0.8.4 discovers that interface
-                # through debugfs/tracing; both debugfs and its legacy tracefs
-                # automount must remain available despite the pruning presets.
-                # Version 1.0 can use standalone tracefs, but ACPI EXTLOG still
-                # needs debugfs/ras/daemon_active to request userspace events.
-                # Userspace page offlining needs MEMORY_FAILURE and the sysfs
-                # interface in drivers/base/memory.c, built with MEMORY_HOTPLUG.
+                # the function tracer. AER is requested without host evidence:
+                # sysfs does not show whether the firmware grants it to the OS.
                 # BRANCH_PROFILE_NONE is the default of the branch-profiling choice
                 # FTRACE exposes; the coverage prune may have requested it off.
-                for sym in RAS EDAC ACPI_APEI ACPI_APEI_GHES PCIEPORTBUS PCIEAER FTRACE ENABLE_DEFAULT_TRACERS TRACING TRACEPOINTS EVENT_TRACING BRANCH_PROFILE_NONE DEBUG_FS DEBUG_FS_ALLOW_ALL TRACEFS_AUTOMOUNT_DEPRECATED; do
+                # collect_rasdaemon_requests adds what depends on the hardware.
+                for sym in RAS PCIEPORTBUS PCIEAER FTRACE ENABLE_DEFAULT_TRACERS TRACING TRACEPOINTS EVENT_TRACING BRANCH_PROFILE_NONE; do
                     append_unique_item "$sym" enable_syms
                 done
                 if is_x86_config; then
                     append_unique_item X86_MCE enable_syms
                 fi
-                if [[ "${_SYMBOL_VALUE_CACHE[ARCH_SUPPORTS_MEMORY_FAILURE]:-n}" == y ]]; then
-                    append_unique_item MEMORY_FAILURE enable_syms
-                    append_unique_item MEMORY_HOTPLUG enable_syms
-                fi
+                collect_rasdaemon_requests enable_syms
                 ;;
             python)
                 # The options dev-lang/python checks (PYTHON_KERNEL_CHECKS).

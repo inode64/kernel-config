@@ -1908,6 +1908,80 @@ config HID_LED
         self.assert_symbol("MEMORY_HOTPLUG", "y")
         self.assert_symbol("MEMORY_HOTREMOVE", "n")
 
+    def test_rasdaemon_profile_requests_hardware_support_only_with_evidence(self):
+        always = ("RAS", "PCIEPORTBUS", "PCIEAER", "FTRACE", "ENABLE_DEFAULT_TRACERS", "TRACING",
+                  "TRACEPOINTS", "EVENT_TRACING", "X86_MCE")
+        apei = ("ACPI_APEI", "ACPI_APEI_GHES")
+        debugfs = ("DEBUG_FS", "DEBUG_FS_ALLOW_ALL")
+        memory = ("MEMORY_FAILURE", "MEMORY_HOTPLUG")
+        optional = (*apei, *debugfs, "TRACEFS_AUTOMOUNT_DEPRECATED", *memory)
+        self.add_symbols("X86", "ARCH_SUPPORTS_MEMORY_FAILURE", "EDAC", *always, *optional)
+        non_ecc = memory_table(correction=3, total=64)
+
+        def run(*extra, cpuinfo=self.AMD_CPUINFO, tables=("MCFG",), memory_dmi=non_ecc, pci=(),
+                version="rasdaemon 1.0.0"):
+            shutil.rmtree(self.root / "host", ignore_errors=True)
+            self.set_baseline_symbols(X86="y", ARCH_SUPPORTS_MEMORY_FAILURE="y",
+                                      **dict.fromkeys((*always, *optional), "n"))
+            env = self.make_host_root(cpuinfo=cpuinfo, acpi_tables=tables, memory=memory_dmi, pci=pci)
+            if version is not None:
+                env["KC_RASDAEMON_VERSION"] = version
+            result = self.run_script("--strict", "--platform-drivers=auto", "--applications=rasdaemon",
+                                     *extra, env=env)
+            self.assert_success(result)
+            for symbol in always:
+                self.assert_symbol(symbol, "y")
+            return result
+
+        # AMD, non-ECC DIMMs, no HEST/ERST and rasdaemon 1.0: only the trace events remain.
+        result = run()
+        for symbol in optional:
+            self.assert_symbol(symbol, "n")
+        for text in ("EDAC: DRAM ECC is off", "ACPI_APEI: no HEST or ERST ACPI table",
+                     "DEBUG_FS, DEBUG_FS_ALLOW_ALL: rasdaemon 1.0.0 reads tracefs",
+                     "TRACEFS_AUTOMOUNT_DEPRECATED: rasdaemon 1.0.0 reads /sys/kernel/tracing",
+                     "MEMORY_FAILURE, MEMORY_HOTPLUG: DRAM ECC is off"):
+            self.assertIn(f"rasdaemon does not request {text}", result.stdout)
+
+        # Older or unknown releases still find tracefs only through debugfs.
+        for version in ("rasdaemon 0.8.4", None):
+            with self.subTest(version=version):
+                run(version=version)
+                for symbol in (*debugfs, "TRACEFS_AUTOMOUNT_DEPRECATED"):
+                    self.assert_symbol(symbol, "y")
+
+        # An Intel CPU may expose ACPI EXTLOG, which needs debugfs ras/daemon_active.
+        run(cpuinfo=self.INTEL_CPUINFO)
+        for symbol in debugfs:
+            self.assert_symbol(symbol, "y")
+        self.assert_symbol("TRACEFS_AUTOMOUNT_DEPRECATED", "n")
+
+        # HEST means firmware-first errors through GHES; ERST alone needs only APEI.
+        run(tables=("HEST",))
+        for symbol in apei:
+            self.assert_symbol(symbol, "y")
+        run(tables=("ERST",))
+        self.assert_symbol("ACPI_APEI", "y")
+        self.assert_symbol("ACPI_APEI_GHES", "n")
+        # Without a readable ACPI table directory nothing is ruled out.
+        run(tables=())
+        for symbol in apei:
+            self.assert_symbol(symbol, "y")
+
+        # Unknown ECC, or a CXL memory device, keeps memory error handling.
+        result = run(memory_dmi=None)
+        self.assertNotIn("rasdaemon does not request EDAC", result.stdout)
+        for symbol in memory:
+            self.assert_symbol(symbol, "y")
+        run(pci=(("0000:40:00.0", "0x8086", "0x0d93", "0x050210"),))
+        for symbol in memory:
+            self.assert_symbol(symbol, "y")
+
+        # Explicit overrides still win over the profile request.
+        run("--disable-symbols=DEBUG_FS", version=None)
+        self.assert_symbol("DEBUG_FS", "n")
+        self.assert_symbol("TRACEFS_AUTOMOUNT_DEPRECATED", "y")
+
     def test_server_profile_keeps_lockup_and_hung_task_detection(self):
         detectors = ("DEBUG_KERNEL", "LOCKUP_DETECTOR", "SOFTLOCKUP_DETECTOR", "DETECT_HUNG_TASK",
                      "DETECT_HUNG_TASK_BLOCKER")
