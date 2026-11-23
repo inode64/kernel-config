@@ -1454,6 +1454,60 @@ config HID_LED
                 self.assert_symbol("TCG_TPM2_HMAC", baseline)
                 self.assertNotIn("CONFIG_TCG_TPM2_HMAC", result.stdout)
 
+    def test_tpm_auto_detects_specific_transport_without_forcing_vtpm_proxy(self):
+        self.add_symbols(
+            "TCG_TPM", "HW_RANDOM_TPM", "TCG_TIS_CORE", "TCG_TIS", "TCG_CRB",
+            "TCG_VTPM_PROXY", "SPI", "TCG_TIS_SPI", "I2C", "TCG_TIS_I2C",
+        )
+        base = dict(
+            TCG_TPM="n", HW_RANDOM_TPM="n", TCG_TIS_CORE="n", TCG_TIS="n",
+            TCG_CRB="n", TCG_VTPM_PROXY="n", SPI="n", TCG_TIS_SPI="n",
+            I2C="n", TCG_TIS_I2C="n",
+        )
+        # CRB-only TPM 2.0 (e.g. AMD fTPM / Intel PTT): enables TCG_CRB only.
+        env = self.make_host_root()
+        tpm_dev = Path(env["KC_HOST_ROOT"]) / "sys/class/tpm/tpm0/device"
+        tpm_dev.mkdir(parents=True)
+        (tpm_dev.parent / "tpm_version_major").write_text("2\n")
+        (tpm_dev / "driver").symlink_to("/sys/bus/acpi/drivers/tpm_crb_acpi")
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--tpm-support=auto", env=env))
+        self.assert_symbol("TCG_TPM", "y")
+        self.assert_symbol("HW_RANDOM_TPM", "y")
+        self.assert_symbol("TCG_CRB", "y")
+        self.assert_symbol("TCG_TIS", "n")
+        self.assert_symbol("TCG_VTPM_PROXY", "n")
+        # SPI TPM: enables SPI parent, TCG_TIS_CORE, and TCG_TIS_SPI only.
+        shutil.rmtree(self.root / "host")
+        env = self.make_host_root()
+        tpm_drv = Path(env["KC_HOST_ROOT"]) / "sys/class/tpm/tpm0/device/driver"
+        tpm_drv.mkdir(parents=True)
+        (tpm_drv.parent.parent / "tpm_version_major").write_text("2\n")
+        (tpm_drv / "module").symlink_to("/sys/module/tpm_tis_spi")
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--tpm-support=auto", env=env))
+        self.assert_symbol("SPI", "y")
+        self.assert_symbol("TCG_TIS_SPI", "y")
+        self.assert_symbol("TCG_CRB", "n")
+        self.assert_symbol("TCG_VTPM_PROXY", "n")
+        # Unidentified transport on TPM 1.2 falls back to TIS without CRB or vTPM proxy.
+        shutil.rmtree(self.root / "host")
+        env = self.make_host_root()
+        tpm = Path(env["KC_HOST_ROOT"]) / "sys/class/tpm/tpm0"
+        tpm.mkdir(parents=True)
+        (tpm / "tpm_version_major").write_text("1\n")
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--tpm-support=auto", env=env))
+        self.assert_symbol("TCG_TIS", "y")
+        self.assert_symbol("TCG_CRB", "n")
+        self.assert_symbol("TCG_VTPM_PROXY", "n")
+        # Explicit --tpm-support=on still enables generic TIS/CRB and TCG_VTPM_PROXY.
+        self.set_baseline_symbols(**base)
+        self.assert_success(self.run_script("--strict", "--tpm-support=on", env=env))
+        self.assert_symbol("TCG_TIS", "y")
+        self.assert_symbol("TCG_CRB", "y")
+        self.assert_symbol("TCG_VTPM_PROXY", "y")
+
     def test_server_profile_enables_compressed_firmware(self):
         self.add_symbols("FW_LOADER")
         self.set_baseline_symbols(FW_LOADER="y", FW_LOADER_COMPRESS="n",

@@ -2169,6 +2169,95 @@ detect_host_tpm_versions() {
     printf '%s\n' "${versions[@]}"
 }
 
+detect_host_tpm_transports() {
+    local path driver_mod driver_name dev_name hid modalias candidate sym
+    local -a transports=()
+    local -a matched=()
+
+    for path in "${HOST_ROOT}"/sys/class/tpm/tpm*; do
+        [[ -d "$path" ]] || continue
+        driver_mod=""
+        driver_name=""
+        dev_name=""
+        hid=""
+        modalias=""
+        matched=()
+
+        if [[ -L "$path/device/driver/module" ]]; then
+            driver_mod="$(readlink "$path/device/driver/module" 2>/dev/null || true)"
+            driver_mod="${driver_mod##*/}"
+            driver_mod="${driver_mod//-/_}"
+        fi
+        if [[ -L "$path/device/driver" ]]; then
+            driver_name="$(readlink "$path/device/driver" 2>/dev/null || true)"
+            driver_name="${driver_name##*/}"
+            driver_name="${driver_name//-/_}"
+        fi
+
+        for candidate in "$driver_mod" "$driver_name"; do
+            [[ -n "$candidate" ]] || continue
+            case "$candidate" in
+                tpm_crb | tpm_crb_acpi) matched=(TCG_CRB) ;;
+                tpm_crb_ffa) matched=(TCG_CRB TCG_ARM_CRB_FFA) ;;
+                tpm_tis | tpm_tis_acpi | tpm_tis_pnp) matched=(TCG_TIS_CORE TCG_TIS) ;;
+                tpm_tis_spi) matched=(SPI TCG_TIS_CORE TCG_TIS_SPI) ;;
+                tpm_tis_i2c) matched=(I2C TCG_TIS_CORE TCG_TIS_I2C) ;;
+                tpm_tis_i2c_cr50 | tcg_tis_i2c_cr50) matched=(I2C TCG_TIS_I2C_CR50) ;;
+                tpm_i2c_atmel | tpm_tis_i2c_atmel) matched=(I2C TCG_TIS_I2C_ATMEL) ;;
+                tpm_i2c_infineon) matched=(I2C TCG_TIS_I2C_INFINEON) ;;
+                tpm_i2c_nuvoton) matched=(I2C TCG_TIS_I2C_NUVOTON) ;;
+                tpm_st33zp24_i2c) matched=(I2C TCG_TIS_ST33ZP24 TCG_TIS_ST33ZP24_I2C) ;;
+                tpm_st33zp24_spi) matched=(SPI TCG_TIS_ST33ZP24 TCG_TIS_ST33ZP24_SPI) ;;
+                tpm_tis_synquacer) matched=(TCG_TIS_CORE TCG_TIS_SYNQUACER) ;;
+                tpm_nsc) matched=(TCG_NSC) ;;
+                tpm_atmel) matched=(TCG_ATMEL) ;;
+                tpm_infineon) matched=(TCG_INFINEON) ;;
+                tpm_ibmvtpm) matched=(TCG_IBMVTPM) ;;
+                tpm_loongson) matched=(TCG_LOONGSON) ;;
+                xen_tpmfront) matched=(TCG_XEN) ;;
+                tpm_vtpm_proxy) matched=(TCG_VTPM_PROXY) ;;
+                tpm_ftpm_tee) matched=(TCG_FTPM_TEE) ;;
+                tpm_svsm) matched=(TCG_SVSM) ;;
+            esac
+            ((${#matched[@]} > 0)) && break
+        done
+
+        if ((${#matched[@]} == 0)); then
+            if [[ -r "$path/device/hid" ]]; then
+                hid="$(<"$path/device/hid")"
+                hid="${hid//[[:space:]]/}"
+            elif [[ -L "$path/device" ]]; then
+                dev_name="$(readlink "$path/device" 2>/dev/null || true)"
+                dev_name="${dev_name##*/}"
+                hid="${dev_name%%:*}"
+            fi
+            if [[ -z "$hid" && -r "$path/device/modalias" ]]; then
+                modalias="$(<"$path/device/modalias")"
+                if [[ "$modalias" == acpi:* ]]; then
+                    hid="${modalias#acpi:}"
+                    hid="${hid%%:*}"
+                fi
+            fi
+            case "$hid" in
+                PNP0C31 | ATM1200 | IFX0102 | BCM0101 | BCM0102 | NSC1200 | ICO0102 | SMO0768)
+                    matched=(TCG_TIS_CORE TCG_TIS)
+                    ;;
+                GOOG0005)
+                    matched=(I2C TCG_TIS_I2C_CR50)
+                    ;;
+            esac
+        fi
+
+        for sym in "${matched[@]}"; do
+            append_unique_item "$sym" transports
+        done
+    done
+
+    if ((${#transports[@]} > 0)); then
+        printf '%s\n' "${transports[@]}"
+    fi
+}
+
 resolve_tpm_support() {
     local mode detected
 
@@ -4527,6 +4616,10 @@ configure_native_arch() {
     fi
     if [[ "$(detect_host_tpm_versions)" != none ]]; then
         add_native_arch_candidate TCG_TPM symbol "TPM class device present"
+        while IFS= read -r sym; do
+            [[ -n "$sym" ]] || continue
+            add_native_arch_candidate "$sym" symbol "detected TPM transport"
+        done < <(detect_host_tpm_transports)
     fi
     if [[ "$(detect_host_iommu_support)" == on ]]; then
         add_native_arch_candidate IOMMU_SUPPORT symbol "IOMMU detected"
@@ -5461,11 +5554,13 @@ configure_initrd_support_profile() {
 
 configure_tpm_support_profile() {
     local mode="$1"
-    shift
-    local version
+    local is_auto="$2"
+    shift 2
+    local version sym
     local logged_version=0
     local -a enable_syms=()
     local -a disable_syms=()
+    local -a detected_transports=()
 
     echo
     echo "==> Applying TPM support profile: $mode"
@@ -5493,29 +5588,57 @@ configure_tpm_support_profile() {
 
     case "$mode" in
         on)
-            echo "    (keeping generic TPM support)"
-            enable_syms=(
-                TCG_TPM
-                HW_RANDOM_TPM
-                TCG_TIS_CORE
-                TCG_TIS
-                TCG_CRB
-                TCG_VTPM_PROXY
-            )
-            for version in "$@"; do
-                case "$version" in
-                    2.0)
-                        # TCG_TPM2_HMAC stays as the baseline has it: upstream
-                        # defaults to n and it adds HMAC and encryption to every
-                        # kernel-to-TPM transaction.
-                        append_unique_item "TCG_CRB" enable_syms
-                        append_unique_item "TCG_TIS" enable_syms
-                        ;;
-                    1.2)
-                        append_unique_item "TCG_TIS" enable_syms
-                        ;;
-                esac
-            done
+            # TCG_TPM2_HMAC stays as the baseline has it: upstream defaults to n
+            # and it adds HMAC and encryption to every kernel-to-TPM transaction.
+            if [[ "$is_auto" == "1" ]]; then
+                mapfile -t detected_transports < <(detect_host_tpm_transports)
+                enable_syms=(
+                    TCG_TPM
+                    HW_RANDOM_TPM
+                )
+                if ((${#detected_transports[@]} > 0)); then
+                    echo "    (keeping detected TPM transport: ${detected_transports[*]})"
+                    for sym in "${detected_transports[@]}"; do
+                        append_unique_item "$sym" enable_syms
+                    done
+                else
+                    echo "    (TPM transport could not be identified; keeping generic TIS/CRB support)"
+                    for version in "$@"; do
+                        case "$version" in
+                            2.0 | unknown)
+                                append_unique_item "TCG_TIS_CORE" enable_syms
+                                append_unique_item "TCG_TIS" enable_syms
+                                append_unique_item "TCG_CRB" enable_syms
+                                ;;
+                            1.2)
+                                append_unique_item "TCG_TIS_CORE" enable_syms
+                                append_unique_item "TCG_TIS" enable_syms
+                                ;;
+                        esac
+                    done
+                fi
+            else
+                echo "    (keeping generic TPM support)"
+                enable_syms=(
+                    TCG_TPM
+                    HW_RANDOM_TPM
+                    TCG_TIS_CORE
+                    TCG_TIS
+                    TCG_CRB
+                    TCG_VTPM_PROXY
+                )
+                for version in "$@"; do
+                    case "$version" in
+                        2.0)
+                            append_unique_item "TCG_CRB" enable_syms
+                            append_unique_item "TCG_TIS" enable_syms
+                            ;;
+                        1.2)
+                            append_unique_item "TCG_TIS" enable_syms
+                            ;;
+                    esac
+                done
+            fi
             ;;
         off)
             echo "    (pruning TPM support)"
@@ -7070,12 +7193,14 @@ fi
 
 if [[ "$TPM_RESOLVED" != "none" ]]; then
     TPM_MODE="$TPM_RESOLVED"
+    TPM_IS_AUTO=0
 
     if [[ "$TPM_MODE" != "on" && "$TPM_MODE" != "off" ]]; then
         # auto-detected: TPM_RESOLVED contains version strings (1.2, 2.0, unknown)
         # reuse them directly instead of calling detect_host_tpm_versions again
         TPM_HOST_VERSIONS="$TPM_RESOLVED"
         TPM_MODE="on"
+        TPM_IS_AUTO=1
     else
         # explicit on/off: detect versions for informational logging
         TPM_HOST_VERSIONS="$(detect_host_tpm_versions)"
@@ -7083,9 +7208,9 @@ if [[ "$TPM_RESOLVED" != "none" ]]; then
 
     if [[ "$TPM_HOST_VERSIONS" != "none" ]]; then
         mapfile -t TPM_EFFECTIVE <<<"$TPM_HOST_VERSIONS"
-        configure_tpm_support_profile "$TPM_MODE" "${TPM_EFFECTIVE[@]}"
+        configure_tpm_support_profile "$TPM_MODE" "$TPM_IS_AUTO" "${TPM_EFFECTIVE[@]}"
     else
-        configure_tpm_support_profile "$TPM_MODE"
+        configure_tpm_support_profile "$TPM_MODE" "$TPM_IS_AUTO"
     fi
 fi
 
