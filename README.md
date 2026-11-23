@@ -551,6 +551,20 @@ These options change kernel build configuration and defaults. They do not create
 - `DMA_ENGINE_SUPPORT=none|auto|on|off`
   Keeps or prunes `CONFIG_DMADEVICES` based on whether the running host exposes `dmaengine` devices.
 
+- `SERIAL_SUPPORT=none|auto` / `--serial-support=none|auto`
+  Default `none` preserves the baseline. Explicit `auto` removes native UART
+  drivers under `drivers/tty/serial` only on a native x86 ACPI host with no
+  detected ports. It checks registered TTYs (ignoring empty 8250 slots), PCI
+  communication controllers, PNP/ACPI identifiers from the target kernel,
+  serdev devices, console/debug arguments and ACPI SPCR/DBG2 tables. A firmware
+  UART counts as absent only with status 0. Missing inventory, virtual machines
+  and cross compilation preserve the baseline; detected ports are also retained.
+  An explicit enabled/module or protected active UART symbol keeps the stack.
+  Requires Python 3.11+ and `lib/`. It does not disable `TTY`, USB ACM/USB serial,
+  `SERIO` (also used by PS/2), `SERIO_SERPORT`, or `SERIAL_MULTI_INSTANTIATE`
+  (I2C/SPI devices). Use this only for the current hardware; reconfigure before
+  adding a native serial card or enabling a UART in firmware.
+
 - `IOMMU_SUPPORT=none|auto|on|off`
   Keeps or prunes generic IOMMU support and selects `AMD_IOMMU` or `INTEL_IOMMU` from the resolved CPU vendor. `auto` keeps IOMMU support only when the host exposes `/sys/class/iommu` entries or an ACPI `DMAR`/`IVRS` table; a CPU or firmware without either (a Celeron without VT-d, for example) prunes it.
 

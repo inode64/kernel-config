@@ -12,7 +12,7 @@ import textwrap
 import unittest
 
 from test_initramfs_check import cpio
-from test_hardware_detect import memory_table
+from test_hardware_detect import memory_table, serial_host
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "kernel-config.sh"
@@ -149,6 +149,25 @@ class ScriptTests(unittest.TestCase):
             for sym in symbols:
                 sym_kind = kind or ("tristate" if sym == "ZRAM" else "bool")
                 stream.write(f'\nconfig {sym}\n\t{sym_kind} "{sym}"\n')
+
+    def test_serial_auto_is_opt_in_and_skips_cross_compilation_and_guests(self):
+        host = self.root / "serial-host"
+        serial_host(host)
+        source = self.tree / "drivers/tty/serial"
+        source.mkdir(parents=True)
+        (source / "uart.c").write_text('"PNP0500" "PNP0501"')
+        self.add_kconfig('config SERIAL_8250\n\tbool "UART"\n', "drivers/tty/serial/Kconfig")
+        self.add_symbols("X86")
+        self.set_baseline_symbols(X86="y", SERIAL_8250="y")
+        env = {"KC_HOST_ROOT": str(host)}
+        for args, extra in (((), {}), (("--serial-support=auto",), {"CROSS_COMPILE": "aarch64-"}),
+                            (("--serial-support=auto", "--host-type=qemu"), {})):
+            result = self.run_script(*args, env=env | extra)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assert_symbol("SERIAL_8250", "y")
+        result = self.run_script("--serial-support=auto", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_symbol("SERIAL_8250", "n")
 
     def add_kconfig(self, text, path="Kconfig"):
         target = self.tree / path

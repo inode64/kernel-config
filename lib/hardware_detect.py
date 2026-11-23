@@ -116,6 +116,7 @@ CLASS_PARENTS = {
     "bluetooth": ("BT",), "ieee80211": ("WIRELESS", "WLAN", "CFG80211"),
     "infiniband": ("INFINIBAND",), "dma": ("DMADEVICES",),
 }
+
 PCI_DRIVERS = {
     "0x010802": ("BLOCK", "BLK_DEV_NVME"),
     "0x010601": ("BLOCK", "SCSI", "ATA", "SATA_AHCI"),
@@ -125,6 +126,93 @@ PCI_DRIVERS = {
     "0x0c0330": ("USB_SUPPORT", "USB", "USB_XHCI_HCD", "USB_XHCI_PCI"),
 }
 
+
+def serial_ports(host, kernel_srcdir):
+    """Detect native UARTs; USB serial and virtual terminals are separate stacks."""
+    try:
+        cmdline = host.path("/proc/cmdline").read_text()
+        consoles = host.path("/proc/consoles").read_text().splitlines()
+        for arg in cmdline.split():
+            key, _, value = arg.partition("=")
+            if key in {"earlycon", "earlyprintk", "kgdboc", "kgdboc_earlycon"}:
+                return "on", f"kernel command line: {arg}"
+            if key == "console" and value and not re.fullmatch(r"tty\d+(?:,.*)?|null", value):
+                return "on", f"kernel command line: {arg}"
+        if not consoles:
+            return "unknown", "active console inventory unavailable"
+        for line in consoles:
+            fields = line.split()
+            if not fields:
+                return "unknown", "incomplete active console inventory"
+            if not re.fullmatch(r"tty\d+|ttynull", fields[0]):
+                return "on", f"active console: {fields[0]}"
+
+        ttys = list(host.path("/sys/class/tty").iterdir())
+        if not ttys:
+            return "unknown", "TTY inventory unavailable"
+        for tty in ttys:
+            name = tty.name
+            if re.fullmatch(r"tty\d+|tty|console|ptmx|ttynull|tty(?:USB|ACM)\d+", name):
+                continue
+            # 8250 registers empty slots too; PORT_UNKNOWN (0) is not a UART.
+            if re.fullmatch(r"ttyS\d+", name) and host.read(f"/sys/class/tty/{name}/type") == "0":
+                continue
+            return "on", f"registered non-USB tty: {name}"
+        serial = host.read("/proc/tty/driver/serial")
+        if re.search(r"\buart:(?!unknown\b)\S+", serial):
+            return "on", "UART in /proc/tty/driver/serial"
+        if host.children("/sys/bus/serial/devices"):
+            return "on", "registered serdev device"
+
+        tables = {p.name for p in host.path("/sys/firmware/acpi/tables").iterdir()}
+        if tables & {"SPCR", "DBG2"}:
+            return "on", "ACPI serial console/debug table"
+        if "DSDT" not in tables or host.path("/sys/firmware/devicetree/base").exists():
+            return "unknown", "native UART pruning requires an ACPI platform"
+        cpuinfo = host.path("/proc/cpuinfo").read_text()
+        identity = " ".join(host.path(f"/sys/class/dmi/id/{name}").read_text()
+                            for name in ("sys_vendor", "product_name"))
+        if (not cpuinfo.strip() or not identity.strip()
+                or re.search(r"\bhypervisor\b", cpuinfo)
+                or re.search(r"QEMU|KVM|VMware|Virtual|Xen|Bochs|bhyve", identity, re.I)
+                or host.read("/sys/hypervisor/type")):
+            return "unknown", "virtual machine or incomplete platform identity"
+
+        for device in host.path("/sys/bus/pci/devices").iterdir():
+            pci_class = host.path(f"/sys/bus/pci/devices/{device.name}/class").read_text().strip()
+            if not re.fullmatch(r"0x[0-9a-fA-F]{6}", pci_class):
+                return "unknown", "incomplete PCI class inventory"
+            if pci_class.lower().startswith("0x07"):
+                return "on", f"PCI communication controller: {device.name}"
+
+        # Use the target kernel's identifiers, including unbound PNP/ACPI UARTs.
+        # Looking only at loaded modules would miss hardware disabled in .config.
+        sources = list((Path(kernel_srcdir) / "drivers/tty/serial").rglob("*.c"))
+        ids = {identifier for source in sources
+               for identifier in re.findall(r'"([A-Z0-9]{7,8})"', source.read_text())}
+        if not {"PNP0500", "PNP0501"} <= ids:
+            return "unknown", "target UART source identifiers unavailable"
+        for device in host.path("/sys/bus/pnp/devices").iterdir():
+            identifiers = host.path(f"/sys/bus/pnp/devices/{device.name}/id").read_text().split()
+            if not identifiers:
+                return "unknown", "incomplete PNP inventory"
+            if ids.intersection(identifiers):
+                return "on", f"PNP UART: {device.name}"
+        acpi = list(host.path("/sys/bus/acpi/devices").iterdir())
+        if not acpi:
+            return "unknown", "ACPI device inventory unavailable"
+        for device in acpi:
+            identifiers = {device.name.split(":")[0],
+                           *host.read(f"/sys/bus/acpi/devices/{device.name}/modalias").split(":")}
+            if not ids.intersection(identifiers):
+                continue
+            status = host.read(f"/sys/bus/acpi/devices/{device.name}/status")
+            # Only _STA=0 establishes that the firmware has disabled this UART.
+            if status != "0":
+                return "on", f"ACPI UART: {device.name} (status={status or 'unknown'})"
+        return "off", "no native UART in tty, PCI, PNP or ACPI; USB serial support retained"
+    except (OSError, ValueError) as error:
+        return "unknown", f"incomplete UART inventory: {error}"
 
 def memory_ecc(host):
     """Return on/off/unknown; missing EDAC drivers never prove non-ECC RAM."""
@@ -329,8 +417,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host-root", default="/")
     parser.add_argument("--memory-ecc", action="store_true", help="report DRAM ECC evidence only")
+    parser.add_argument("--serial-ports", action="store_true", help="report native UART evidence only")
+    parser.add_argument("--kernel-srcdir", help="target kernel sources for UART hardware identifiers")
     args = parser.parse_args()
     host = Host(args.host_root)
+    if args.serial_ports:
+        if not args.kernel_srcdir:
+            parser.error("--serial-ports requires --kernel-srcdir")
+        print("\t".join(serial_ports(host, args.kernel_srcdir)))
+        return
     if args.memory_ecc:
         print("\t".join(memory_ecc(host)))
         return

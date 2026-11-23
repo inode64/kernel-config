@@ -83,6 +83,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   INITRD_SUPPORT=none       -> none, auto, on, off; keep or prune initramfs/initrd boot support
 #   TPM_SUPPORT=none          -> none, auto, on, off; keep or prune TPM support and detect TPM 1.2/2.0 on the host
 #   DMA_ENGINE_SUPPORT=none   -> none, auto, on, off; keep or prune DMA Engine support based on currently exposed dmaengine devices
+#   SERIAL_SUPPORT=none       -> none, auto; prune native UART drivers only after a complete negative hardware inventory
 #   IOMMU_SUPPORT=none        -> none, auto, on, off; keep or prune IOMMU support and select AMD/Intel IOMMU by CPU vendor; auto needs /sys/class/iommu entries or an ACPI DMAR/IVRS table
 #   NUMA_SUPPORT=none         -> none, auto, on, off; keep or prune NUMA support based on currently exposed NUMA nodes
 #   NR_CPUS=none              -> none, auto, or an integer; adjust CONFIG_NR_CPUS to the detected or requested CPU count
@@ -176,6 +177,7 @@ Options:
   --initrd-support MODE
   --tpm-support MODE
   --dma-engine-support MODE
+  --serial-support MODE
   --iommu-support MODE
   --numa-support MODE
   --nr-cpus VALUE
@@ -265,6 +267,7 @@ Notes:
   --iommu-support accepts: none, auto, on, off. auto keeps IOMMU support only with /sys/class/iommu entries or an ACPI DMAR/IVRS table.
   --numa-support accepts: none, auto, on, off.
   --platform-drivers accepts: none, auto (default: none). auto requests the platform drivers evidenced by /sys/bus/acpi, /sys/class/dmi, /sys/bus/pci and /proc/cpuinfo on the running host, printing the evidence for each symbol.
+  --serial-support accepts: none, auto (default: none). auto prunes unused native UARTs on x86 ACPI hosts, preserving USB serial, PS/2, consoles and uncertain inventories; requires Python 3.11+.
   --nr-cpus accepts: none, auto, or a positive integer.
   --protected-config-symbols accepts a comma-separated list such as CONFIG_FOO,CONFIG_BAR.
   --prune-unused-modules requires root, a configured tree matching the running kernelrelease, and only probes direct one-symbol/one-module Kbuild mappings.
@@ -375,7 +378,7 @@ set_tunable() {
             echo "ALL_OPTIMIZATIONS does not accept values. Use --all-optimizations without true/false." >&2
             exit 1
             ;;
-        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PLATFORM_DRIVERS | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | DEFAULT_QDISC | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
+        OPTIMIZATION_PROFILE | VALIDATION_MODE | PREEMPT_MODE | TIMER_HZ | SCHED_CACHE_MODE | MGLRU_MODE | NUMA_BALANCING_MODE | NATIVE_CPU | CPU_VENDOR_FILTER | VIDEO_SUPPORT | UEFI_SUPPORT | INITRD_SUPPORT | TPM_SUPPORT | DMA_ENGINE_SUPPORT | SERIAL_SUPPORT | IOMMU_SUPPORT | NUMA_SUPPORT | NR_CPUS | PROTECTED_CONFIG_SYMBOLS | APPLICATIONS | HOST_TYPE | PLATFORM_DRIVERS | MODULE_FORCE_LOAD | MODULE_FORCE_UNLOAD | NFS_UDP | OBSOLETE_CRYPTO | INITRAMFS_GENERATOR | INITRAMFS_CONFIG | INITRAMFS_IMAGE | INITRAMFS_COMPRESSION | UCLAMP | AUTOGROUP | DISABLE_SYMBOLS | MODULE_SYMBOLS | ENABLE_SYMBOLS | PREEMPTION | PREEMPT_DYNAMIC | TICK_MODE | THP | LRU_GEN | ZSWAP | ZSWAP_COMPRESSOR | ZRAM | ZRAM_COMPRESSOR | NUMA_BALANCING | KMALLOC_PARTITION | TCP_CONGESTION | DEFAULT_QDISC | IO_URING | SCHED_CACHE | KERNEL_COMPRESSION | INITRD_COMPRESSION | FIRMWARE_COMPRESSION)
             printf -v "$name" '%s' "$value"
             ;;
         *)
@@ -480,6 +483,7 @@ init_tunable UEFI_SUPPORT none
 init_tunable INITRD_SUPPORT none
 init_tunable TPM_SUPPORT none
 init_tunable DMA_ENGINE_SUPPORT none
+init_tunable SERIAL_SUPPORT none
 init_tunable IOMMU_SUPPORT none
 init_tunable NUMA_SUPPORT none
 init_tunable NR_CPUS none
@@ -5531,6 +5535,41 @@ configure_memory_ecc_policy() {
     done
 }
 
+configure_serial_support() {
+    [[ "$SERIAL_SUPPORT" == auto ]] || return 0
+    echo
+    echo "==> Checking native serial ports"
+    if ! native_arch_detection_allowed || ! is_x86_config \
+        || [[ "$HOST_TYPE_EFFECTIVE" != none && "$HOST_TYPE_EFFECTIVE" != baremetal ]]; then
+        echo "    Native UART pruning skipped for a different target or virtual machine"
+        return 0
+    fi
+    command -v python3 >/dev/null || die "Serial detection requires Python 3.11+"
+    local evidence state sym entries
+    local -a uart_symbols=() prune=()
+    evidence="$(python3 -B "$SCRIPT_DIR/lib/hardware_detect.py" --host-root "${HOST_ROOT:-/}" \
+        --serial-ports --kernel-srcdir "$KSRCDIR")" || die "Serial hardware discovery failed"
+    IFS=$'\t' read -r state evidence <<<"$evidence"
+    echo "    Native UART: $state ($evidence)"
+    [[ "$state" == off ]] || return 0
+    # Scope by source, not SERIAL_*: SERIAL_MULTI_INSTANTIATE is I2C/SPI glue.
+    entries="$(find "$KSRCDIR/drivers/tty/serial" -type f -name 'Kconfig*' -print0 \
+        | xargs -0 -r sed -nE 's/^[[:space:]]*(menuconfig|config)[[:space:]]+([A-Za-z0-9_]+).*/\2/p' \
+        | sort -u)" || die "Could not read UART Kconfig definitions"
+    mapfile -t uart_symbols <<<"$entries"
+    for sym in "${uart_symbols[@]}"; do
+        [[ -n "$sym" ]] || continue
+        # Keeping the whole stack also preserves parents of a protected child.
+        if is_symbol_enabled_now "$sym" && { is_protected_config_symbol "$sym" \
+            || [[ -v _EXPLICIT_SYMBOL_VALUES[$sym] ]]; }; then
+            echo "    Retaining UART stack: explicit/protected CONFIG_$sym"
+            return 0
+        fi
+        is_prunable_toggle "$sym" && prune+=("$sym")
+    done
+    disable_unless_selected "${prune[@]}"
+}
+
 add_platform_request() {
     local evidence="$1" sym
     shift
@@ -6198,6 +6237,7 @@ validate_tunables() {
     NR_CPUS_EFFECTIVE="$(resolve_nr_cpus)"
     HOST_TYPE_EFFECTIVE="$(resolve_host_type)"
     PLATFORM_DRIVERS_EFFECTIVE="$(resolve_platform_drivers)"
+    validate_enum SERIAL_SUPPORT 'none|auto'
     APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
     validate_enum PREEMPTION 'keep|none|voluntary|full|lazy|rt'
     validate_enum PREEMPT_DYNAMIC 'keep|on|off'
@@ -6961,6 +7001,7 @@ if [[ "$NATIVE_CPU_EFFECTIVE" == auto || "$NATIVE_CPU_EFFECTIVE" == on ]]; then
 fi
 
 configure_memory_ecc_policy
+configure_serial_support
 
 # Cgroup utilization hints need both the CPU controller and per-task uclamp.
 # Apply this after overrides so --uclamp=off and disabled parents still win.

@@ -6,7 +6,26 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from hardware_detect import Host, discover, memory_ecc
+from hardware_detect import Host, discover, memory_ecc, serial_ports
+
+
+def serial_host(root):
+    """Complete native ACPI inventory with no UART and a USB ACM peripheral."""
+    for directory in ("sys/class/tty/tty0", "sys/class/tty/ttyACM0", "sys/bus/pci/devices",
+                      "sys/bus/pnp/devices", "sys/firmware/acpi/tables"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    for path, value in {
+        "proc/cmdline": "root=/dev/test console=tty0\n",
+        "proc/consoles": "tty0 -WU (EC p) 4:1\n",
+        "proc/cpuinfo": "vendor_id : AuthenticAMD\nflags : sse2\n",
+        "sys/class/dmi/id/sys_vendor": "Example\n",
+        "sys/class/dmi/id/product_name": "Laptop\n",
+        "sys/firmware/acpi/tables/DSDT": "fixture",
+        "sys/bus/acpi/devices/PNP0500:00/status": "0\n",
+    }.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(value)
 
 
 def memory_table(correction=6, total=72, data=64, sizes=(0x4000, 0), handle=1, slots=None):
@@ -48,6 +67,75 @@ class HardwareTests(unittest.TestCase):
 
     def facts(self):
         return {(kind, name) for kind, name, _ in discover(self.host)}
+
+    def serial_fixture(self):
+        serial_host(self.root)
+        self.write("kernel/drivers/tty/serial/8250/pnp.c", '"PNP0500" "PNP0501" "AMDI0020"')
+        return self.root / "kernel"
+
+    def test_serial_absent_preserves_usb_and_ignores_empty_8250_slots(self):
+        source = self.serial_fixture()
+        self.write("sys/class/tty/ttyS0/type", "0\n")
+        self.write("proc/tty/driver/serial", "0: uart:unknown port:00000000 irq:0\n")
+        self.assertEqual(serial_ports(self.host, source)[0], "off")
+        self.write("sys/class/tty/ttyS0/type", "4\n")
+        self.assertEqual(serial_ports(self.host, source)[0], "on")
+
+    def test_serial_positive_evidence_survives_missing_driver(self):
+        source = self.serial_fixture()
+        for path, value in {
+            "proc/cmdline": "console=ttyS0,115200\n",
+            "proc/tty/driver/serial": "0: uart:16550A port:000003F8 irq:4\n",
+            "sys/bus/pci/devices/0000:01:00.0/class": "0x070002\n",
+            "sys/bus/pnp/devices/00:01/id": "PNP0501\n",
+            "sys/bus/acpi/devices/AMDI0020:00/status": "15\n",
+            "sys/firmware/acpi/tables/SPCR": "fixture",
+            "sys/firmware/acpi/tables/DBG2": "fixture",
+        }.items():
+            with self.subTest(path=path):
+                serial_host(self.root)
+                self.write(path, value)
+                self.assertEqual(serial_ports(self.host, source)[0], "on")
+                target = self.root / path
+                target.unlink()
+                if path.startswith("sys/bus/"):
+                    target.parent.rmdir()
+
+    def test_serial_console_debug_arguments_and_serdev_keep_support(self):
+        source = self.serial_fixture()
+        for cmdline in ("earlycon", "earlycon=uart8250,io,0x3f8", "earlyprintk=serial",
+                        "kgdboc=ttyS0", "console=hvc0", "console=ttyUSB0"):
+            self.write("proc/cmdline", cmdline)
+            self.assertEqual(serial_ports(self.host, source)[0], "on", cmdline)
+        serial_host(self.root)
+        (self.root / "sys/bus/serial/devices/serial0-0").mkdir(parents=True)
+        self.assertEqual(serial_ports(self.host, source)[0], "on")
+
+    def test_serial_incomplete_inventory_and_guests_never_prune(self):
+        source = self.serial_fixture()
+        for path in ("proc/consoles", "proc/cmdline", "sys/class/dmi/id/product_name",
+                     "sys/bus/pnp/devices", "sys/bus/pci/devices", "sys/class/tty"):
+            with self.subTest(path=path):
+                target = self.root / path
+                backup = target.with_name(target.name + ".saved")
+                target.rename(backup)
+                self.assertEqual(serial_ports(self.host, source)[0], "unknown")
+                backup.rename(target)
+        self.write("proc/cpuinfo", "flags : hypervisor\n")
+        self.assertEqual(serial_ports(self.host, source)[0], "unknown")
+        serial_host(self.root)
+        self.write("sys/class/dmi/id/product_name", "KVM\n")
+        self.assertEqual(serial_ports(self.host, source)[0], "unknown")
+
+    def test_serial_unknown_acpi_status_and_partial_sources_keep_support(self):
+        source = self.serial_fixture()
+        (self.root / "sys/bus/acpi/devices/PNP0500:00/status").unlink()
+        self.assertEqual(serial_ports(self.host, source)[0], "on")
+        serial_host(self.root)
+        self.assertEqual(serial_ports(self.host, self.root / "missing")[0], "unknown")
+        self.write("sys/bus/acpi/devices/EXAMPLE0:00/modalias", "acpi:EXAMPLE0:PNP0501:\n")
+        self.write("sys/bus/acpi/devices/EXAMPLE0:00/status", "15\n")
+        self.assertEqual(serial_ports(self.host, source)[0], "on")
 
     def set_memory(self, table):
         path = self.root / "sys/firmware/dmi/tables/DMI"

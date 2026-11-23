@@ -17,7 +17,7 @@ import unittest
 
 from test_kernel_config import SCRIPT
 from test_initramfs_check import cpio
-from test_hardware_detect import memory_table
+from test_hardware_detect import memory_table, serial_host
 
 
 @unittest.skipUnless(os.environ.get("KERNEL_TEST_SRCDIR"), "set KERNEL_TEST_SRCDIR for real Kconfig tests")
@@ -107,6 +107,24 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(self.run_script("--strict", "--platform-drivers=auto",
                                             "--disable-symbols=EDAC_AMD64,AMD_ATL"))
         self.assert_values(EDAC_AMD64="n", AMD_ATL="n", EDAC_DECODE_MCE="m")
+
+    def test_real_serial_pruning_preserves_usb_ps2_and_explicit_console(self):
+        host = self.use_native_host()
+        serial_host(host)
+        baseline = dict(SERIAL_8250="y", SERIAL_8250_CONSOLE="y", SERIAL_8250_PNP="y",
+                        SERIO="y", SERIO_I8042="y", SERIO_SERPORT="m", USB_ACM="m",
+                        USB_SERIAL="m", USB_SERIAL_FTDI_SIO="m", SERIAL_MULTI_INSTANTIATE="m")
+        self.prepare_baseline(**baseline)
+        self.assert_success(self.run_script("--strict", "--serial-support=auto"))
+        self.assert_values(**(baseline | dict(SERIAL_8250="n", SERIAL_8250_CONSOLE="n", SERIAL_8250_PNP="n")))
+        repeat = self.run_script("--strict", "--serial-support=auto", "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+        for option in ("--enable-symbols=SERIAL_8250_CONSOLE",
+                       "--protected-config-symbols=SERIAL_8250_CONSOLE"):
+            self.prepare_baseline(**baseline)
+            self.assert_success(self.run_script("--strict", "--serial-support=auto", option))
+            self.assert_values(**baseline)
 
     def test_real_extended_controls_and_idempotence(self):
         args = ("--strict", "--preemption=lazy", "--preempt-dynamic=on", "--tick-mode=full",
