@@ -4657,6 +4657,7 @@ add_native_arch_driver_parents() {
         drivers/gpio/*) parents=(GPIOLIB) ;;
         drivers/pinctrl/*) parents=(PINCTRL) ;;
         drivers/hwmon/*) parents=(HWMON) ;;
+        drivers/power/*) parents=(POWER_SUPPLY) ;;
         drivers/powercap/*) parents=(POWERCAP) ;;
         drivers/thermal/*) parents=(THERMAL) ;;
         drivers/watchdog/*) parents=(WATCHDOG) ;;

@@ -182,7 +182,13 @@ ACPI_KNOWN_DRIVERS = {
     "LNXPWRBN": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
     "LNXSLPBN": (("ACPI", "INPUT"), ("ACPI_BUTTON",)),
     "LNXTHERM": (("ACPI", "ACPI_PROCESSOR", "THERMAL"), ("ACPI_THERMAL",)),
+    # arch/x86 registers a "pcspkr" platform device on every boot. PNP0800 is
+    # the firmware node that actually describes a PC speaker.
+    "PNP0800": (("INPUT",), ("INPUT_PCSPKR",)),
 }
+
+# Platform devices created on every boot, independent of the hardware.
+SYNTHETIC_PLATFORM_DEVICES = frozenset({"pcspkr"})
 
 # Local and network filesystems detected from /proc/self/mountinfo.
 LOCAL_FS_KCONFIG = {
@@ -231,6 +237,10 @@ SOURCE_SCAN_DIRS = {
     ),
     "dmi_hwmon": (
         "drivers/hwmon",
+    ),
+    "platform": (
+        "drivers/gpio", "drivers/input", "drivers/platform",
+        "drivers/power", "drivers/rtc",
     ),
 }
 
@@ -349,6 +359,72 @@ class SourceResolver:
                     modules.update(self._modules_for_source(cfile))
             return sorted(modules)
         return []
+
+    def match_platform(self, name):
+        """Return (module, source) pairs for a platform: modalias name."""
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{2,64}", name):
+            return []
+        alias = f'MODULE_ALIAS("platform:{name}")'
+        id_pattern = re.compile(rf'\.name\s*=\s*"{re.escape(name)}"')
+        found = {}
+        for cfile, text in self._iter_c_files(SOURCE_SCAN_DIRS["platform"]):
+            if "MODULE_DEVICE_TABLE" not in text and "MODULE_ALIAS" not in text:
+                continue
+            matched = alias in text or (
+                "platform_device_id" in text and "MODULE_DEVICE_TABLE" in text
+                and id_pattern.search(text))
+            if not matched:
+                continue
+            for module in self._modules_for_source(cfile):
+                found.setdefault(module, cfile)
+        return sorted(found.items())
+
+    def autoload_block(self, cfile, module):
+        """Return why a matched module must not be enabled automatically.
+
+        ``debug-only`` drivers depend on DEBUG_FS. ``not-x86`` drivers depend
+        on !X86, so an x86 host cannot bind them even when firmware publishes
+        the device.
+        """
+        symbol = ""
+        for makefile_name in ("Kbuild", "Makefile"):
+            makefile = cfile.parent / makefile_name
+            try:
+                text = makefile.read_text(errors="replace")
+            except OSError:
+                continue
+            text = re.sub(r"\\\n", " ", text)
+            for raw_line in text.splitlines():
+                line = raw_line.split("#", 1)[0].strip()
+                match = re.match(r"^obj-\$\(CONFIG_([A-Za-z0-9_]+)\)\s*[-+?:]?=\s*(.+)$", line)
+                if not match:
+                    continue
+                for item in match.group(2).split():
+                    if item.endswith(".o") and "/" not in item \
+                            and Path(item).stem.replace("-", "_") == module:
+                        symbol = match.group(1)
+        if not symbol:
+            return ""
+        for directory in (cfile.parent, cfile.parent.parent):
+            kconfig = directory / "Kconfig"
+            try:
+                text = kconfig.read_text(errors="replace")
+            except OSError:
+                continue
+            match = re.search(
+                rf"^config {re.escape(symbol)}\b\n(.*?)(?=^config |\Z)",
+                text, re.M | re.S)
+            if not match:
+                continue
+            head = match.group(1).split("\nhelp", 1)[0]
+            depends = "\n".join(
+                line for line in head.splitlines()
+                if re.match(r"\s*(depends on|select)\b", line))
+            if re.search(r"\bDEBUG_FS\b", depends):
+                return "debug-only"
+            if re.search(r"!X86\b", depends):
+                return "not-x86"
+        return ""
 
     def apd_x86_ids(self):
         """ACPI IDs turned into platform devices by CONFIG_X86_AMD_PLATFORM_DEVICE."""
@@ -593,6 +669,15 @@ def _acpi_physical_node_bound(host, path):
     for child in host.children(path):
         if (child == "physical_node" or child.startswith("physical_node")) and host.link_name(f"{path}/{child}/driver"):
             return True
+    return False
+
+
+def host_is_x86(host):
+    cpuinfo = host.read("/proc/cpuinfo")
+    if re.search(r"vendor_id\s*:\s*(GenuineIntel|AuthenticAMD|HygonGenuine)\b", cpuinfo):
+        return True
+    if host.root == Path("/"):
+        return os.uname().machine in {"x86_64", "i386", "i686", "x86"}
     return False
 
 
@@ -847,6 +932,34 @@ def discover(host, kernel_srcdir=None):
                     "pci" in subsystems and pci_class in {"0x060000", "0x080600"}
                 ):
                     continue
+                if modalias.startswith("platform:"):
+                    platform_name = modalias.split(":", 1)[1]
+                    if platform_name in SYNTHETIC_PLATFORM_DEVICES \
+                            or platform_name.replace("-", "_") in emitted_modules:
+                        continue
+                    if source_resolver:
+                        platform_matches = source_resolver.match_platform(platform_name)
+                        if len(platform_matches) == 1:
+                            platform_module, platform_source = platform_matches[0]
+                            block = source_resolver.autoload_block(platform_source, platform_module)
+                            evidence = f"{path} (kernel source match for {modalias})"
+                            if block == "debug-only":
+                                add("notice", "debug-only",
+                                    f"{evidence}: {platform_module} depends on DEBUG_FS")
+                            elif block == "not-x86" and host_is_x86(host):
+                                add("notice", "unsupported",
+                                    f"{evidence}: {platform_module} depends on !X86")
+                            else:
+                                emit_module(platform_module, evidence)
+                            continue
+                        if len(platform_matches) > 1:
+                            names = " ".join(module for module, _ in platform_matches)
+                            key = (modalias, tuple(module for module, _ in platform_matches))
+                            if key not in seen_ambiguous:
+                                seen_ambiguous.add(key)
+                                add("notice", "ambiguous-source-match",
+                                    f"{path}: {modalias} -> {names}")
+                            continue
                 if source_resolver:
                     src_matches = source_resolver.match_modalias(modalias)
                     if len(src_matches) == 1:

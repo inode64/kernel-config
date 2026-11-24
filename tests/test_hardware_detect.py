@@ -566,8 +566,8 @@ class HardwareTests(unittest.TestCase):
         self.write("sys/bus/i2c/devices/0-0048/modalias", "i2c:lm75\n")
         self.write("sys/bus/wmi/devices/05901221/modalias", "wmi:05901221-D566-11D1-B2F0-00A0C9062910\n")
         self.write("sys/bus/wmi/devices/0B3CBB35/modalias", "wmi:0B3CBB35-E3C2-45ED-91C2-4C5A6D195D1C\n")
-        # Platform devices like pcspkr are never scanned against kernel sources.
-        self.write("sys/bus/platform/devices/pcspkr/modalias", "platform:pcspkr\n")
+        # OpenFirmware aliases are outside the source scan and stay unresolved.
+        self.write("sys/bus/platform/devices/no-such/modalias", "of:Nno-suchTno-such\n")
         self.write("sys/class/dmi/id/board_name", "PRIME X670-P WIFI\n")
 
         raw = discover(Host(self.root), kernel_srcdir=srcdir)
@@ -579,7 +579,90 @@ class HardwareTests(unittest.TestCase):
         self.assertIn("asus_armoury asus_nb_wmi", ambiguous[0])
         unresolved = [ev for kind, value, ev in raw if (kind, value) == ("notice", "unresolved-alias")]
         self.assertEqual(len(unresolved), 1)
-        self.assertIn("platform:pcspkr", unresolved[0])
+        self.assertIn("of:Nno-suchTno-such", unresolved[0])
+
+    def test_platform_devices_enable_real_drivers_and_skip_synthetic_ones(self):
+        srcdir = self.root / "linux"
+        gpio = srcdir / "drivers/gpio"
+        gpio.mkdir(parents=True)
+        (gpio / "Makefile").write_text("obj-$(CONFIG_GPIO_CROS_EC) += gpio-cros-ec.o\n")
+        (gpio / "Kconfig").write_text(
+            "config GPIO_CROS_EC\n\ttristate \"ChromeOS EC GPIO\"\n"
+            "\tdepends on CROS_EC\n\thelp\n\t  GPIO.\n")
+        (gpio / "gpio-cros-ec.c").write_text(
+            'static const struct platform_device_id cros_ec_gpio_id[] = {\n'
+            '    { .name = "cros-ec-gpio" }, {} };\n'
+            "MODULE_DEVICE_TABLE(platform, cros_ec_gpio_id);\n"
+        )
+        power = srcdir / "drivers/power/supply"
+        power.mkdir(parents=True)
+        (power / "Makefile").write_text(
+            "obj-$(CONFIG_CHARGER_CROS_CONTROL) += cros_charge-control.o\n")
+        (power / "Kconfig").write_text(
+            "config CHARGER_CROS_CONTROL\n\ttristate \"charge\"\n"
+            "\tdepends on MFD_CROS_EC_DEV\n\tdepends on ACPI_BATTERY\n")
+        (power / "cros_charge-control.c").write_text(
+            'static const struct platform_device_id cros_chctl_id[] = {\n'
+            '    { .name = "cros-charge-control" }, {} };\n'
+            "MODULE_DEVICE_TABLE(platform, cros_chctl_id);\n"
+        )
+        debug = srcdir / "drivers/platform/chrome"
+        debug.mkdir(parents=True)
+        (debug / "Makefile").write_text("obj-$(CONFIG_CROS_EC_DEBUGFS) += cros_ec_debugfs.o\n")
+        (debug / "Kconfig").write_text(
+            "config CROS_EC_DEBUGFS\n\ttristate \"debugfs\"\n"
+            "\tdepends on MFD_CROS_EC_DEV && DEBUG_FS\n\thelp\n\t  Logs.\n")
+        (debug / "cros_ec_debugfs.c").write_text(
+            'static const struct platform_device_id cros_ec_debugfs_id[] = {\n'
+            '    { .name = "cros-ec-debugfs" }, {} };\n'
+            "MODULE_DEVICE_TABLE(platform, cros_ec_debugfs_id);\n"
+        )
+        rtc = srcdir / "drivers/rtc"
+        rtc.mkdir(parents=True)
+        (rtc / "Makefile").write_text("obj-$(CONFIG_RTC_DRV_EFI) += rtc-efi.o\n")
+        (rtc / "Kconfig").write_text(
+            "config RTC_DRV_EFI\n\ttristate \"EFI RTC\"\n"
+            "\tdepends on EFI && !X86\n\thelp\n\t  RTC.\n")
+        (rtc / "rtc-efi.c").write_text('MODULE_ALIAS("platform:rtc-efi");\n')
+        speaker = srcdir / "drivers/input/misc"
+        speaker.mkdir(parents=True)
+        (speaker / "Makefile").write_text(
+            "obj-$(CONFIG_INPUT_PCSPKR) += pcspkr.o\n"
+            "obj-$(CONFIG_INPUT_OTHER) += other.o\n")
+        (speaker / "pcspkr.c").write_text('MODULE_ALIAS("platform:pcspkr");\n')
+        (srcdir / "sound/drivers/pcsp").mkdir(parents=True)
+        # The ALSA driver is outside the platform scan; the synthetic device
+        # must not be matched even when the input alias is present.
+
+        self.write("proc/cpuinfo", "vendor_id : AuthenticAMD\n")
+        self.write("sys/bus/acpi/devices/PNP0800:00/modalias", "acpi:PNP0800:\n")
+        self.write("sys/bus/platform/devices/pcspkr/modalias", "platform:pcspkr\n")
+        self.write("sys/bus/platform/devices/cros-ec-gpio.3.auto/modalias", "platform:cros-ec-gpio\n")
+        self.write("sys/bus/platform/devices/cros-charge-control.5.auto/modalias",
+                   "platform:cros-charge-control\n")
+        self.write("sys/bus/platform/devices/cros-ec-debugfs.7.auto/modalias",
+                   "platform:cros-ec-debugfs\n")
+        self.write("sys/bus/platform/devices/rtc-efi.0/modalias", "platform:rtc-efi\n")
+        self.write("sys/bus/platform/devices/amd_hfi/modalias", "platform:amd_hfi\n")
+        self.write("sys/bus/platform/devices/AMDI0104:00/modalias", "acpi:AMDI0104:\n")
+        self.link("sys/bus/platform/devices/AMDI0104:00/driver/module", "/sys/module/amd_hfi")
+
+        raw = discover(Host(self.root), kernel_srcdir=srcdir)
+        facts = {(kind, value) for kind, value, _ in raw}
+        self.assertIn(("modsymbol", "INPUT_PCSPKR"), facts)
+        self.assertIn(("symbol", "INPUT"), facts)
+        self.assertIn(("module", "gpio_cros_ec"), facts)
+        self.assertIn(("module", "cros_charge_control"), facts)
+        self.assertIn(("module", "amd_hfi"), facts)
+        self.assertNotIn(("module", "pcspkr"), facts)
+        self.assertNotIn(("module", "rtc_efi"), facts)
+        self.assertNotIn(("module", "cros_ec_debugfs"), facts)
+        notices = {(value, ev) for kind, value, ev in raw if kind == "notice"}
+        self.assertTrue(any(value == "debug-only" and "cros_ec_debugfs" in ev
+                            for value, ev in notices))
+        self.assertTrue(any(value == "unsupported" and "rtc_efi" in ev and "!X86" in ev
+                            for value, ev in notices))
+        self.assertFalse(any("pcspkr" in ev or "amd_hfi" in ev for _, ev in notices))
 
     def test_acpi_buttons_and_designware_uarts_resolve_from_sources(self):
         srcdir = self.root / "linux"
