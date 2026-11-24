@@ -434,8 +434,10 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   `msi_irqs`; posted MSI has the stronger `NATIVE_CPU` checks above.
 
   Candidates and their subsystem/vendor menus are checked with `olddefconfig`
-  on a separate temporary config before becoming requests. Unresolved aliases,
-  ambiguous/missing Kbuild mappings and unavailable dependencies are reported
+  on a separate temporary config before becoming requests. A device whose ACPI,
+  I2C, WMI, platform, PCI or USB id was searched in the target tree and has no
+  driver is reported as unsupported. Aliases that were not searched, ambiguous
+  matches, missing Kbuild mappings and unavailable dependencies are reported
   for manual review. Hidden symbols are left to Kconfig. Explicit symbol
   settings and protected values take precedence; detected drivers can restore
   support removed by a pruning preset. Accepted built-ins/modules retain their

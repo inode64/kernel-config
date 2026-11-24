@@ -716,6 +716,58 @@ class HardwareTests(unittest.TestCase):
         self.assertIn("AMDI0020", uart_symbols[0])
         self.assertNotIn(("module", "soc_button_array_mod"), facts)
 
+    def test_missing_target_drivers_are_unsupported_and_present_ones_match(self):
+        srcdir = self.root / "linux"
+        pci = srcdir / "drivers/pci"
+        pci.mkdir(parents=True)
+        (pci / "Makefile").write_text("obj-$(CONFIG_LPC_ICH) += lpc_ich.o\n")
+        (pci / "lpc_ich.c").write_text(
+            "static const struct pci_device_id lpc_ich_ids[] = {\n"
+            "    { 0x8086, 0x1e55, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 }, {} };\n"
+        )
+        usb = srcdir / "drivers/usb/misc"
+        usb.mkdir(parents=True)
+        (usb / "Makefile").write_text("obj-$(CONFIG_USB_BILLBOARD) += billboard.o\n")
+        (usb / "billboard.c").write_text(
+            "static const struct usb_device_id billboard_ids[] = {\n"
+            "    { USB_INTERFACE_INFO(USB_CLASS_BILLBOARD, 0, 0) }, {} };\n"
+        )
+        self.write("sys/bus/acpi/devices/MSFT0201:00/modalias", "acpi:MSFT0201:\n")
+        # Same HID published only as a platform node under a PCI bridge.
+        self.write("sys/bus/platform/devices/PNP0800:00/modalias", "acpi:PNP0800:\n")
+        self.write("sys/bus/acpi/devices/PNP0C04:00/modalias", "acpi:PNP0C04:\n")
+        self.write("sys/bus/wmi/devices/71D6E256/modalias",
+                   "wmi:71D6E256-7B68-4B09-A45E-349B39505F05\n")
+        self.write("sys/bus/platform/devices/no-widget/modalias", "platform:no-widget\n")
+        self.write("sys/bus/platform/devices/of-node/modalias", "of:Nno-suchTno-such\n")
+        self.write("sys/bus/pci/devices/0000:00:1f.0/modalias",
+                   "pci:v00008086d00001E55sv00000000sd00000000bc06sc01i00\n")
+        self.write("sys/bus/pci/devices/0000:00:14.3/modalias",
+                   "pci:v00001022d0000790Esv0000F111sd0000000Dbc06sc01i00\n")
+        self.write("sys/bus/usb/devices/3-4.1:1.0/modalias",
+                   "usb:v27C6p609Cd0100dcEFdsc00dp00icFFisc00ip00in00\n")
+        self.write("sys/bus/usb/devices/3-1:1.0/modalias",
+                   "usb:v32ACp0003d0000dc00dsc00dp00ic11isc00ip00in00\n")
+
+        raw = discover(Host(self.root), kernel_srcdir=srcdir)
+        modules = {value for kind, value, _ in raw if kind == "module"}
+        unsupported = [ev for kind, value, ev in raw if (kind, value) == ("notice", "unsupported")]
+        unresolved = [ev for kind, value, ev in raw if (kind, value) == ("notice", "unresolved-alias")]
+        self.assertIn("lpc_ich", modules)
+        self.assertIn("billboard", modules)
+        self.assertIn("INPUT_PCSPKR", {value for kind, value, _ in raw if kind == "modsymbol"})
+        self.assertFalse(any("PNP0800" in ev for ev in unsupported))
+        for ident in ("MSFT0201", "PNP0C04", "71D6E256", "platform:no-widget", "790E", "27C6"):
+            self.assertTrue(any(ident in ev for ev in unsupported), ident)
+        self.assertEqual(len(unresolved), 1)
+        self.assertIn("of:Nno-suchTno-such", unresolved[0])
+
+        bare = discover(Host(self.root))
+        bare_unsupported = [ev for kind, value, ev in bare if (kind, value) == ("notice", "unsupported")]
+        bare_unresolved = [ev for kind, value, ev in bare if (kind, value) == ("notice", "unresolved-alias")]
+        self.assertEqual(bare_unsupported, [])
+        self.assertTrue(any("MSFT0201" in ev for ev in bare_unresolved))
+
 
 if __name__ == "__main__":
     unittest.main()

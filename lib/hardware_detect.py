@@ -439,6 +439,74 @@ class SourceResolver:
             return set()
         return set(re.findall(r'"([A-Z0-9]{4,16})"', match.group(1)))
 
+    def match_bus_ids(self, modaliases):
+        """Classify PCI and USB ids against drivers/ and sound/.
+
+        Returns modalias -> ("matched", [modules]), ("unsupported", []) when
+        no table contains the id, or ("unmapped", []) when a table mentions it
+        but Kbuild does not name a module.
+        """
+        queries = []
+        for modalias in modaliases:
+            if modalias.startswith("pci:"):
+                match = re.fullmatch(r"pci:v([0-9A-Fa-f]{8})d([0-9A-Fa-f]{8}).*", modalias)
+                if not match:
+                    continue
+                vendor, device = int(match.group(1), 16), int(match.group(2), 16)
+                pattern = re.compile(rf"0x{vendor:04x}\s*,\s*0x{device:04x}\b", re.I)
+                queries.append((modalias, "pci", pattern, False))
+            elif modalias.startswith("usb:"):
+                match = re.fullmatch(r"usb:v([0-9A-Fa-f]{4})p([0-9A-Fa-f]{4}).*", modalias)
+                if not match:
+                    continue
+                vendor, product = int(match.group(1), 16), int(match.group(2), 16)
+                pattern = re.compile(rf"0x{vendor:04x}\s*,\s*0x{product:04x}\b", re.I)
+                interface = re.search(r"ic([0-9A-Fa-f]{2})", modalias)
+                billboard = bool(interface and int(interface.group(1), 16) == 0x11)
+                queries.append((modalias, "usb", pattern, billboard))
+        found = {modalias: set() for modalias, *_rest in queries}
+        saw = {modalias: False for modalias, *_rest in queries}
+        if queries:
+            for top in ("drivers", "sound"):
+                root = self.root / top
+                if not root.is_dir():
+                    continue
+                for cfile in root.rglob("*.c"):
+                    if cfile.name.endswith(".mod.c") or "tests" in cfile.parts:
+                        continue
+                    try:
+                        text = cfile.read_text(errors="replace")
+                    except OSError:
+                        continue
+                    has_pci = "pci_device_id" in text
+                    has_usb = "usb_device_id" in text
+                    if not has_pci and not has_usb:
+                        continue
+                    modules = None
+                    for modalias, kind, pattern, billboard in queries:
+                        if kind == "pci" and not has_pci:
+                            continue
+                        if kind == "usb" and not has_usb:
+                            continue
+                        hit = pattern.search(text) is not None
+                        if kind == "usb" and billboard and "USB_CLASS_BILLBOARD" in text:
+                            hit = True
+                        if not hit:
+                            continue
+                        saw[modalias] = True
+                        if modules is None:
+                            modules = self._modules_for_source(cfile)
+                        found[modalias].update(modules)
+        classified = {}
+        for modalias, *_rest in queries:
+            if found[modalias]:
+                classified[modalias] = ("matched", sorted(found[modalias]))
+            elif saw[modalias]:
+                classified[modalias] = ("unmapped", [])
+            else:
+                classified[modalias] = ("unsupported", [])
+        return classified
+
     def match_dmi_hwmon(self, board_name):
         board_name = board_name.strip()
         if len(board_name) < 4 or board_name.lower() in GENERIC_DMI_BOARDS:
@@ -681,6 +749,26 @@ def host_is_x86(host):
     return False
 
 
+def _firmware_id_searched(modalias):
+    """True when match_modalias looked for this ACPI, I2C or WMI id."""
+    if modalias.startswith("acpi:"):
+        return any(
+            part and part not in STRUCTURAL_ACPI_IDS
+            and re.fullmatch(r"[A-Za-z0-9_]{4,16}", part)
+            for part in modalias[5:].split(":"))
+    if modalias.startswith("i2c:"):
+        return bool(re.fullmatch(r"[A-Za-z0-9_.-]{2,32}", modalias[4:]))
+    if modalias.startswith("wmi:"):
+        return bool(re.fullmatch(
+            r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}", modalias[4:]))
+    return False
+
+
+def _bus_modalias(modalias):
+    return bool(re.fullmatch(r"pci:v[0-9A-Fa-f]{8}d[0-9A-Fa-f]{8}.*", modalias)
+                or re.fullmatch(r"usb:v[0-9A-Fa-f]{4}p[0-9A-Fa-f]{4}.*", modalias))
+
+
 def _is_structural_acpi_modalias(modalias):
     if not modalias.startswith("acpi:"):
         return False
@@ -696,6 +784,7 @@ def discover(host, kernel_srcdir=None):
     seen_ambiguous = set()
     seen_unresolved = set()
     emitted_modules = set()
+    pending_bus = []
 
     def add(kind, value, evidence):
         facts.add((kind, value, re.sub(r"[\x00-\x1f\x7f]", " ", evidence)))
@@ -873,7 +962,9 @@ def discover(host, kernel_srcdir=None):
         if "pci_express" in subsystems and driver in PCIE_SERVICE_DRIVERS:
             symbols(PCIE_SERVICE_DRIVERS[driver], f"{path} (bound {driver})")
             handled = True
-        if "acpi" in subsystems:
+        # A platform node under a PCI bridge can carry an ACPI modalias without
+        # also appearing on the ACPI bus. The HID is still the driver key.
+        if "acpi" in subsystems or modalias.startswith("acpi:"):
             acpi_hid = host.read(path + "/hid") or Path(path).name.split(":", 1)[0]
             if acpi_hid not in ACPI_KNOWN_DRIVERS and modalias.startswith("acpi:"):
                 for part in modalias[5:].split(":"):
@@ -960,6 +1051,11 @@ def discover(host, kernel_srcdir=None):
                                 add("notice", "ambiguous-source-match",
                                     f"{path}: {modalias} -> {names}")
                             continue
+                        if modalias not in seen_unresolved:
+                            seen_unresolved.add(modalias)
+                            add("notice", "unsupported",
+                                f"{path}: {modalias} (no driver in the target kernel)")
+                        continue
                 if source_resolver:
                     src_matches = source_resolver.match_modalias(modalias)
                     if len(src_matches) == 1:
@@ -977,11 +1073,37 @@ def discover(host, kernel_srcdir=None):
                             add("notice", "ambiguous-source-match",
                                 f"{path}: {modalias} -> {' '.join(src_matches)}")
                         continue
+                    if not src_matches and _firmware_id_searched(modalias):
+                        if modalias not in seen_unresolved:
+                            seen_unresolved.add(modalias)
+                            add("notice", "unsupported",
+                                f"{path}: {modalias} (no driver in the target kernel)")
+                        continue
+                    if _bus_modalias(modalias):
+                        pending_bus.append((path, modalias))
+                        continue
                 if modalias not in seen_unresolved:
                     seen_unresolved.add(modalias)
                     add("notice", "unresolved-alias", f"{path}: {modalias}")
         if module:
             emit_module(module, f"{path} ({'bound driver' if driver else 'modalias'})")
+
+    if source_resolver and pending_bus:
+        first_path = {}
+        for path, modalias in pending_bus:
+            first_path.setdefault(modalias, path)
+        for modalias, (status, modules) in source_resolver.match_bus_ids(first_path).items():
+            path = first_path[modalias]
+            if status == "matched" and len(modules) == 1:
+                emit_module(modules[0], f"{path} (kernel source match for {modalias})")
+            elif status == "matched":
+                add("notice", "ambiguous-source-match",
+                    f"{path}: {modalias} -> {' '.join(modules)}")
+            elif status == "unsupported":
+                add("notice", "unsupported",
+                    f"{path}: {modalias} (no driver in the target kernel)")
+            else:
+                add("notice", "unresolved-alias", f"{path}: {modalias}")
 
     if source_resolver:
         board_name = host.read("/sys/class/dmi/id/board_name")
