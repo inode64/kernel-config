@@ -3304,6 +3304,22 @@ config HID_LED
                 self.assertIn("Could not detect host type", result.stdout)
                 self.assert_symbol("KVM_GUEST", "y")
 
+    def test_host_type_auto_preserves_guest_drivers_when_cross_compiling(self):
+        self.add_symbols("HYPERVISOR_GUEST", "KVM_GUEST", "VIRTIO_PCI", "VIRTIO_BLK")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2\n", sys_vendor="Example")
+        for cross in ({"CROSS_COMPILE": "aarch64-linux-gnu-"}, {"ARCH": "arm64"}):
+            with self.subTest(cross=cross):
+                self.set_baseline_symbols(HYPERVISOR_GUEST="y", KVM_GUEST="y",
+                                          VIRTIO_PCI="y", VIRTIO_BLK="y")
+                result = self.run_script("--strict", "--host-type=auto", env=env | cross)
+                self.assert_success(result)
+                for symbol in ("HYPERVISOR_GUEST", "KVM_GUEST", "VIRTIO_PCI", "VIRTIO_BLK"):
+                    self.assert_symbol(symbol, "y")
+                self.assertIn("Host type detection skipped", result.stderr)
+                result = self.run_script("--strict", "--host-type=baremetal", env=env | cross)
+                self.assert_success(result)
+                self.assert_symbol("VIRTIO_BLK", "n")
+
     def test_video_support_auto_supports_bmc_ast_and_mgag200(self):
         self.add_symbols("DRM", "DRM_AMDGPU", "DRM_I915", "DRM_NOUVEAU", "DRM_AST", "DRM_MGAG200", kind="tristate")
         for vendor, expected, pruned in (

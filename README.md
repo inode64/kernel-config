@@ -953,6 +953,7 @@ Several parameters support `auto`. Current detection logic is intentionally simp
 
 - `HOST_TYPE=auto`
   Reads `/proc/cpuinfo`, `/sys/hypervisor/type`, `/sys/class/dmi/id/*`, `/sys/bus/{vmbus,xen,virtio}/devices`, `/sys/firmware/qemu_fw_cfg` and VMware/VirtualBox PCI IDs; returns `unknown` (no changes) when virtualized on an unsupported hypervisor or when host identity is incomplete.
+  Cross compilation or a different target architecture skips local detection and preserves guest drivers; select an explicit host type for the target instead.
 
 - `UEFI_SUPPORT=auto`
   Checks `/sys/firmware/efi`.

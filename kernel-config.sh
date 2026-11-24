@@ -2849,7 +2849,12 @@ resolve_host_type() {
             printf '%s\n' "none"
             ;;
         auto)
-            detect_host_type
+            if native_arch_detection_allowed; then
+                detect_host_type
+            else
+                echo "Host type detection skipped for cross compilation or a different target architecture" >&2
+                printf '%s\n' "unknown"
+            fi
             ;;
         baremetal | native)
             printf '%s\n' "baremetal"
