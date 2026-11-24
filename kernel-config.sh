@@ -4818,7 +4818,12 @@ configure_native_arch() {
     done
     # Native CPU checks need the derived remapping/architecture capabilities
     # selected by these drivers in this run, not on a second invocation.
-    if is_enabled "$configured"; then refresh_config_visibility; fi
+    if is_enabled "$configured"; then
+        refresh_config_visibility
+        # Restored parents can revive default-y children dropped by an earlier
+        # refresh. Accepted hardware candidates already replaced their ledger entries.
+        reassert_disable_requests
+    fi
 }
 
 configure_orc_unwinder() {

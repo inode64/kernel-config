@@ -780,6 +780,21 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_native_parents_keep_pruned_children_off_after_overrides(self):
+        if "config EDAC_LEGACY_SYSFS\n" not in (self.source / "drivers/edac/Kconfig").read_text():
+            self.skipTest("EDAC legacy sysfs is not in this tree")
+        host = self.use_native_host()
+        (host / "proc/cpuinfo").write_text("vendor_id : AuthenticAMD\ncpu family : 25\nmodel : 97\n")
+        self.prepare_baseline(MODULES="y", EDAC="n", HWMON="n", CPU_SUP_AMD="y",
+                              X86_MCE="y", X86_MCE_AMD="y")
+        args = ("--strict", "--prune-legacy", "--native-arch", "--native-cpu=none",
+                "--enable-symbols=HWMON")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(EDAC="y", EDAC_LEGACY_SYSFS="n", HWMON="y")
+        repeat = self.run_script(*args, "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+
     def test_real_native_mounts_restore_nfs_minor_versions(self):
         host = self.use_native_host()
         (host / "proc/self").mkdir()
