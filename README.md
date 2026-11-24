@@ -402,8 +402,11 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   services/USB, SATA/NVMe/SCSI, SD/MMC, USB4/Thunderbolt, network/MDIO PHYs and
   wireless devices, TPM transports, graphics, sound, input, sensors (including
   active `drivetemp`/`nvme` hwmon, `powercap` RAPL domains, standard active
-  ACPI AC/battery/button/fan/thermal devices, and unbound I2C DDR4/DDR5
-  `spd5118`/`jc42`/`ee1004` devices) and other registered drivers. Disabled ACPI devices
+  ACPI AC/battery/button/fan/thermal devices, unbound ACPI generic buttons
+  and DesignWare UARTs, and unbound I2C DDR4/DDR5
+  `spd5118`/`jc42`/`ee1004` devices) and other registered drivers. An AMD
+  ACPI platform id also requests `X86_AMD_PLATFORM_DEVICE`, which publishes
+  the clock the UART driver consumes. Disabled ACPI devices
   (`status=0`) and ACPI companion nodes whose `physical_node` is already bound
   are skipped; multicast `input:` handlers (`evdev`, `input_leds`) and
   `hid_generic` fallbacks are resolved without false ambiguity.

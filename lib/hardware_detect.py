@@ -220,7 +220,7 @@ SOURCE_SCAN_DIRS = {
     "acpi": (
         "drivers/i2c", "drivers/gpio", "drivers/hwmon", "drivers/pinctrl",
         "drivers/platform/x86", "drivers/thermal", "drivers/hid",
-        "drivers/char/tpm", "drivers/spi",
+        "drivers/char/tpm", "drivers/spi", "drivers/input", "drivers/tty",
     ),
     "i2c": (
         "drivers/hwmon", "drivers/i2c", "drivers/rtc",
@@ -251,6 +251,10 @@ class SourceResolver:
                 cached = []
                 if directory.is_dir():
                     for cfile in sorted(directory.rglob("*.c")):
+                        # A built tree leaves *.mod.c next to the sources. Those
+                        # generated aliases are not part of the target Kbuild map.
+                        if cfile.name.endswith(".mod.c"):
+                            continue
                         try:
                             cached.append((cfile, cfile.read_text(errors="replace")))
                         except OSError:
@@ -345,6 +349,19 @@ class SourceResolver:
                     modules.update(self._modules_for_source(cfile))
             return sorted(modules)
         return []
+
+    def apd_x86_ids(self):
+        """ACPI IDs turned into platform devices by CONFIG_X86_AMD_PLATFORM_DEVICE."""
+        path = self.root / "drivers/acpi/acpi_apd.c"
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            return set()
+        match = re.search(
+            r"#ifdef CONFIG_X86_AMD_PLATFORM_DEVICE\n(.*?)#endif", text, re.S)
+        if not match:
+            return set()
+        return set(re.findall(r'"([A-Z0-9]{4,16})"', match.group(1)))
 
     def match_dmi_hwmon(self, board_name):
         board_name = board_name.strip()
@@ -834,6 +851,11 @@ def discover(host, kernel_srcdir=None):
                     src_matches = source_resolver.match_modalias(modalias)
                     if len(src_matches) == 1:
                         emit_module(src_matches[0], f"{path} (kernel source match for {modalias})")
+                        if modalias.startswith("acpi:"):
+                            hid = next((part for part in modalias[5:].split(":") if part), "")
+                            if hid in source_resolver.apd_x86_ids():
+                                symbols(("X86_AMD_PLATFORM_DEVICE",),
+                                        f"{path} acpi:{hid} (AMD ACPI platform device)")
                         continue
                     if len(src_matches) > 1:
                         key = (modalias, tuple(src_matches))

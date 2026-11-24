@@ -581,6 +581,58 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual(len(unresolved), 1)
         self.assertIn("platform:pcspkr", unresolved[0])
 
+    def test_acpi_buttons_and_designware_uarts_resolve_from_sources(self):
+        srcdir = self.root / "linux"
+        input_dir = srcdir / "drivers/input/misc"
+        input_dir.mkdir(parents=True)
+        (input_dir / "Makefile").write_text(
+            "obj-$(CONFIG_INPUT_SOC_BUTTON_ARRAY) += soc_button_array.o\n")
+        (input_dir / "soc_button_array.c").write_text(
+            'static const struct acpi_device_id soc_button_acpi_match[] = { { "ACPI0011", 0 }, {} };\n'
+            "MODULE_DEVICE_TABLE(acpi, soc_button_acpi_match);\n"
+        )
+        # Generated alias next to a built object must not become a second match.
+        (input_dir / "soc_button_array.mod.c").write_text(
+            'MODULE_ALIAS("acpi*:ACPI0011:*");\n'
+            "MODULE_DEVICE_TABLE(acpi, soc_button_acpi_match);\n"
+        )
+        serial_dir = srcdir / "drivers/tty/serial/8250"
+        serial_dir.mkdir(parents=True)
+        (serial_dir / "Makefile").write_text("obj-$(CONFIG_SERIAL_8250_DW) += 8250_dw.o\n")
+        (serial_dir / "8250_dw.c").write_text(
+            'static const struct acpi_device_id dw8250_acpi_match[] = {\n'
+            '    { "AMDI0020", 0 }, { "AMDI0022", 0 }, {} };\n'
+            "MODULE_DEVICE_TABLE(acpi, dw8250_acpi_match);\n"
+        )
+        apd = srcdir / "drivers/acpi/acpi_apd.c"
+        apd.parent.mkdir(parents=True)
+        apd.write_text(
+            "#ifdef CONFIG_X86_AMD_PLATFORM_DEVICE\n"
+            '    { "AMDI0020", APD_ADDR(cz_uart_desc) },\n'
+            '    { "AMDI0010", APD_ADDR(wt_i2c_desc) },\n'
+            "#endif\n"
+            "#ifdef CONFIG_ARM64\n"
+            '    { "APMC0D0F", APD_ADDR(xgene_i2c_desc) },\n'
+            "#endif\n"
+        )
+        self.write("sys/bus/acpi/devices/ACPI0011:00/status", "11\n")
+        self.write("sys/bus/acpi/devices/ACPI0011:00/modalias", "acpi:ACPI0011:\n")
+        self.write("sys/bus/acpi/devices/AMDI0020:00/status", "15\n")
+        self.write("sys/bus/acpi/devices/AMDI0020:00/modalias", "acpi:AMDI0020:\n")
+        self.write("sys/bus/acpi/devices/AMDI0022:00/status", "15\n")
+        self.write("sys/bus/acpi/devices/AMDI0022:00/modalias", "acpi:AMDI0022:\n")
+
+        raw = discover(Host(self.root), kernel_srcdir=srcdir)
+        facts = {(kind, value) for kind, value, _ in raw}
+        self.assertIn(("module", "soc_button_array"), facts)
+        self.assertIn(("module", "8250_dw"), facts)
+        self.assertIn(("symbol", "X86_AMD_PLATFORM_DEVICE"), facts)
+        uart_symbols = [ev for kind, value, ev in raw
+                        if (kind, value) == ("symbol", "X86_AMD_PLATFORM_DEVICE")]
+        self.assertEqual(len(uart_symbols), 1)
+        self.assertIn("AMDI0020", uart_symbols[0])
+        self.assertNotIn(("module", "soc_button_array_mod"), facts)
+
 
 if __name__ == "__main__":
     unittest.main()

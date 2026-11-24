@@ -4648,6 +4648,8 @@ add_native_arch_driver_parents() {
         drivers/mmc/*) parents=(MMC) ;;
         drivers/md/*) parents=(BLOCK MD) ;;
         drivers/input/*) parents=(INPUT) ;;
+        drivers/tty/serial/8250/*) parents=(TTY SERIAL_8250) ;;
+        drivers/tty/*) parents=(TTY) ;;
         drivers/hid/*) parents=(INPUT HID) ;;
         drivers/char/tpm/*) parents=(TCG_TPM) ;;
         drivers/i2c/*) parents=(I2C) ;;
