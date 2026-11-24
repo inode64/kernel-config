@@ -124,7 +124,10 @@ class KernelIntegrationTests(unittest.TestCase):
     def test_real_serial_pruning_preserves_usb_ps2_and_explicit_console(self):
         host = self.use_native_host()
         serial_host(host)
-        baseline = dict(SERIAL_8250="y", SERIAL_8250_CONSOLE="y", SERIAL_8250_PNP="y",
+        # Minimal guest configs may have the module, USB and platform parents off.
+        baseline = dict(MODULES="y", USB_SUPPORT="y", USB="y", TTY="y", PNP="y",
+                        ACPI="y", I2C="y", X86_PLATFORM_DEVICES="y",
+                        SERIAL_8250="y", SERIAL_8250_CONSOLE="y", SERIAL_8250_PNP="y",
                         SERIO="y", SERIO_I8042="y", SERIO_SERPORT="m", USB_ACM="m",
                         USB_SERIAL="m", USB_SERIAL_FTDI_SIO="m", SERIAL_MULTI_INSTANTIATE="m")
         self.prepare_baseline(**baseline)
