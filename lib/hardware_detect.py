@@ -158,7 +158,8 @@ CORE_BUILTIN_DRIVERS = frozenset({"alarmtimer", "faux_driver"})
 STRUCTURAL_ACPI_IDS = frozenset({
     "ACPI0010", "LNXSYSTM", "LNXSYBUS", "LNXPOWER",
     "PNP0000", "PNP0100", "PNP0103", "PNP0200",
-    "PNP0A03", "PNP0A08", "PNP0C01", "PNP0C02", "PNP0C0F",
+    "PNP0A03", "PNP0A05", "PNP0A06", "PNP0A08",
+    "PNP0C01", "PNP0C02", "PNP0C0F",
 })
 
 # Well-known I2C memory/SPD sensors instantiated by i2c-smbus even when their

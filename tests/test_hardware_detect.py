@@ -439,6 +439,13 @@ class HardwareTests(unittest.TestCase):
                      ("module", "hid_logitech_dj")):
             self.assertIn(fact, pairs)
         self.assertNotIn(("notice", "unresolved-alias"), pairs)
+        # Processor and generic containers stay structural even when the
+        # modalias pairs ACPI0010 with PNP0A05/PNP0A06.
+        self.write("sys/bus/acpi/devices/ACPI0010:00/modalias", "acpi:ACPI0010:PNP0A05:\n")
+        self.write("sys/bus/acpi/devices/PNP0A06:00/modalias", "acpi:PNP0A06:\n")
+        facts = discover(self.host)
+        pairs = {(k, v) for k, v, _ in facts}
+        self.assertNotIn(("notice", "unresolved-alias"), pairs)
         ambiguous = [e for k, v, e in facts if (k, v) == ("notice", "ambiguous-alias")]
         self.assertEqual(len(ambiguous), 1)
         self.assertIn("kvm_amd rapl", ambiguous[0])
