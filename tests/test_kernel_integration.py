@@ -780,6 +780,28 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_native_mounts_restore_nfs_minor_versions(self):
+        host = self.use_native_host()
+        (host / "proc/self").mkdir()
+        (host / "proc/self/mountinfo").write_text(
+            "29 26 0:40 / /srv rw - nfs4 192.0.2.1:/srv rw,vers=4.2\n"
+        )
+        baseline = dict(MODULES="y", BLK_DEV_INITRD="y", NETWORK_FILESYSTEMS="y",
+                        INET="y", FILE_LOCKING="y", NFS_FS="m", NFS_V4="m", NFS_V4_2="n")
+        # Linux 7.x folds NFSv4.1 into NFS_V4; LTS trees still gate NFSv4.2 on it.
+        has_v41 = "config NFS_V4_1\n" in (self.source / "fs/nfs/Kconfig").read_text()
+        if has_v41:
+            baseline["NFS_V4_1"] = "n"
+        self.prepare_baseline(**baseline)
+        args = ("--strict", "--native-arch", "--native-cpu=none", "--platform-drivers=none")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(NFS_FS="m", NFS_V4="m", NFS_V4_2="y")
+        if has_v41:
+            self.assert_values(NFS_V4_1="y")
+        repeat = self.run_script(*args, "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+
     def test_real_native_arch_restores_serio_bus_for_raw_devices(self):
         host = self.use_native_host()
         driver = host / "sys/bus/serio/drivers/serio_raw"

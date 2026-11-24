@@ -462,6 +462,16 @@ class HardwareTests(unittest.TestCase):
         ):
             self.assertIn(fact, facts)
 
+    def test_nfs4_mounts_request_minor_version_dependencies(self):
+        for version, required in (("4.0", set()), ("4.1", {"NFS_V4_1"}),
+                                  ("4.2", {"NFS_V4_1", "NFS_V4_2"})):
+            with self.subTest(version=version):
+                self.write("proc/self/mountinfo",
+                           f"29 26 0:40 / /srv rw - nfs4 192.0.2.1:/srv rw,vers={version}\n")
+                facts = self.facts()
+                for symbol in ("NFS_V4_1", "NFS_V4_2"):
+                    self.assertEqual(("symbol", symbol) in facts, symbol in required)
+
     def test_powercap_rapl_and_acpi_power_thermal_button_devices(self):
         # MSR RAPL package domain + subdomain (subdomain does not duplicate).
         (self.root / "sys/class/powercap/intel-rapl:0").mkdir(parents=True)

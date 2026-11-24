@@ -564,6 +564,9 @@ def _discover_mounts(host, symbols, modsymbols):
             parents, mods = SECONDARY_FS_KCONFIG[key]
             symbols(parents, evidence)
             modsymbols(mods, evidence)
+            # LTS kernels require NFS_V4_1 for both 4.1 and 4.2 mounts.
+            if fstype == "nfs4" and {"vers=4.1", "vers=4.2"}.intersection(opts):
+                symbols(("NFS_V4_1",), evidence)
             if fstype == "nfs4" and "vers=4.2" in opts:
                 symbols(("NFS_V4_2",), f"{evidence} vers=4.2")
 
