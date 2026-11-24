@@ -301,6 +301,106 @@ class ScriptTests(unittest.TestCase):
                 for sym in modes.values():
                     self.assert_symbol(sym, "y" if sym == selected else "n")
 
+    def test_auto_profile_uses_declared_workload_before_local_chassis(self):
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2\n", sys_vendor="Example")
+        (Path(env["KC_HOST_ROOT"]) / "sys/class/dmi/id/chassis_type").write_text("10\n")
+        cases = [
+            (("--applications=desktop,docker",), "desktop", "interactive application"),
+            (("--applications=qemu,multimedia",), "desktop", "interactive application"),
+            (("--applications=qemu",), "server", "server application"),
+            (("--applications=ceph",), "server", "server application"),
+            (("--applications=nfs-server",), "server", "server application"),
+            (("--applications=btop,python,nfs-client",), "desktop", "portable chassis"),
+            (("--host-type=qemu",), "server", "explicit guest target"),
+            (("--host-type=qemu", "--applications=desktop"), "desktop", "interactive application"),
+        ]
+        for args, profile, reason in cases:
+            with self.subTest(args=args):
+                result = self.run_script("--check", "--optimization-profile=auto", *args, env=env)
+                self.assert_success(result)
+                self.assertIn(f"Auto optimization profile: {profile}", result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assert_untouched()
+        self.assertFalse((self.root / "make.log").exists())
+
+    def test_auto_profile_detects_chassis_and_preserves_unknown_roles(self):
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2\n", sys_vendor="Example")
+        chassis = Path(env["KC_HOST_ROOT"]) / "sys/class/dmi/id/chassis_type"
+        for value, profile in [("3", "desktop"), ("9", "desktop"), ("31", "desktop"),
+                               ("17", "server"), ("23", "server"), ("28", "server"),
+                               ("2", "none"), ("", "none"), ("invalid", "none")]:
+            with self.subTest(chassis=value):
+                chassis.write_text(value + "\n")
+                result = self.run_script("--check", "--optimization-profile=auto", env=env)
+                self.assert_success(result)
+                self.assertIn(f"Auto optimization profile: {profile}", result.stderr)
+                self.assert_untouched()
+        shutil.rmtree(Path(env["KC_HOST_ROOT"]))
+        result = self.run_script("--check", "--optimization-profile=auto", env=env)
+        self.assert_success(result)
+        self.assertIn("Auto optimization profile: none", result.stderr)
+        self.assertIn("insufficient target role evidence", result.stderr)
+
+    def test_auto_profile_distinguishes_local_guest_from_a_baremetal_target(self):
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : hypervisor\n", sys_vendor="QEMU")
+        (Path(env["KC_HOST_ROOT"]) / "sys/class/dmi/id/chassis_type").write_text("3\n")
+        for target in [(), ("--host-type=auto",)]:
+            result = self.run_script("--check", "--optimization-profile=auto", *target, env=env)
+            self.assert_success(result)
+            self.assertIn("Auto optimization profile: server (detected guest: qemu", result.stderr)
+        result = self.run_script("--check", "--optimization-profile=auto", "--host-type=baremetal", env=env)
+        self.assert_success(result)
+        self.assertIn("Auto optimization profile: none", result.stderr)
+        self.assertIn("target differs from the local host", result.stderr)
+
+    def test_auto_profile_does_not_probe_builder_role_when_cross_compiling(self):
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2\n", sys_vendor="Example")
+        (Path(env["KC_HOST_ROOT"]) / "sys/class/dmi/id/chassis_type").write_text("10\n")
+        for cross in [{"CROSS_COMPILE": "aarch64-linux-gnu-"}, {"ARCH": "arm64"}]:
+            result = self.run_script("--check", "--optimization-profile=auto", env=env | cross)
+            self.assert_success(result)
+            self.assertIn("Auto optimization profile: none", result.stderr)
+            self.assertIn("local role detection skipped", result.stderr)
+            self.assert_untouched()
+        for args, profile in [(("--host-type=qemu",), "server"),
+                              (("--applications=desktop",), "desktop"),
+                              (("--applications=qemu",), "server")]:
+            result = self.run_script("--check", "--optimization-profile=auto", *args,
+                                     env=env | {"CROSS_COMPILE": "aarch64-linux-gnu-"})
+            self.assert_success(result)
+            self.assertIn(f"Auto optimization profile: {profile}", result.stderr)
+
+    def test_auto_profile_is_opt_in_and_explicit_selection_wins(self):
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2\n", sys_vendor="Example")
+        (Path(env["KC_HOST_ROOT"]) / "sys/class/dmi/id/chassis_type").write_text("23\n")
+        for args in [(), ("--optimization-profile=none",),
+                     ("--optimization-profile=auto", "--optimization-profile=desktop")]:
+            result = self.run_script("--check", *args, env=env)
+            self.assert_success(result)
+            self.assertNotIn("Auto optimization profile:", result.stderr)
+            self.assert_untouched()
+
+    def test_auto_profile_applies_scheduler_and_respects_explicit_controls(self):
+        self.add_symbols("PREEMPT_NONE", "PREEMPT", "PREEMPT_LAZY", "PREEMPT_DYNAMIC",
+                         "NO_HZ_IDLE", "NO_HZ_FULL", "HZ_PERIODIC", "HZ_100", "HZ_1000")
+        self.add_symbols("HZ", kind="int")
+        self.set_baseline_symbols(PREEMPT_NONE="n", PREEMPT="y", PREEMPT_DYNAMIC="y",
+                                  HZ_100="n", HZ_1000="y", HZ="1000")
+        env = self.make_host_root(cpuinfo="processor : 0\nflags : sse2\n", sys_vendor="Example")
+        (Path(env["KC_HOST_ROOT"]) / "sys/class/dmi/id/chassis_type").write_text("23\n")
+        args = ("--strict", "--optimization-profile=auto")
+        self.assert_success(self.run_script(*args, env=env))
+        for symbol, value in dict(PREEMPT_NONE="y", PREEMPT="n", PREEMPT_DYNAMIC="n",
+                                  NO_HZ_IDLE="y", HZ_100="y", HZ_1000="n", HZ="100").items():
+            self.assert_symbol(symbol, value)
+        repeat = self.run_script(*args, "--dry-run", env=env)
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+        self.assert_success(self.run_script(*args, "--preemption=full", "--timer-hz=1000", env=env))
+        self.assert_symbol("PREEMPT", "y")
+        self.assert_symbol("PREEMPT_NONE", "n")
+        self.assert_symbol("HZ", "1000")
+
     def test_scheduler_profiles_choose_one_model_and_tick(self):
         models = ["PREEMPT_NONE", "PREEMPT_VOLUNTARY", "PREEMPT", "PREEMPT_LAZY"]
         ticks = ["HZ_PERIODIC", "NO_HZ_IDLE", "NO_HZ_FULL"]

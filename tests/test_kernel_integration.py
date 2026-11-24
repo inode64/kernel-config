@@ -87,6 +87,19 @@ class KernelIntegrationTests(unittest.TestCase):
         self.assert_success(result)
         self.assert_values(**values)
 
+    def test_real_auto_guest_profile_matches_manual_server_profile(self):
+        args = ("--strict", "--host-type=qemu")
+        self.assert_success(self.run_script(*args, "--optimization-profile=server"))
+        expected = self.config.read_bytes()
+        self.config.write_bytes(self.original)
+        result = self.run_script(*args, "--optimization-profile=auto")
+        self.assert_success(result)
+        self.assertIn("Auto optimization profile: server (explicit guest target", result.stderr)
+        self.assertEqual(self.config.read_bytes(), expected)
+        repeat = self.run_script(*args, "--optimization-profile=auto", "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+
     def test_real_memory_ecc_drivers_follow_dimm_evidence_and_keep_mce(self):
         host = self.use_native_host()
         (host / "proc/cpuinfo").write_text("vendor_id : AuthenticAMD\ncpu family : 25\nmodel : 97\n")

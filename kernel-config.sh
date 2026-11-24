@@ -58,7 +58,7 @@ HOST_ROOT="${HOST_ROOT%/}"
 #   DEFAULT_QDISC=keep        -> keep, pfifo_fast, fq, fq_codel, fq_pie, codel, sfq; default queuing discipline
 #   IO_URING=keep       -> keep, on, off; io_uring support
 #   PRUNE_RUNTIME_VERIFICATION -> disable Runtime Verification and its monitors
-#   OPTIMIZATION_PROFILE=none -> none, server, desktop, realtime; tune scheduler/tick defaults
+#   OPTIMIZATION_PROFILE=none -> none, auto, server, desktop, realtime; tune scheduler/tick defaults
 #   VALIDATION_MODE=warn      -> warn or fail (strict) when olddefconfig overrides requested values
 #   PREEMPT_MODE=auto         -> auto, none, voluntary, lazy, full, rt; override profile preemption
 #   TIMER_HZ=auto             -> auto, 100, 250, 300, 1000; override profile timer frequency
@@ -249,7 +249,9 @@ Notes:
   HUGETLB_PAGE_OPTIMIZE_VMEMMAP_DEFAULT_ON is disabled on trees older than Linux 7.2; requesting or protecting it there is an unmet request.
   Explicit tuning controls override profile defaults. keep leaves the profile/baseline unchanged.
   The all-optimizations preset does not enable --prune-hardening.
-  --optimization-profile accepts: none, server, desktop, realtime.
+  --optimization-profile accepts: none, auto, server, desktop, realtime.
+    auto uses declared applications/guest target, then local host/chassis evidence;
+    unknown or cross-built targets keep the baseline. Realtime is always explicit.
   --validation-mode accepts: warn or strict.
   --preempt-mode accepts: auto, none, voluntary, lazy, full, or rt.
   --timer-hz accepts: auto, 100, 250, 300, or 1000.
@@ -2865,6 +2867,58 @@ resolve_host_type() {
     esac
 }
 
+detect_optimization_profile() {
+    local profile=none reason="insufficient target role evidence; select server or desktop explicitly"
+    local app server_app="" interactive_app="" host_type chassis="" path
+
+    while IFS= read -r app; do
+        case "$app" in
+            desktop | multimedia) interactive_app="$app" ;;
+            qemu | docker | ceph | nfs-server | samba | openvswitch) server_app="$app" ;;
+        esac
+    done <<<"$APPLICATIONS_RESOLVED"
+
+    if [[ -n "$interactive_app" ]]; then
+        profile=desktop
+        reason="declared interactive application: $interactive_app"
+    elif [[ -n "$server_app" ]]; then
+        profile=server
+        reason="declared server application: $server_app"
+    elif [[ "${HOST_TYPE@L}" =~ ^(qemu|kvm|vmware|hyperv|virtualbox)$ ]]; then
+        # Explicit guest targets must not inherit the build machine's chassis.
+        profile=server
+        reason="explicit guest target: $HOST_TYPE_EFFECTIVE; use desktop for an interactive guest"
+    elif ! native_arch_detection_allowed; then
+        reason="cross compilation or different target architecture; local role detection skipped"
+    else
+        host_type="$(detect_host_type)"
+        if [[ "$HOST_TYPE_EFFECTIVE" == baremetal && "$host_type" != baremetal ]]; then
+            reason="bare-metal target differs from the local host; local role detection skipped"
+        elif [[ "$host_type" =~ ^(qemu|vmware|hyperv|virtualbox)$ ]]; then
+            profile=server
+            reason="detected guest: $host_type; use desktop for an interactive guest"
+        elif [[ "$host_type" == baremetal ]]; then
+            path="${HOST_ROOT}/sys/class/dmi/id/chassis_type"
+            [[ ! -r "$path" ]] || chassis="$(<"$path")"
+            chassis="${chassis//[[:space:]]/}"
+            # SMBIOS type 3 distinguishes portable/desktop and server enclosures;
+            # a GPU (including a BMC) or many CPUs does not establish the workload.
+            case "$chassis" in
+                3 | 4 | 6 | 7 | 8 | 9 | 10 | 13 | 14 | 15 | 16 | 24 | 30 | 31 | 32 | 35 | 36)
+                    profile=desktop
+                    reason="local desktop/portable chassis: SMBIOS type $chassis"
+                    ;;
+                17 | 23 | 25 | 28 | 29)
+                    profile=server
+                    reason="local server chassis: SMBIOS type $chassis"
+                    ;;
+            esac
+        fi
+    fi
+    echo "==> Auto optimization profile: $profile ($reason)" >&2
+    printf '%s\n' "$profile"
+}
+
 resolve_optimization_profile() {
     local mode
     mode="${OPTIMIZATION_PROFILE@L}"
@@ -2873,11 +2927,14 @@ resolve_optimization_profile() {
         "" | none | off | 0)
             printf '%s\n' "none"
             ;;
+        auto)
+            detect_optimization_profile
+            ;;
         server | desktop | realtime)
             printf '%s\n' "$mode"
             ;;
         *)
-            echo "Invalid OPTIMIZATION_PROFILE: $OPTIMIZATION_PROFILE (use none, server, desktop, or realtime)" >&2
+            echo "Invalid OPTIMIZATION_PROFILE: $OPTIMIZATION_PROFILE (use none, auto, server, desktop, or realtime)" >&2
             exit 1
             ;;
     esac
@@ -6707,7 +6764,6 @@ validate_tunables() {
             _EXPLICIT_SYMBOL_VALUES["$sym"]="$value"
         done
     done
-    OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
     CPU_VENDOR_EFFECTIVE="$(resolve_cpu_vendor_filter)"
     VIDEO_SUPPORT_EFFECTIVE="$(resolve_video_support)"
     UEFI_SUPPORT_EFFECTIVE="$(resolve_uefi_support)"
@@ -6721,6 +6777,7 @@ validate_tunables() {
     PLATFORM_DRIVERS_EFFECTIVE="$(resolve_platform_drivers)"
     validate_enum SERIAL_SUPPORT 'none|auto'
     APPLICATIONS_RESOLVED="$(resolve_application_profiles)"
+    OPTIMIZATION_PROFILE_EFFECTIVE="$(resolve_optimization_profile)"
     validate_enum PREEMPTION 'keep|none|voluntary|full|lazy|rt'
     validate_enum PREEMPT_DYNAMIC 'keep|on|off'
     validate_enum TICK_MODE 'keep|periodic|idle|full'

@@ -179,8 +179,46 @@ References: [kernel initramfs format](https://www.kernel.org/doc/html/latest/dri
   It also turns on every pruning toggle except `PRUNE_HARDENING` and `PRUNE_UNUSED_MODULES`: observability, legacy, debug/trace, selftests, sanitizers, coverage, fault injection, dangerous options, BPF, 32-bit compatibility, unused network protocols, old hardware, old x86 platforms, legacy ATA, insecure protocols, radios and DMA attack surface. Unless an application profile restores them (such as trace events for `rasdaemon`, and debugfs when its rasdaemon release or CPU needs it), the result has no debugfs, ftrace, kprobes or BTF (bpftrace and `perf probe` stop working), no `IA32_EMULATION`, and on 6.17+ no iptables-legacy tables unless `iptables-legacy` or `firehol` is among the applications. A toggle can be turned off again after the flag, for example `--prune-compat32=false`.
   This setting is flag-only and must be enabled with `--all-optimizations`. To keep the existing kernel image compression, pass `--kernel-compression=keep` after this flag.
 
-- `OPTIMIZATION_PROFILE=none|server|desktop|realtime`
+- `OPTIMIZATION_PROFILE=none|auto|server|desktop|realtime`
   Adjusts scheduler, preemption, and HZ defaults. Desktop and server select THP `madvise` rather than applying hugepages to every eligible mapping; desktop also requests full preemption with dynamic switching. Server prefers non-preemptible operation where that model's dependencies are met, then lazy, voluntary, or full preemption. Realtime requests RT only when its prerequisites are already enabled; otherwise it reports the fallback. Each profile selects a single tick mode. Explicit controls below override profile defaults.
+
+  `auto` is opt-in; the default remains `none`. It selects an existing profile and
+  prints the evidence for its decision, in this order:
+
+  | Evidence | Profile |
+  | --- | --- |
+  | Declared `desktop` or `multimedia` application, including mixed workloads | `desktop` |
+  | Declared `qemu`, `docker`, `ceph`, `nfs-server`, `samba` or `openvswitch` application | `server` |
+  | Explicit QEMU/KVM, VMware, Hyper-V or VirtualBox guest target | `server` |
+  | Locally detected supported guest | `server` |
+  | Local desktop, laptop, convertible or tablet SMBIOS chassis | `desktop` |
+  | Local server, rack, multi-system or blade SMBIOS chassis | `server` |
+  | Missing, ambiguous or unsupported evidence | `none` (keep profile defaults unchanged) |
+
+  Guest selection is a throughput-oriented fallback, not proof of a server
+  workload. Declare `--applications=desktop` or choose `--optimization-profile=desktop`
+  for an interactive guest. Monitoring tools, VPN/firewall support, a GPU/BMC,
+  CPU count, and NFS client support alone do not establish the machine's role.
+  The chassis interpretation follows [SMBIOS type 3 as decoded by dmidecode](https://github.com/mirror/dmidecode/blob/master/dmidecode.c).
+
+  Local detection is skipped with `CROSS_COMPILE` or a different target `ARCH`;
+  declared applications and explicit guest targets remain usable. An explicit
+  bare-metal target built inside a guest also skips local role detection.
+  For another machine of the same architecture, choose a profile or declare its
+  role explicitly: local chassis information describes the builder. Auto never
+  chooses realtime, changes the pruning preset, or edits runtime daemon options.
+  Existing preemption dependency checks and explicit tuning overrides still apply.
+
+  ```bash
+  ./kernel-config.sh --dry-run --strict --optimization-profile=auto --host-type=auto /path/to/kernel
+  # A guest kernel built on another machine:
+  ./kernel-config.sh --dry-run --strict --optimization-profile=auto --host-type=qemu /path/to/kernel
+  ```
+
+  This is a role-based starting point, not an empirical optimizer. Compare
+  workloads after booting; a newer kernel or a scheduler preset is not necessarily
+  faster. `--all-optimizations` still selects `server`; put
+  `--optimization-profile=auto` after it if both options are wanted.
 
   Server/desktop NUMA balancing is requested only when NUMA is already enabled or explicitly requested, using the kernel version's migration dependencies. Explicit `--numa-balancing=off` suppresses this default.
 
@@ -1188,6 +1226,41 @@ stays built and can still be turned on with `hugetlb_free_vmemmap=on` or the
 `vm.hugetlb_optimize_vmemmap` sysctl. On an affected kernel, keep it off before
 reserving HugeTLB pages that may be released later. Without the default, HVO no
 longer saves about 28 KiB of `struct page` memory per 2 MB HugeTLB page.
+
+## virtiofs: kernel profile and daemon tuning
+
+The guest kernel's `VIRTIO_FS`/`FUSE_FS` support and the host's virtiofsd service
+are separate settings. `--host-type=qemu` configures guest capabilities; it does
+not configure or restart virtiofsd. On a KVM host, the server profile and
+`--applications=qemu` serve a different role from the guest target.
+
+For concurrent direct I/O, a starting point to benchmark with virtiofsd 1.15 is:
+
+```text
+--thread-pool-size=16 --cache=auto --allow-direct-io --sandbox=namespace
+```
+
+Omit `--writeback` in that candidate. Keep the service's existing socket,
+shared directory, inode handles, submount handling and security settings.
+Preserve required xattrs and capabilities for container exports; do not grant
+additional capabilities to unrelated exports just to match a benchmark.
+Apply daemon changes during a controlled stop/start of the guest.
+
+According to the [virtiofsd 1.15 documentation](https://gitlab.com/virtio-fs/virtiofsd/-/raw/v1.15.0/README.md),
+pool size 0 disables the pool, and `--allow-direct-io` honors guest `O_DIRECT`
+requests. Without it, a fio `direct=1` result can still include host page-cache
+traffic. Verify the actual open-file flags when comparing native and guest I/O.
+`cache=auto` is a better candidate than `always` when the host also changes files,
+but test the coherence patterns the application relies on.
+
+Neither 16 threads nor disabling writeback is a universal optimum. Compare pool
+sizes such as 0, 4 and 16 on the same storage with the same direct-I/O semantics,
+then vary cache policy and writeback separately. Include buffered/direct reads
+and writes, QD1 and concurrent I/O, fsync tail latency, metadata operations and
+host CPU cost. A pool that improves parallel I/O can hurt individual operations.
+Disabling FUSE writeback does not disable every host/device cache or make each
+write synchronous. Keep repeated measurements and their dispersion alongside
+functional tests of mounts, contents, links and xattrs.
 
 ## Caveats
 
