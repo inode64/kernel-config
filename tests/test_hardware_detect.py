@@ -68,6 +68,13 @@ class HardwareTests(unittest.TestCase):
     def facts(self):
         return {(kind, name) for kind, name, _ in discover(self.host)}
 
+    def test_serio_bus_requests_the_serial_input_parent(self):
+        self.link("sys/bus/serio/devices/serio0/driver", "/sys/bus/serio/drivers/serio_raw")
+        facts = self.facts()
+        self.assertIn(("symbol", "SERIO"), facts)
+        self.assertIn(("module", "serio_raw"), facts)
+        self.assertNotIn(("symbol", "INPUT_SERIO"), facts)
+
     def serial_fixture(self):
         serial_host(self.root)
         self.write("kernel/drivers/tty/serial/8250/pnp.c", '"PNP0500" "PNP0501" "AMDI0020"')

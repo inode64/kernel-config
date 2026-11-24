@@ -780,6 +780,23 @@ class KernelIntegrationTests(unittest.TestCase):
                                             "--disable-symbols=BPF_JIT_ALWAYS_ON"))
         self.assert_values(BPF_JIT="y", BPF_JIT_ALWAYS_ON="n")
 
+    def test_real_native_arch_restores_serio_bus_for_raw_devices(self):
+        host = self.use_native_host()
+        driver = host / "sys/bus/serio/drivers/serio_raw"
+        driver.mkdir(parents=True)
+        (driver / "module").symlink_to("/sys/module/serio_raw")
+        device = host / "sys/bus/serio/devices/serio0"
+        device.mkdir(parents=True)
+        (device / "driver").symlink_to("/sys/bus/serio/drivers/serio_raw")
+        self.prepare_baseline(INPUT="y", INPUT_KEYBOARD="n", INPUT_MOUSE="n", SERIO="n",
+                              MODULES="y", BLK_DEV_INITRD="y")
+        args = ("--strict", "--native-arch", "--native-cpu=none", "--platform-drivers=none")
+        self.assert_success(self.run_script(*args))
+        self.assert_values(SERIO="y", SERIO_RAW="m")
+        repeat = self.run_script(*args, "--dry-run")
+        self.assert_success(repeat)
+        self.assertIn("No changes.", repeat.stdout)
+
     def test_real_native_arch_devices_and_overrides(self):
         host = self.use_native_host()
         # No IOMMU or CPU facilities are claimed by this device-only capture.

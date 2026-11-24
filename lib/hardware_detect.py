@@ -106,7 +106,7 @@ BUS_PARENTS = {
     "scsi": ("BLOCK", "SCSI", "SCSI_LOWLEVEL"),
     "ata": ("BLOCK", "SCSI", "ATA"), "nvme": ("BLOCK",),
     "i2c": ("I2C",), "i3c": ("I3C",), "spi": ("SPI",),
-    "hid": ("INPUT", "HID"), "serio": ("INPUT", "INPUT_SERIO"),
+    "hid": ("INPUT", "HID"), "serio": ("INPUT", "SERIO"),
     "hdaudio": ("SOUND", "SND", "SND_HDA"),
     "mdio_bus": ("NET", "NETDEVICES", "PHYLIB"),
     "wmi": ("ACPI", "ACPI_WMI"), "vmbus": ("HYPERV",),
