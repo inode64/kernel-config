@@ -370,9 +370,15 @@ class SourceResolver:
         for cfile, text in self._iter_c_files(SOURCE_SCAN_DIRS["platform"]):
             if "MODULE_DEVICE_TABLE" not in text and "MODULE_ALIAS" not in text:
                 continue
-            matched = alias in text or (
-                "platform_device_id" in text and "MODULE_DEVICE_TABLE" in text
-                and id_pattern.search(text))
+            matched = alias in text
+            if not matched and "platform_device_id" in text and "MODULE_DEVICE_TABLE" in text:
+                matched = id_pattern.search(text) is not None
+                if not matched:
+                    # { .name = DRV_NAME } with #define DRV_NAME "cros-ec-debugfs".
+                    for macro, value in re.findall(r'#define\s+([A-Za-z0-9_]+)\s+"([^"]*)"', text):
+                        if value == name and re.search(rf'\.name\s*=\s*{re.escape(macro)}\b', text):
+                            matched = True
+                            break
             if not matched:
                 continue
             for module in self._modules_for_source(cfile):
@@ -433,11 +439,31 @@ class SourceResolver:
             text = path.read_text(errors="replace")
         except OSError:
             return set()
-        match = re.search(
-            r"#ifdef CONFIG_X86_AMD_PLATFORM_DEVICE\n(.*?)#endif", text, re.S)
-        if not match:
-            return set()
-        return set(re.findall(r'"([A-Z0-9]{4,16})"', match.group(1)))
+        # The x86 ids are not in the first ifdef: clock helpers and the device
+        # table are separate CONFIG_X86_AMD_PLATFORM_DEVICE blocks, and an
+        # outer `#if defined(... || ARM64)` must not pull in the ARM ids.
+        ids = set()
+        depth = 0
+        capture = None
+        chunk = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#if"):
+                depth += 1
+                if capture is None and re.fullmatch(
+                        r"#ifdef CONFIG_X86_AMD_PLATFORM_DEVICE", stripped):
+                    capture = depth
+                    chunk = []
+                continue
+            if stripped.startswith("#endif"):
+                if capture == depth:
+                    ids.update(re.findall(r'"([A-Z0-9]{4,16})"', "\n".join(chunk)))
+                    capture = None
+                depth = max(0, depth - 1)
+                continue
+            if capture is not None:
+                chunk.append(line)
+        return ids
 
     def match_bus_ids(self, modaliases):
         """Classify PCI and USB ids against drivers/ and sound/.

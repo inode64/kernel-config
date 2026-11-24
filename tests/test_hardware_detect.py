@@ -613,8 +613,9 @@ class HardwareTests(unittest.TestCase):
             "config CROS_EC_DEBUGFS\n\ttristate \"debugfs\"\n"
             "\tdepends on MFD_CROS_EC_DEV && DEBUG_FS\n\thelp\n\t  Logs.\n")
         (debug / "cros_ec_debugfs.c").write_text(
-            'static const struct platform_device_id cros_ec_debugfs_id[] = {\n'
-            '    { .name = "cros-ec-debugfs" }, {} };\n'
+            '#define DRV_NAME "cros-ec-debugfs"\n'
+            "static const struct platform_device_id cros_ec_debugfs_id[] = {\n"
+            "    { .name = DRV_NAME }, {} };\n"
             "MODULE_DEVICE_TABLE(platform, cros_ec_debugfs_id);\n"
         )
         rtc = srcdir / "drivers/rtc"
@@ -690,12 +691,19 @@ class HardwareTests(unittest.TestCase):
         apd = srcdir / "drivers/acpi/acpi_apd.c"
         apd.parent.mkdir(parents=True)
         apd.write_text(
+            "#if defined(CONFIG_X86_AMD_PLATFORM_DEVICE) || defined(CONFIG_ARM64)\n"
+            "#ifdef CONFIG_X86_AMD_PLATFORM_DEVICE\n"
+            "static int fch_misc_setup(void) { return 0; }\n"
+            "#endif\n"
+            "static const struct acpi_device_id acpi_apd_device_ids[] = {\n"
             "#ifdef CONFIG_X86_AMD_PLATFORM_DEVICE\n"
             '    { "AMDI0020", APD_ADDR(cz_uart_desc) },\n'
             '    { "AMDI0010", APD_ADDR(wt_i2c_desc) },\n'
             "#endif\n"
             "#ifdef CONFIG_ARM64\n"
             '    { "APMC0D0F", APD_ADDR(xgene_i2c_desc) },\n'
+            "#endif\n"
+            "};\n"
             "#endif\n"
         )
         self.write("sys/bus/acpi/devices/ACPI0011:00/status", "11\n")
@@ -704,6 +712,8 @@ class HardwareTests(unittest.TestCase):
         self.write("sys/bus/acpi/devices/AMDI0020:00/modalias", "acpi:AMDI0020:\n")
         self.write("sys/bus/acpi/devices/AMDI0022:00/status", "15\n")
         self.write("sys/bus/acpi/devices/AMDI0022:00/modalias", "acpi:AMDI0022:\n")
+        self.write("sys/bus/acpi/devices/APMC0D0F:00/status", "15\n")
+        self.write("sys/bus/acpi/devices/APMC0D0F:00/modalias", "acpi:APMC0D0F:\n")
 
         raw = discover(Host(self.root), kernel_srcdir=srcdir)
         facts = {(kind, value) for kind, value, _ in raw}
@@ -714,6 +724,7 @@ class HardwareTests(unittest.TestCase):
                         if (kind, value) == ("symbol", "X86_AMD_PLATFORM_DEVICE")]
         self.assertEqual(len(uart_symbols), 1)
         self.assertIn("AMDI0020", uart_symbols[0])
+        self.assertNotIn("APMC0D0F", uart_symbols[0])
         self.assertNotIn(("module", "soc_button_array_mod"), facts)
 
     def test_missing_target_drivers_are_unsupported_and_present_ones_match(self):
